@@ -106,6 +106,9 @@ importers:
 
   apps/web:
     dependencies:
+      shared:
+        specifier: workspace:*
+        version: link:../../packages/shared
       vue:
         specifier: ^3.5.22
         version: 3.5.22(typescript@5.9.3)

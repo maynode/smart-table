@@ -1,13 +1,19 @@
 import { api } from './client';
 import type {
   AuthResult,
+  AutomationDto,
+  AutomationRunDto,
   BaseDto,
   CommentDto,
   FieldDto,
+  FormDto,
+  FormSubmitResult,
   MemberDto,
+  PublicFormDto,
   RecordDto,
   RecordPage,
   SheetDto,
+  UpsertFormPayload,
   WorkspaceDto,
 } from './types';
 
@@ -79,4 +85,31 @@ export const endpoints = {
 
   createComment: (sheetId: string, body: string) =>
     api<CommentDto>(`/sheets/${sheetId}/comments`, { body: { body } }),
+
+  listForms: (baseId: string) =>
+    api<FormDto[]>(`/forms?baseId=${encodeURIComponent(baseId)}`),
+
+  getForm: (formId: string) => api<FormDto>(`/forms/${formId}`),
+
+  upsertForm: (formId: string, body: UpsertFormPayload) =>
+    api<FormDto>(`/forms/${formId}`, { body }),
+
+  getPublicForm: (token: string) =>
+    api<PublicFormDto>(`/public/forms/${encodeURIComponent(token)}`, {
+      token: null,
+    }),
+
+  submitPublicForm: (token: string, cells: Record<string, unknown>) =>
+    api<FormSubmitResult>(
+      `/public/forms/${encodeURIComponent(token)}/submit`,
+      { body: { cells }, token: null },
+    ),
+
+  listAutomations: (baseId: string) =>
+    api<AutomationDto[]>(`/automations?baseId=${encodeURIComponent(baseId)}`),
+
+  listAutomationRuns: (automationId: string, limit = 20) =>
+    api<AutomationRunDto[]>(
+      `/automations/${automationId}/runs?limit=${limit}`,
+    ),
 };

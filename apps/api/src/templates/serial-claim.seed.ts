@@ -208,7 +208,7 @@ export async function seedSerialClaim(
             filters: {
               conjunction: 'and',
               conditions: [
-                { fieldId: status.id, operator: 'equals', value: '未领' },
+                { fieldId: status.id, operator: 'equals', value: 'unclaimed' },
               ],
             },
           },
@@ -217,7 +217,7 @@ export async function seedSerialClaim(
             type: 'modifyRecords',
             target: { mode: 'fromStep', stepId: 'find-code' },
             cells: {
-              [status.id]: { kind: 'literal', value: '已领' },
+              [status.id]: { kind: 'literal', value: 'claimed' },
               [claimedPhone.id]: {
                 kind: 'variable',
                 variable: { source: 'trigger', field: '手机号' },

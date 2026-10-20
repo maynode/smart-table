@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
+import AutomationPanel from '../components/AutomationPanel.vue';
+import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -36,6 +38,9 @@ const commentSending = ref(false);
 
 const membersOpen = ref(false);
 const members = ref<MemberDto[]>([]);
+
+const automationsOpen = ref(false);
+const formBuilderOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -264,7 +269,13 @@ onMounted(bootstrap);
         <button class="topbar-btn" @click="comingSoon('内容权限')">
           内容权限
         </button>
-        <button class="topbar-btn" @click="comingSoon('自动化')">自动化</button>
+        <button
+          class="topbar-btn"
+          data-testid="automation-open"
+          @click="automationsOpen = true"
+        >
+          自动化
+        </button>
         <button class="topbar-btn" @click="comingSoon('更多')">更多</button>
       </div>
     </header>
@@ -294,7 +305,12 @@ onMounted(bootstrap);
             v-for="item in sidebarObjects"
             :key="item.label"
             class="sidebar-item muted-item"
-            @click="comingSoon(item.label)"
+            :data-testid="item.label === '收集表单' ? 'forms-open' : undefined"
+            @click="
+              item.label === '收集表单'
+                ? (formBuilderOpen = true)
+                : comingSoon(item.label)
+            "
           >
             <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
           </button>
@@ -359,8 +375,7 @@ onMounted(bootstrap);
       v-if="membersOpen"
       class="modal-mask"
       @click.self="membersOpen = false"
-    >
-      <div class="modal">
+    >      <div class="modal">
         <header class="drawer-header">
           <h3>工作区成员</h3>
           <button class="icon-btn" @click="membersOpen = false">×</button>
@@ -376,5 +391,48 @@ onMounted(bootstrap);
         <p v-if="members.length === 0" class="muted">加载中…</p>
       </div>
     </div>
+
+    <div
+      v-if="automationsOpen"
+      class="modal-mask"
+      @click.self="automationsOpen = false"
+    >
+      <div class="modal automation-modal">
+        <AutomationPanel
+          :base-id="baseId"
+          @close="automationsOpen = false"
+        />
+      </div>
+    </div>
+
+    <div
+      v-if="formBuilderOpen"
+      class="modal-mask"
+      @click.self="formBuilderOpen = false"
+    >
+      <div class="modal form-builder-modal">
+        <FormBuilderPanel
+          v-if="activeSheet"
+          :key="activeSheet.id"
+          :base-id="baseId"
+          :sheet="activeSheet"
+          @close="formBuilderOpen = false"
+        />
+        <div v-else class="empty-state">请先选择一张工作表</div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.automation-modal {
+  width: min(780px, 92vw);
+  max-height: 82vh;
+  overflow: auto;
+}
+.form-builder-modal {
+  width: min(640px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+}
+</style>

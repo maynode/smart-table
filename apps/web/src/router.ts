@@ -25,6 +25,11 @@ export const router = createRouter({
       component: () => import('./views/BaseShellView.vue'),
     },
     {
+      path: '/fill/:token',
+      name: 'form-fill',
+      component: () => import('./views/FormFillView.vue'),
+    },
+    {
       path: '/dev/grid-bench',
       name: 'grid-bench',
       component: () => import('./views/GridBenchView.vue'),
@@ -35,7 +40,10 @@ export const router = createRouter({
 
 router.beforeEach((to) => {
   const hasToken = Boolean(auth.state.token);
-  const isPublic = to.path === '/login' || to.path.startsWith('/dev/');
+  const isPublic =
+    to.path === '/login' ||
+    to.path.startsWith('/dev/') ||
+    to.path.startsWith('/fill/');
   if (!isPublic && !hasToken) {
     return { path: '/login', query: { redirect: to.fullPath } };
   }
