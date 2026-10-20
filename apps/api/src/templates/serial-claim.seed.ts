@@ -1,0 +1,256 @@
+import { Prisma, type PrismaClient } from '@prisma/client';
+import { hash } from '@node-rs/argon2';
+import { randomBytes, randomUUID } from 'node:crypto';
+
+const DEMO_EMAIL = 'demo@smart-table.local';
+const DEMO_PASSWORD = 'Passw0rd!123';
+const WORKSPACE_NAME = '序列号领取演示';
+const BASE_NAME = '序列号领取';
+const CODE_COUNT = 100;
+
+export interface SerialClaimSeedResult {
+  created: boolean;
+  workspaceId: string;
+  baseId: string;
+  formId: string;
+  shareToken: string;
+  shareUrl: string;
+  automationId: string;
+  demoEmail: string;
+  demoPassword: string;
+  codes: number;
+}
+
+/**
+ * Task 11 seed: Base「序列号领取」with 码库/收集表单, the "联动修改" automation,
+ * a success-page template, and demo codes. Idempotent: returns the existing
+ * base when it already exists instead of creating duplicates.
+ */
+export async function seedSerialClaim(
+  prisma: PrismaClient,
+): Promise<SerialClaimSeedResult> {
+  const publicBase = (
+    process.env.PUBLIC_FORM_BASE_URL ?? 'http://localhost:5173'
+  ).replace(/\/$/, '');
+
+  let user = await prisma.user.findUnique({ where: { email: DEMO_EMAIL } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        email: DEMO_EMAIL,
+        name: '演示管理员',
+        passwordHash: await hash(DEMO_PASSWORD),
+      },
+    });
+  }
+
+  let workspace = await prisma.workspace.findFirst({
+    where: { name: WORKSPACE_NAME },
+  });
+  if (!workspace) {
+    workspace = await prisma.workspace.create({ data: { name: WORKSPACE_NAME } });
+    await prisma.workspaceMember.create({
+      data: { workspaceId: workspace.id, userId: user.id, role: 'owner' },
+    });
+  } else {
+    const membership = await prisma.workspaceMember.findUnique({
+      where: {
+        workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
+      },
+    });
+    if (!membership) {
+      await prisma.workspaceMember.create({
+        data: { workspaceId: workspace.id, userId: user.id, role: 'owner' },
+      });
+    }
+  }
+
+  const existingBase = await prisma.base.findFirst({
+    where: { workspaceId: workspace.id, name: BASE_NAME },
+  });
+  if (existingBase) {
+    const form = await prisma.form.findFirst({
+      where: { baseId: existingBase.id },
+    });
+    if (form) {
+      const automation = await prisma.automation.findFirst({
+        where: { baseId: existingBase.id },
+      });
+      return {
+        created: false,
+        workspaceId: workspace.id,
+        baseId: existingBase.id,
+        formId: form.id,
+        shareToken: form.shareToken,
+        shareUrl: `${publicBase}/fill/${form.shareToken}`,
+        automationId: automation?.id ?? '',
+        demoEmail: DEMO_EMAIL,
+        demoPassword: DEMO_PASSWORD,
+        codes: await prisma.recordRow.count({
+          where: { sheet: { baseId: existingBase.id, name: '码库' } },
+        }),
+      };
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const base =
+      existingBase ??
+      (await tx.base.create({
+        data: { workspaceId: workspace!.id, name: BASE_NAME },
+      }));
+
+    const formSheet = await tx.sheet.create({
+      data: { baseId: base.id, name: '收集表单' },
+    });
+    const codeSheet = await tx.sheet.create({
+      data: { baseId: base.id, name: '码库' },
+    });
+
+    const phone = await tx.field.create({
+      data: {
+        sheetId: formSheet.id,
+        name: '手机号',
+        type: 'phone',
+        order: 0,
+        required: true,
+      },
+    });
+    const remark = await tx.field.create({
+      data: { sheetId: formSheet.id, name: '备注', type: 'text', order: 1 },
+    });
+
+    const serial = await tx.field.create({
+      data: { sheetId: codeSheet.id, name: '序列号', type: 'text', order: 0 },
+    });
+    const status = await tx.field.create({
+      data: {
+        sheetId: codeSheet.id,
+        name: '状态',
+        type: 'select',
+        order: 1,
+        options: {
+          choices: [
+            { id: 'unclaimed', name: '未领', color: 'gray' },
+            { id: 'claimed', name: '已领', color: 'green' },
+          ],
+        },
+      },
+    });
+    const claimedPhone = await tx.field.create({
+      data: {
+        sheetId: codeSheet.id,
+        name: '领取手机号',
+        type: 'phone',
+        order: 2,
+      },
+    });
+    const claimedAt = await tx.field.create({
+      data: { sheetId: codeSheet.id, name: '领取时间', type: 'date', order: 3 },
+    });
+
+    for (let index = 1; index <= CODE_COUNT; index += 1) {
+      await tx.recordRow.create({
+        data: {
+          sheetId: codeSheet.id,
+          claimStatus: 'unclaimed',
+          cells: {
+            [serial.id]: `DEMO-${String(index).padStart(4, '0')}`,
+            [status.id]: 'unclaimed',
+          },
+        },
+      });
+    }
+
+    const formId = randomUUID();
+    const shareToken = randomBytes(12).toString('base64url');
+    await tx.form.create({
+      data: {
+        id: formId,
+        baseId: base.id,
+        sheetId: formSheet.id,
+        name: '序列号领取',
+        shareToken,
+        fields: [
+          { fieldId: phone.id, required: true },
+          { fieldId: remark.id },
+        ] as Prisma.InputJsonValue,
+        share: {
+          enabled: true,
+          audience: 'anyone',
+          expiresAt: null,
+        } as Prisma.InputJsonValue,
+        successTemplate:
+          '领取成功！你的序列号是 <strong>{{序列号}}</strong>，请截图保存。',
+        rejectDuplicatePhone: true,
+      },
+    });
+
+    const automation = await tx.automation.create({
+      data: {
+        baseId: base.id,
+        name: '联动修改：领取序列号',
+        trigger: {
+          type: 'recordCreated',
+          sheetId: formSheet.id,
+          filters: {
+            conjunction: 'and',
+            conditions: [
+              { fieldId: phone.id, operator: 'isNotEmpty' },
+            ],
+          },
+        } as Prisma.InputJsonValue,
+        steps: [
+          {
+            id: 'find-code',
+            type: 'findRecords',
+            sheetId: codeSheet.id,
+            filters: {
+              conjunction: 'and',
+              conditions: [
+                { fieldId: status.id, operator: 'equals', value: '未领' },
+              ],
+            },
+          },
+          {
+            id: 'claim-code',
+            type: 'modifyRecords',
+            target: { mode: 'fromStep', stepId: 'find-code' },
+            cells: {
+              [status.id]: { kind: 'literal', value: '已领' },
+              [claimedPhone.id]: {
+                kind: 'variable',
+                variable: { source: 'trigger', field: '手机号' },
+              },
+              [claimedAt.id]: {
+                kind: 'variable',
+                variable: { source: 'naturalTime', naturalTime: 'today' },
+              },
+            },
+          },
+        ] as Prisma.InputJsonValue,
+        onFindEmpty: 'stop',
+      },
+    });
+
+    return {
+      baseId: base.id,
+      formId,
+      shareToken,
+      automationId: automation.id,
+    };
+  });
+
+  return {
+    created: true,
+    workspaceId: workspace.id,
+    baseId: result.baseId,
+    formId: result.formId,
+    shareToken: result.shareToken,
+    shareUrl: `${publicBase}/fill/${result.shareToken}`,
+    automationId: result.automationId,
+    demoEmail: DEMO_EMAIL,
+    demoPassword: DEMO_PASSWORD,
+    codes: CODE_COUNT,
+  };
+}

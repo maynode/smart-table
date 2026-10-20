@@ -104,6 +104,10 @@ export class UpsertFormDto {
   @ValidateNested()
   @Type(() => FormSuccessPageDto)
   successPage?: FormSuccessPageDto;
+
+  @IsOptional()
+  @IsBoolean()
+  rejectDuplicatePhone?: boolean;
 }
 
 export class SubmitFormDto {

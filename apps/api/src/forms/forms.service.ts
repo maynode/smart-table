@@ -122,6 +122,8 @@ export class FormsService {
           fields: configured as unknown as Prisma.InputJsonValue,
           share: share as unknown as Prisma.InputJsonValue,
           successTemplate,
+          rejectDuplicatePhone:
+            dto.rejectDuplicatePhone ?? existing.rejectDuplicatePhone,
         },
       });
       return this.toDto(updated);
@@ -138,6 +140,7 @@ export class FormsService {
         share: share as unknown as Prisma.InputJsonValue,
         shareToken: randomBytes(12).toString('base64url'),
         successTemplate,
+        rejectDuplicatePhone: dto.rejectDuplicatePhone ?? true,
       },
     });
     return this.toDto(created);
@@ -297,6 +300,29 @@ export class FormsService {
     // submission either gets a serial and a record, or writes nothing at all.
     const outcome = await this.prisma.$transaction(
       async (tx) => {
+        if (form.rejectDuplicatePhone) {
+          const phoneField = form.sheet.fields.find(
+            (field) =>
+              field.type === 'phone' &&
+              Object.prototype.hasOwnProperty.call(sanitized, field.id),
+          );
+          const phone = phoneField
+            ? String(sanitized[phoneField.id] ?? '').trim()
+            : '';
+          if (phoneField && phone) {
+            // Serialize same-phone submissions so the guard cannot race.
+            await tx.$executeRaw(
+              Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${form.sheetId}:${phone}`}))`,
+            );
+            const existing = await tx.$queryRaw<Array<{ id: string }>>(
+              Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${form.sheetId}::uuid AND cells->>${phoneField.id} = ${phone} LIMIT 1`,
+            );
+            if (existing.length > 0) {
+              throw new ConflictException('该手机号不可重复领取');
+            }
+          }
+        }
+
         const record = await tx.recordRow.create({
           data: {
             sheetId: form.sheetId,
@@ -460,6 +486,7 @@ export class FormsService {
         qrCodeDataUrl,
       },
       successPage: { templateHtml: form.successTemplate },
+      rejectDuplicatePhone: form.rejectDuplicatePhone,
       createdAt: form.createdAt,
       updatedAt: form.updatedAt,
     };

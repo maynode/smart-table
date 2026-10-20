@@ -12,7 +12,8 @@
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",
     "prisma:migrate": "dotenv -e ../../.env -- prisma migrate deploy",
     "prisma:migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
-    "prisma:studio": "dotenv -e ../../.env -- prisma studio"
+    "prisma:studio": "dotenv -e ../../.env -- prisma studio",
+    "seed:serial-claim": "dotenv -e ../../.env -- ts-node --transpile-only prisma/seed-serial-claim.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1153.0",

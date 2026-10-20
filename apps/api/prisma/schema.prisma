@@ -154,6 +154,7 @@ model Form {
   share           Json     @default("{}")
   shareToken      String   @unique @map("share_token")
   successTemplate String   @default("") @map("success_template")
+  rejectDuplicatePhone Boolean @default(true) @map("reject_duplicate_phone")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
