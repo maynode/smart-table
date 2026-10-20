@@ -102,21 +102,34 @@ export class AutomationRunnerService {
   async triggerRecordCreated(
     recordId: string,
     outerTx?: Prisma.TransactionClient,
+    idempotencyKey?: string,
   ): Promise<AutomationRunResult[]> {
-    return this.triggerRecord('recordCreated', recordId, outerTx);
+    return this.triggerRecord(
+      'recordCreated',
+      recordId,
+      outerTx,
+      idempotencyKey,
+    );
   }
 
   async triggerRecordUpdated(
     recordId: string,
     outerTx?: Prisma.TransactionClient,
+    idempotencyKey?: string,
   ): Promise<AutomationRunResult[]> {
-    return this.triggerRecord('recordUpdated', recordId, outerTx);
+    return this.triggerRecord(
+      'recordUpdated',
+      recordId,
+      outerTx,
+      idempotencyKey,
+    );
   }
 
   private async triggerRecord(
     type: 'recordCreated' | 'recordUpdated',
     recordId: string,
     outerTx?: Prisma.TransactionClient,
+    idempotencyKey?: string,
   ): Promise<AutomationRunResult[]> {
     const db = outerTx ?? this.prisma;
     const record = await db.recordRow.findUnique({ where: { id: recordId } });
@@ -148,7 +161,7 @@ export class AutomationRunnerService {
           automation.id,
           {
             triggerRecordId: record.id,
-            idempotencyKey: `${type}:${record.id}`,
+            idempotencyKey: idempotencyKey ?? `${type}:${record.id}`,
           },
           outerTx,
         ),

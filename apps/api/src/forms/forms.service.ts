@@ -1,14 +1,16 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, type Form } from '@prisma/client';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import * as QRCode from 'qrcode';
 import {
   buildSuccessValues,
@@ -17,6 +19,7 @@ import {
   type FormFieldConfig,
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type {
@@ -40,6 +43,7 @@ export class FormsService {
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
     private readonly storage: StorageService,
+    private readonly automationRunner: AutomationRunnerService,
     private readonly config: ConfigService,
   ) {
     this.publicBase = (
@@ -287,23 +291,60 @@ export class FormsService {
       }
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const record = await tx.recordRow.create({
-        data: {
-          sheetId: form.sheetId,
-          cells: sanitized as Prisma.InputJsonValue,
-        },
-      });
-      const submission = await tx.formSubmission.create({
-        data: {
-          formId: form.id,
-          recordId: record.id,
-          status: 'completed',
-          cells: sanitized as Prisma.InputJsonValue,
-        },
-      });
-      return { record, submission };
-    });
+    const submissionId = randomUUID();
+
+    // Claim, form record, and submission commit or roll back together: a
+    // submission either gets a serial and a record, or writes nothing at all.
+    const outcome = await this.prisma.$transaction(
+      async (tx) => {
+        const record = await tx.recordRow.create({
+          data: {
+            sheetId: form.sheetId,
+            cells: sanitized as Prisma.InputJsonValue,
+          },
+        });
+        const submission = await tx.formSubmission.create({
+          data: {
+            id: submissionId,
+            formId: form.id,
+            recordId: record.id,
+            status: 'processing',
+            cells: sanitized as Prisma.InputJsonValue,
+          },
+        });
+
+        const runs = await this.automationRunner.triggerRecordCreated(
+          record.id,
+          tx,
+          `submission:${submissionId}`,
+        );
+
+        const blocked = runs.find(
+          (run) => run.status === 'failed' || run.status === 'skipped',
+        );
+        if (blocked) {
+          if (blocked.status === 'skipped') {
+            throw new ConflictException('序列号已领取完毕，请稍后再试');
+          }
+          throw new UnprocessableEntityException(
+            `自动化执行失败：${blocked.error ?? '未知错误'}`,
+          );
+        }
+
+        const stepOutputs = Object.assign(
+          {},
+          ...runs.map((run) => run.stepOutputs),
+        ) as Record<string, string>;
+
+        const completed = await tx.formSubmission.update({
+          where: { id: submission.id },
+          data: { status: 'completed' },
+        });
+
+        return { record, submission: completed, stepOutputs };
+      },
+      { timeout: 30_000 },
+    );
 
     const formCellsByName: Record<string, unknown> = {};
     for (const field of form.sheet.fields) {
@@ -311,17 +352,21 @@ export class FormsService {
         formCellsByName[field.name] = sanitized[field.id];
       }
     }
-    const successValues = buildSuccessValues({ formCells: formCellsByName });
+    const successValues = buildSuccessValues({
+      formCells: formCellsByName,
+      stepOutputs: outcome.stepOutputs,
+    });
     const html = renderSuccessTemplate(
       form.successTemplate || '提交成功',
       successValues,
     );
 
     return {
-      submissionId: result.submission.id,
-      recordId: result.record.id,
+      submissionId: outcome.submission.id,
+      recordId: outcome.record.id,
       status: 'completed',
       success: { html },
+      stepOutputs: outcome.stepOutputs,
     };
   }
 
