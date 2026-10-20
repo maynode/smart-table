@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { resolveRecordPageLimit } from 'shared';
+import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
@@ -14,9 +16,12 @@ import type { UpdateFieldDto } from './dto/update-field.dto';
 
 @Injectable()
 export class SheetsService {
+  private readonly logger = new Logger(SheetsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly automationRunner: AutomationRunnerService,
   ) {}
 
   private async requireBase(
@@ -149,12 +154,25 @@ export class SheetsService {
     sheetId: string,
     userId: string,
     cells: Record<string, unknown>,
-  ) {    await this.requireSheet(sheetId, userId, 'editor');
+  ) {
+    await this.requireSheet(sheetId, userId, 'editor');
     await this.assertKnownFields(sheetId, cells);
 
-    return this.prisma.recordRow.create({
+    const record = await this.prisma.recordRow.create({
       data: { sheetId, cells: cells as Prisma.InputJsonValue },
     });
+
+    try {
+      await this.automationRunner.triggerRecordCreated(record.id);
+    } catch (error) {
+      this.logger.error(
+        `automation trigger failed for record ${record.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    return record;
   }
 
   async updateRecord(

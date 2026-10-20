@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { BasesModule } from './bases/bases.module';
 import { CommentsModule } from './comments/comments.module';
+import { AutomationsModule } from './automations/automations.module';
 import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { PrismaModule } from './prisma/prisma.module';
@@ -22,6 +23,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     BasesModule,
     SheetsModule,
     CommentsModule,
+    AutomationsModule,
     FormsModule,
     StorageModule,
   ],

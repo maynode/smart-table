@@ -21,6 +21,7 @@ model User {
 
   memberships WorkspaceMember[]
   comments    Comment[]
+  notifications Notification[]
 
   @@map("users")
 }
@@ -70,6 +71,7 @@ model Base {
 
   sheets Sheet[]
   forms  Form[]
+  automations Automation[]
 
   @@index([workspaceId])
   @@map("bases")
@@ -176,4 +178,85 @@ model FormSubmission {
 
   @@index([formId, createdAt])
   @@map("form_submissions")
+}
+
+model Automation {
+  id           String   @id @default(uuid()) @db.Uuid
+  baseId       String   @map("base_id") @db.Uuid
+  name         String
+  enabled      Boolean  @default(true)
+  trigger      Json
+  steps        Json     @default("[]")
+  onFindEmpty  String   @default("continue") @map("on_find_empty")
+  monthlyQuota Int?     @map("monthly_quota")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  base Base            @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  runs AutomationRun[]
+
+  @@index([baseId])
+  @@map("automations")
+}
+
+model AutomationRun {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  automationId    String    @map("automation_id") @db.Uuid
+  status          String    @default("running")
+  idempotencyKey  String?   @map("idempotency_key")
+  triggerRecordId String?   @map("trigger_record_id") @db.Uuid
+  outputs         Json      @default("{}")
+  error           String?
+  startedAt       DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime? @map("finished_at") @db.Timestamptz(6)
+  durationMs      Int?      @map("duration_ms")
+
+  automation Automation        @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  steps      AutomationRunStep[]
+
+  @@unique([automationId, idempotencyKey])
+  @@index([automationId, startedAt])
+  @@map("automation_runs")
+}
+
+model AutomationRunStep {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  runId      String   @map("run_id") @db.Uuid
+  stepIndex  Int      @map("step_index")
+  type       String
+  status     String
+  output     Json     @default("{}")
+  error      String?
+  durationMs Int?     @map("duration_ms")
+
+  run AutomationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, stepIndex])
+  @@map("automation_run_steps")
+}
+
+model Notification {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  title     String
+  body      String
+  data      Json      @default("{}")
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model GroupChat {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  baseId    String   @map("base_id") @db.Uuid
+  name      String
+  memberIds Json     @default("[]") @map("member_ids")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([baseId])
+  @@map("group_chats")
 }
