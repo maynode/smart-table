@@ -69,6 +69,7 @@ model Base {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   sheets Sheet[]
+  forms  Form[]
 
   @@index([workspaceId])
   @@map("bases")
@@ -85,6 +86,7 @@ model Sheet {
   fields  Field[]
   records RecordRow[]
   comments Comment[]
+  forms   Form[]
 
   @@index([baseId])
   @@map("sheets")
@@ -138,4 +140,40 @@ model Comment {
 
   @@index([sheetId, createdAt])
   @@map("comments")
+}
+
+model Form {
+  id              String   @id @default(uuid()) @db.Uuid
+  baseId          String   @map("base_id") @db.Uuid
+  sheetId         String   @map("sheet_id") @db.Uuid
+  name            String
+  coverUrl        String?  @map("cover_url")
+  fields          Json     @default("[]")
+  share           Json     @default("{}")
+  shareToken      String   @unique @map("share_token")
+  successTemplate String   @default("") @map("success_template")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  base        Base             @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  sheet       Sheet            @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  submissions FormSubmission[]
+
+  @@index([baseId])
+  @@index([sheetId])
+  @@map("forms")
+}
+
+model FormSubmission {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  formId    String   @map("form_id") @db.Uuid
+  recordId  String?  @map("record_id") @db.Uuid
+  status    String   @default("completed")
+  cells     Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  form Form @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@index([formId, createdAt])
+  @@map("form_submissions")
 }
