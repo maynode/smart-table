@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
@@ -22,5 +22,18 @@ export class BasesService {
       where: { workspaceId },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async getDetail(baseId: string, userId: string) {
+    const base = await this.prisma.base.findUnique({ where: { id: baseId } });
+    if (!base) {
+      throw new NotFoundException('Base 不存在');
+    }
+    await this.workspacesService.requireMember(
+      base.workspaceId,
+      userId,
+      'viewer',
+    );
+    return base;
   }
 }

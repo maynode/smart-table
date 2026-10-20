@@ -1,6 +1,6 @@
-import { createApp, h } from 'vue';
+import { createApp } from 'vue';
+import App from './App.vue';
+import { router } from './router';
+import './styles.css';
 
-// Task 6 replaces this placeholder with the real shell + Canvas grid.
-createApp({
-  render: () => h('div', { id: 'app-boot' }, 'Smart Table'),
-}).mount('#app');
+createApp(App).use(router).mount('#app');

@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
+import type { UpdateFieldDto } from './dto/update-field.dto';
 
 @Injectable()
 export class SheetsService {
@@ -55,10 +56,26 @@ export class SheetsService {
     return sheet;
   }
 
+  async assertSheetAccess(
+    sheetId: string,
+    userId: string,
+    minimum: WorkspaceRole,
+  ) {
+    return this.requireSheet(sheetId, userId, minimum);
+  }
+
   async createSheet(baseId: string, userId: string, name: string) {
     await this.requireBase(baseId, userId, 'editor');
     return this.prisma.sheet.create({
       data: { baseId, name: name.trim() },
+    });
+  }
+
+  async listByBase(baseId: string, userId: string) {
+    await this.requireBase(baseId, userId, 'viewer');
+    return this.prisma.sheet.findMany({
+      where: { baseId },
+      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -100,12 +117,39 @@ export class SheetsService {
     });
   }
 
+  async updateField(fieldId: string, userId: string, dto: UpdateFieldDto) {
+    const field = await this.prisma.field.findUnique({
+      where: { id: fieldId },
+      include: { sheet: { include: { base: true } } },
+    });
+    if (!field) {
+      throw new NotFoundException('字段不存在');
+    }
+    await this.workspacesService.requireMember(
+      field.sheet.base.workspaceId,
+      userId,
+      'editor',
+    );
+
+    return this.prisma.field.update({
+      where: { id: fieldId },
+      data: {
+        ...(dto.name === undefined ? {} : { name: dto.name.trim() }),
+        ...(dto.hidden === undefined ? {} : { hidden: dto.hidden }),
+        ...(dto.required === undefined ? {} : { required: dto.required }),
+        ...(dto.order === undefined ? {} : { order: dto.order }),
+        ...(dto.options === undefined
+          ? {}
+          : { options: dto.options as Prisma.InputJsonValue }),
+      },
+    });
+  }
+
   async createRecord(
     sheetId: string,
     userId: string,
     cells: Record<string, unknown>,
-  ) {
-    await this.requireSheet(sheetId, userId, 'editor');
+  ) {    await this.requireSheet(sheetId, userId, 'editor');
     await this.assertKnownFields(sheetId, cells);
 
     return this.prisma.recordRow.create({

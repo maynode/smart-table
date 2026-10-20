@@ -1,0 +1,380 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import GridPanel from '../components/GridPanel.vue';
+import { ApiError } from '../api/client';
+import { endpoints } from '../api/endpoints';
+import { toast } from '../ui/toast';
+import type {
+  BaseDto,
+  CommentDto,
+  FieldDto,
+  MemberDto,
+  RecordDto,
+  SheetDto,
+  WorkspaceDto,
+} from '../api/types';
+
+const route = useRoute();
+const router = useRouter();
+const workspaceId = computed(() => String(route.params.workspaceId));
+const baseId = computed(() => String(route.params.baseId));
+
+const workspace = ref<WorkspaceDto | null>(null);
+const base = ref<BaseDto | null>(null);
+const sheets = ref<SheetDto[]>([]);
+const activeSheet = ref<SheetDto | null>(null);
+const records = ref<RecordDto[]>([]);
+const nextCursor = ref<string | null>(null);
+const loading = ref(false);
+const bootError = ref('');
+
+const commentsOpen = ref(false);
+const comments = ref<CommentDto[]>([]);
+const commentDraft = ref('');
+const commentSending = ref(false);
+
+const membersOpen = ref(false);
+const members = ref<MemberDto[]>([]);
+
+const sidebarObjects = [
+  { icon: '📝', label: '收集表单' },
+  { icon: '📊', label: '仪表盘' },
+  { icon: '📈', label: '分析报告' },
+  { icon: '📁', label: '文件夹' },
+  { icon: '📥', label: '导入' },
+  { icon: '🔄', label: '同步' },
+  { icon: '🧩', label: '模板' },
+];
+
+function messageOf(error: unknown): string {
+  return error instanceof ApiError ? error.message : '网络错误，请稍后重试';
+}
+
+async function bootstrap(): Promise<void> {
+  bootError.value = '';
+  try {
+    const [ws, baseDetail, sheetList] = await Promise.all([
+      endpoints.getWorkspace(workspaceId.value),
+      endpoints.getBase(baseId.value),
+      endpoints.listSheets(baseId.value),
+    ]);
+    workspace.value = ws;
+    base.value = baseDetail;
+    sheets.value = sheetList;
+
+    const requested =
+      typeof route.query.sheet === 'string' ? route.query.sheet : null;
+    const target = requested ?? sheetList[0]?.id;
+    if (target) {
+      await selectSheet(target, false);
+    }
+  } catch (error) {
+    bootError.value = messageOf(error);
+  }
+}
+
+async function selectSheet(sheetId: string, push = true): Promise<void> {
+  if (push && route.query.sheet !== sheetId) {
+    await router.replace({ query: { ...route.query, sheet: sheetId } });
+  }
+  loading.value = true;
+  try {
+    const detail = await endpoints.getSheet(sheetId);
+    activeSheet.value = detail;
+    const page = await endpoints.listRecords(sheetId, null, 100);
+    records.value = page.records;
+    nextCursor.value = page.nextCursor;
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+watch(
+  () => route.query.sheet,
+  (value) => {
+    if (typeof value === 'string' && value !== activeSheet.value?.id) {
+      void selectSheet(value, false);
+    }
+  },
+);
+
+async function addRow(): Promise<void> {
+  if (!activeSheet.value) return;
+  try {
+    const record = await endpoints.createRecord(activeSheet.value.id, {});
+    records.value = [...records.value, record];
+    toast('已添加一行');
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function commitCell(payload: {
+  record: RecordDto;
+  field: FieldDto;
+  value: string;
+}): Promise<void> {
+  try {
+    const updated = await endpoints.updateRecord(
+      payload.record.id,
+      { [payload.field.id]: payload.value },
+      payload.record.version,
+    );
+    records.value = records.value.map((record) =>
+      record.id === updated.id ? updated : record,
+    );
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function loadMore(): Promise<void> {
+  if (!activeSheet.value || !nextCursor.value || loading.value) return;
+  loading.value = true;
+  try {
+    const page = await endpoints.listRecords(
+      activeSheet.value.id,
+      nextCursor.value,
+      100,
+    );
+    records.value = [...records.value, ...page.records];
+    nextCursor.value = page.nextCursor;
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function toggleField(payload: {
+  field: FieldDto;
+  hidden: boolean;
+}): Promise<void> {
+  try {
+    const updated = await endpoints.updateField(payload.field.id, {
+      hidden: payload.hidden,
+    });
+    if (activeSheet.value) {
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).map((field) =>
+          field.id === updated.id ? updated : field,
+        ),
+      };
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function createSheet(): Promise<void> {
+  const name = window.prompt('新工作表名称', '新工作表');
+  if (!name) return;
+  try {
+    const sheet = await endpoints.createSheet(baseId.value, name);
+    sheets.value = [...sheets.value, sheet];
+    await selectSheet(sheet.id);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function openComments(): Promise<void> {
+  commentsOpen.value = true;
+  if (!activeSheet.value) return;
+  try {
+    comments.value = await endpoints.listComments(activeSheet.value.id);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function postComment(): Promise<void> {
+  if (!activeSheet.value || !commentDraft.value.trim() || commentSending.value) {
+    return;
+  }
+  commentSending.value = true;
+  try {
+    const comment = await endpoints.createComment(
+      activeSheet.value.id,
+      commentDraft.value.trim(),
+    );
+    comments.value = [...comments.value, comment];
+    commentDraft.value = '';
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    commentSending.value = false;
+  }
+}
+
+async function openMembers(): Promise<void> {
+  membersOpen.value = true;
+  try {
+    members.value = await endpoints.listMembers(workspaceId.value);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+function comingSoon(label: string): void {
+  toast(`${label}：该能力将在后续任务开放`);
+}
+
+function roleLabel(role: string): string {
+  return (
+    {
+      owner: '所有者',
+      admin: '管理员',
+      editor: '可编辑',
+      viewer: '只读',
+    }[role] ?? role
+  );
+}
+
+onMounted(bootstrap);
+</script>
+
+<template>
+  <div class="shell">
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand-mark small">▦</span>
+        <nav class="breadcrumb">
+          <button class="crumb-link" @click="router.push('/')">
+            {{ workspace?.name ?? '工作区' }}
+          </button>
+          <span class="crumb-sep">/</span>
+          <span class="crumb-current">{{ base?.name ?? 'Base' }}</span>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <button class="topbar-btn" @click="openMembers">成员</button>
+        <button class="topbar-btn" @click="comingSoon('分享')">分享</button>
+        <button
+          class="topbar-btn"
+          data-testid="comments-toggle"
+          @click="openComments"
+        >
+          评论
+        </button>
+        <button class="topbar-btn" @click="comingSoon('内容权限')">
+          内容权限
+        </button>
+        <button class="topbar-btn" @click="comingSoon('自动化')">自动化</button>
+        <button class="topbar-btn" @click="comingSoon('更多')">更多</button>
+      </div>
+    </header>
+
+    <div class="base-body">
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>工作表</span>
+            <button class="icon-btn" title="新建工作表" @click="createSheet">
+              +
+            </button>
+          </div>
+          <button
+            v-for="sheet in sheets"
+            :key="sheet.id"
+            class="sidebar-item"
+            :class="{ active: sheet.id === activeSheet?.id }"
+            @click="selectSheet(sheet.id)"
+          >
+            <span class="sheet-icon">▦</span>{{ sheet.name }}
+          </button>
+        </div>
+
+        <div class="sidebar-section">
+          <button
+            v-for="item in sidebarObjects"
+            :key="item.label"
+            class="sidebar-item muted-item"
+            @click="comingSoon(item.label)"
+          >
+            <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
+          </button>
+        </div>
+      </aside>
+
+      <main class="base-main">
+        <div v-if="bootError" class="empty-state">{{ bootError }}</div>
+        <GridPanel
+          v-else-if="activeSheet"
+          :key="activeSheet.id"
+          :sheet-id="activeSheet.id"
+          :sheet-name="activeSheet.name"
+          :fields="activeSheet.fields ?? []"
+          :records="records"
+          :next-cursor="nextCursor"
+          :loading="loading"
+          @add-row="addRow"
+          @load-more="loadMore"
+          @commit="commitCell"
+          @toggle-field="toggleField"
+        />
+        <div v-else class="empty-state">还没有工作表，点击左侧 + 新建。</div>
+      </main>
+    </div>
+
+    <div
+      v-if="commentsOpen"
+      class="drawer-mask"
+      @click.self="commentsOpen = false"
+    ></div>
+    <aside v-if="commentsOpen" class="comments-drawer">
+      <header class="drawer-header">
+        <h3>评论</h3>
+        <button class="icon-btn" @click="commentsOpen = false">×</button>
+      </header>
+      <ul class="comment-list">
+        <li v-for="comment in comments" :key="comment.id">
+          <div class="comment-author">{{ comment.author.name }}</div>
+          <p>{{ comment.body }}</p>
+        </li>
+        <li v-if="comments.length === 0" class="muted">还没有评论。</li>
+      </ul>
+      <form class="comment-form" @submit.prevent="postComment">
+        <textarea
+          v-model="commentDraft"
+          data-testid="comment-input"
+          rows="3"
+          placeholder="输入评论，@ 同事"
+        ></textarea>
+        <button
+          class="btn btn-primary"
+          data-testid="comment-send"
+          :disabled="commentSending || !commentDraft.trim()"
+        >
+          {{ commentSending ? '发送中…' : '发送' }}
+        </button>
+      </form>
+    </aside>
+
+    <div
+      v-if="membersOpen"
+      class="modal-mask"
+      @click.self="membersOpen = false"
+    >
+      <div class="modal">
+        <header class="drawer-header">
+          <h3>工作区成员</h3>
+          <button class="icon-btn" @click="membersOpen = false">×</button>
+        </header>
+        <ul class="member-list">
+          <li v-for="member in members" :key="member.userId">
+            <span class="avatar">{{ member.name.slice(0, 1) }}</span>
+            <span class="member-name">{{ member.name }}</span>
+            <span class="member-email">{{ member.email }}</span>
+            <span class="role-badge">{{ roleLabel(member.role) }}</span>
+          </li>
+        </ul>
+        <p v-if="members.length === 0" class="muted">加载中…</p>
+      </div>
+    </div>
+  </div>
+</template>
