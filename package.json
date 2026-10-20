@@ -1,0 +1,15 @@
+{
+  "name": "smart-table",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private-deployment smart table (WeCom smart table + dashboard parity, stronger claim/success-page/performance)",
+  "packageManager": "pnpm@8.3.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "dev": "pnpm -r --parallel --if-present dev"
+  }
+}

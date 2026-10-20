@@ -1,0 +1,107 @@
+name: smart-table
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smart-table-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smarttable}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarttable_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-smarttable}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p2
+    container_name: smart-table-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-smarttable}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-smarttable_dev_password}
+      DB_NAME: ${POSTGRES_DB:-smarttable}
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "25"
+      ADMIN_USERS: ${POSTGRES_USER:-smarttable}
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    container_name: smart-table-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # MinIO is opt-in: only needed when S3_DRIVER=minio.
+  #   docker compose --profile object-storage up -d
+  # In restricted networks, load a MinIO image locally and point MINIO_IMAGE at it.
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2024-10-13T13-34-11Z}
+    container_name: smart-table-minio
+    profiles: ["object-storage"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smarttable}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smarttable_dev_password}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2024-10-08T09-37-26Z}
+    container_name: smart-table-minio-init
+    profiles: ["object-storage"]
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done
+        mc mb --ignore-existing "local/$${S3_BUCKET}"
+        mc anonymous set none "local/$${S3_BUCKET}"
+        exit 0
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smarttable}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smarttable_dev_password}
+      S3_BUCKET: ${S3_BUCKET:-smart-table}
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
