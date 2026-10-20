@@ -1,6 +1,6 @@
 # 企业微信 — 参考截图（分类存放）
 
-**逐张解析与查阅：[`SCREENSHOT-INDEX.md`](./SCREENSHOT-INDEX.md)**（24 张已过目入库）。
+**逐张解析与查阅：[`SCREENSHOT-INDEX.md`](./SCREENSHOT-INDEX.md)**（47 张已过目入库）。
 
 ```
 wecom/
