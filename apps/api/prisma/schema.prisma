@@ -67,6 +67,59 @@ model Base {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  sheets Sheet[]
+
   @@index([workspaceId])
   @@map("bases")
+}
+
+model Sheet {
+  id        String   @id @default(uuid()) @db.Uuid
+  baseId    String   @map("base_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  base    Base        @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  fields  Field[]
+  records RecordRow[]
+
+  @@index([baseId])
+  @@map("sheets")
+}
+
+model Field {
+  id        String   @id @default(uuid()) @db.Uuid
+  sheetId   String   @map("sheet_id") @db.Uuid
+  name      String
+  type      String
+  options   Json?
+  order     Int      @default(0)
+  required  Boolean  @default(false)
+  hidden    Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId])
+  @@map("fields")
+}
+
+// Table name is "records"; the Prisma model avoids shadowing TS's Record utility.
+model RecordRow {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  sheetId     String   @map("sheet_id") @db.Uuid
+  cells       Json     @default("{}")
+  version     Int      @default(1)
+  // Indexable side column for claim hot paths (never the only representation).
+  claimStatus String?  @map("claim_status")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId, id])
+  @@index([sheetId, claimStatus])
+  @@map("records")
 }
