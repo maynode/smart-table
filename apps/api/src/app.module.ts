@@ -11,6 +11,8 @@ import { FoldersModule } from './folders/folders.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { OpenApiModule } from './openapi/openapi.module';
+import { AuditModule } from './audit/audit.module';
+import { QuotasModule } from './quotas/quotas.module';
 import { PublicViewsModule } from './public-views/public-views.module';
 import { SharingModule } from './sharing/sharing.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -47,6 +49,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     ApiKeysModule,
     WebhooksModule,
     OpenApiModule,
+    AuditModule,
+    QuotasModule,
     TemplatesModule,
   ],
   controllers: [HealthController],

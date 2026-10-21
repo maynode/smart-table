@@ -445,3 +445,25 @@ export interface WebhookDeliveryDto {
   error: string;
   createdAt: string;
 }
+
+export interface QuotaLimits {
+  maxSeats: number;
+  maxStorageBytes: number;
+  maxAutomationRunsPerMonth: number;
+}
+
+export interface QuotaSnapshot {
+  workspaceId: string;
+  canEdit: boolean;
+  limits: QuotaLimits;
+  usage: {
+    seats: number;
+    storageBytes: number;
+    automationRunsThisMonth: number;
+  };
+  exceeded: {
+    seats: boolean;
+    storage: boolean;
+    automationRuns: boolean;
+  };
+}

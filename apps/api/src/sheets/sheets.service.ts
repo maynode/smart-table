@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { AuditService } from '../audit/audit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
@@ -28,6 +29,7 @@ export class SheetsService {
     private readonly permissions: PermissionsService,
     private readonly sharing: SharingService,
     private readonly webhooks: WebhooksService,
+    private readonly audit: AuditService,
   ) {}
 
   private async requireBase(
@@ -215,6 +217,13 @@ export class SheetsService {
       .catch((error: unknown) => {
         this.logger.warn(`webhook record.created failed: ${String(error)}`);
       });
+    void this.audit.recordSheet(
+      sheetId,
+      userId,
+      'record.created',
+      record.id,
+      { cells: record.cells },
+    );
 
     return record;
   }
@@ -246,6 +255,13 @@ export class SheetsService {
       .catch((error: unknown) => {
         this.logger.warn(`webhook record.deleted failed: ${String(error)}`);
       });
+    void this.audit.recordSheet(
+      record.sheetId,
+      userId,
+      'record.deleted',
+      recordId,
+      { cells: record.cells },
+    );
     return { id: recordId, deleted: true };
   }
 
@@ -319,6 +335,13 @@ export class SheetsService {
       .catch((error: unknown) => {
         this.logger.warn(`webhook record.updated failed: ${String(error)}`);
       });
+    void this.audit.recordSheet(
+      record.sheetId,
+      userId,
+      'record.updated',
+      recordId,
+      { changes: cells, version: updatedRecord.version },
+    );
 
     return updatedRecord;
   }

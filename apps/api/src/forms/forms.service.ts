@@ -27,6 +27,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { createRedisConnection } from '../queue/redis-connection';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { QuotasService } from '../quotas/quotas.service';
 import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type {
@@ -65,6 +66,7 @@ export class FormsService implements OnModuleDestroy {
     private readonly automationRunner: AutomationRunnerService,
     private readonly config: ConfigService,
     private readonly metrics: MetricsService,
+    private readonly quotas: QuotasService,
   ) {
     this.publicBase = (
       this.config.get<string>('PUBLIC_FORM_BASE_URL') ??
@@ -226,13 +228,22 @@ export class FormsService implements OnModuleDestroy {
     buffer: Buffer,
     mimetype: string,
   ) {
-    const form = await this.prisma.form.findUnique({ where: { id: formId } });
+    const form = await this.prisma.form.findUnique({
+      where: { id: formId },
+      include: { base: true },
+    });
     if (!form) {
       throw new NotFoundException('表单不存在');
     }
     await this.requireBaseEditor(form.baseId, userId);
 
+    await this.quotas.assertStorage(form.base.workspaceId, buffer.byteLength);
     const coverUrl = await this.storage.saveCover(buffer, mimetype);
+    await this.quotas.recordStorage(
+      form.base.workspaceId,
+      coverUrl,
+      buffer.byteLength,
+    );
     const updated = await this.prisma.form.update({
       where: { id: formId },
       data: { coverUrl },

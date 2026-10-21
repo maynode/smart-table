@@ -32,6 +32,7 @@ import type {
   ApiKeyDto,
   WebhookDto,
   WebhookDeliveryDto,
+  QuotaSnapshot,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -392,5 +393,18 @@ export const endpoints = {
   retryWebhookDelivery: (deliveryId: string) =>
     api<WebhookDeliveryDto>(`/webhook-deliveries/${deliveryId}/retry`, {
       method: 'POST',
+    }),
+
+  getQuota: (workspaceId: string) =>
+    api<QuotaSnapshot>(`/workspaces/${workspaceId}/quota`),
+
+  updateInstallationQuota: (body: {
+    maxSeats?: number;
+    maxStorageBytes?: number;
+    maxAutomationRunsPerMonth?: number;
+  }) =>
+    api<{ key: string; maxSeats: number }>('/admin/quotas', {
+      method: 'PUT',
+      body: { scope: 'installation', ...body },
     }),
 };

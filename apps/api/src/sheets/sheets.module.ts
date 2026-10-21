@@ -3,6 +3,7 @@ import { AutomationsModule } from '../automations/automations.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { SharingModule } from '../sharing/sharing.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { AuditModule } from '../audit/audit.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { ExcelController } from './excel.controller';
 import { ExcelService } from './excel.service';
@@ -16,6 +17,7 @@ import { SheetsService } from './sheets.service';
     PermissionsModule,
     SharingModule,
     WebhooksModule,
+    AuditModule,
   ],
   controllers: [SheetsController, ExcelController],
   providers: [SheetsService, ExcelService],

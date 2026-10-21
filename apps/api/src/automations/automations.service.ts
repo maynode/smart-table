@@ -6,6 +6,7 @@ import {
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import type { AutomationStep } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { QuotasService } from '../quotas/quotas.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { AutomationQueueService } from './automation-queue.service';
 import {
@@ -34,6 +35,7 @@ export class AutomationsService {
     private readonly workspacesService: WorkspacesService,
     private readonly runner: AutomationRunnerService,
     private readonly queue: AutomationQueueService,
+    private readonly quotas: QuotasService,
   ) {}
 
   async create(userId: string, dto: CreateAutomationDto) {
@@ -178,6 +180,11 @@ export class AutomationsService {
     context: AutomationRunContext,
   ) {
     await this.findAccessible(automationId, userId, 'editor');
+    const automation = await this.prisma.automation.findUniqueOrThrow({
+      where: { id: automationId },
+      include: { base: true },
+    });
+    await this.quotas.assertAutomationRun(automation.base.workspaceId);
     if (!this.queue.isQueueEnabled()) {
       return this.runner.runAutomation(automationId, context);
     }

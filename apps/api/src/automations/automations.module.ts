@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { QuotasModule } from '../quotas/quotas.module';
 import { AutomationQueueService } from './automation-queue.service';
 import { AutomationRunnerService } from './automation-runner.service';
 import { AutomationsController } from './automations.controller';
@@ -11,7 +12,7 @@ import {
 import { NotificationsController } from './notifications.controller';
 
 @Module({
-  imports: [WorkspacesModule],
+  imports: [WorkspacesModule, QuotasModule],
   controllers: [AutomationsController, NotificationsController],
   providers: [
     AutomationsService,

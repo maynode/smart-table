@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { QuotasService } from '../quotas/quotas.service';
 import { roleAtLeast } from './workspace-roles';
 
 export interface WorkspaceWithRole {
@@ -19,7 +20,10 @@ export interface WorkspaceWithRole {
 
 @Injectable()
 export class WorkspacesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly quotas: QuotasService,
+  ) {}
 
   async create(userId: string, name: string): Promise<WorkspaceWithRole> {
     const workspace = await this.prisma.$transaction(async (tx) => {
@@ -114,6 +118,8 @@ export class WorkspacesService {
     if (!user) {
       throw new NotFoundException('该邮箱尚未注册');
     }
+
+    await this.quotas.assertSeats(workspaceId);
 
     try {
       const member = await this.prisma.workspaceMember.create({

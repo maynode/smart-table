@@ -11,6 +11,7 @@ import TemplatePanel from '../components/TemplatePanel.vue';
 import SharePanel from '../components/SharePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import DeveloperPanel from '../components/DeveloperPanel.vue';
+import QuotaPanel from '../components/QuotaPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -62,6 +63,7 @@ const templatesOpen = ref(false);
 const shareOpen = ref(false);
 const publicViewOpen = ref(false);
 const developerOpen = ref(false);
+const quotaOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -404,6 +406,13 @@ onMounted(bootstrap);
         </button>
         <button
           class="topbar-btn"
+          data-testid="quota-open"
+          @click="quotaOpen = true"
+        >
+          配额
+        </button>
+        <button
+          class="topbar-btn"
           data-testid="developer-open"
           @click="developerOpen = true"
         >
@@ -632,6 +641,13 @@ onMounted(bootstrap);
         :base-id="baseId"
         :sheet-id="activeSheet?.id"
         @close="shareOpen = false"
+      />
+    </div>
+
+    <div v-if="quotaOpen" class="modal-mask" @click.self="quotaOpen = false">
+      <QuotaPanel
+        :workspace-id="workspace?.id ?? ''"
+        @close="quotaOpen = false"
       />
     </div>
 
