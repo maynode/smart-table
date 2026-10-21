@@ -456,4 +456,15 @@ export const endpoints = {
     if (!response.ok) throw new ApiError(response.status, data);
     return data as { id: string; filename: string; size: number };
   },
+
+  getWecomConfig: () =>
+    api<{ enabled: boolean; authorizeUrl: string; redirectUri: string }>(
+      '/auth/wecom/config',
+    ),
+
+  loginWithWecom: (code: string) =>
+    api<AuthResult>('/auth/wecom/callback', {
+      method: 'POST',
+      body: { code },
+    }),
 };

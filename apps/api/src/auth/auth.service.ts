@@ -78,6 +78,10 @@ export class AuthService {
     return toPublicUser(user);
   }
 
+  async issueForUser(user: User): Promise<AuthResult> {
+    return this.issueToken(user);
+  }
+
   private async issueToken(user: User): Promise<AuthResult> {
     const accessToken = await this.jwt.signAsync({
       sub: user.id,

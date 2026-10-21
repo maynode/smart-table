@@ -5,6 +5,8 @@ import type { JwtSignOptions } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { WecomAuthService } from './wecom-auth.service';
+import { WecomAuthController } from './wecom-auth.controller';
 
 @Global()
 @Module({
@@ -20,8 +22,8 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
+  controllers: [AuthController, WecomAuthController],
+  providers: [AuthService, JwtAuthGuard, WecomAuthService],
   exports: [AuthService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

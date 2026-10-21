@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
   WorkspaceRole,
@@ -59,6 +59,8 @@ interface StepExecution {
 
 @Injectable()
 export class AutomationRunnerService {
+  private readonly logger = new Logger(AutomationRunnerService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(NOTIFY_ADAPTER) private readonly notify: NotifyAdapter,
@@ -535,6 +537,19 @@ export class AutomationRunnerService {
       await tx.notification.create({
         data: { userId, title, body: text, data },
       });
+    }
+    try {
+      await this.notify.sendMessage({
+        userIds: recipients,
+        title,
+        text,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `external notify failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
 
     return {

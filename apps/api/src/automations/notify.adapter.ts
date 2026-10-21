@@ -17,6 +17,11 @@ export interface AddGroupMembersInput {
 }
 
 export interface NotifyAdapter {
+  sendMessage(input: {
+    userIds: string[];
+    title: string;
+    text: string;
+  }): Promise<{ delivered: number }>;
   startGroupChat(input: StartGroupChatInput): Promise<{ groupChatId: string }>;
   addGroupMembers(
     input: AddGroupMembersInput,
@@ -30,6 +35,15 @@ export interface NotifyAdapter {
 @Injectable()
 export class LocalNotifyAdapter implements NotifyAdapter {
   constructor(private readonly prisma: PrismaService) {}
+
+  async sendMessage(input: {
+    userIds: string[];
+    title: string;
+    text: string;
+  }): Promise<{ delivered: number }> {
+    // Local mode keeps the in-app notification rows only.
+    return { delivered: input.userIds.length };
+  }
 
   async startGroupChat(
     input: StartGroupChatInput,

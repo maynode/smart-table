@@ -16,6 +16,7 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   name         String
+  wecomUserId  String?  @unique @map("wecom_user_id")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
