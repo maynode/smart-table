@@ -8,6 +8,7 @@ import {
   type ViewQuery,
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { buildFilterSql, buildSortSql } from '../automations/automation-filter.sql';
 
@@ -21,6 +22,7 @@ export class ViewsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   async query(sheetId: string, userId: string, query: ViewQuery) {
@@ -36,6 +38,12 @@ export class ViewsService {
       sheet.base.workspaceId,
       userId,
       'viewer',
+    );
+    const decision = await this.permissions.assertCan(
+      'sheet',
+      sheetId,
+      userId,
+      'read',
     );
 
     const fields = sheet.fields as Field[];
@@ -71,9 +79,15 @@ export class ViewsService {
       },
     }));
 
+    const visibleRecords = this.permissions.applyReadScope(
+      decision,
+      records,
+      userId,
+    ) as typeof records;
+
     const colors: Record<string, string> = {};
     const cellColors: Record<string, Record<string, string>> = {};
-    for (const record of records) {
+    for (const record of visibleRecords) {
       for (const rule of query.colorRules ?? []) {
         if (!this.matchesColorRule(rule, record.cells)) continue;
         if (rule.scope === 'cell') {
@@ -88,9 +102,9 @@ export class ViewsService {
     }
 
     return {
-      records,
-      total: records.length,
-      groups: this.buildGroups(records, query.groups ?? [], fields),
+      records: visibleRecords,
+      total: visibleRecords.length,
+      groups: this.buildGroups(visibleRecords, query.groups ?? [], fields),
       colors,
       cellColors,
       rowHeight: query.rowHeight ?? 'medium',

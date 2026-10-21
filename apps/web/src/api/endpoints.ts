@@ -17,6 +17,8 @@ import type {
   UpsertFormPayload,
   ViewQueryResult,
   WorkspaceDto,
+  PermissionObjectDto,
+  PermissionSettingsDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -165,5 +167,26 @@ export const endpoints = {
     api<ViewQueryResult>(`/sheets/${sheetId}/query`, {
       method: 'POST',
       body: query as unknown as Record<string, unknown>,
+    }),
+
+  listPermissionObjects: (baseId: string) =>
+    api<{ baseId: string; objects: PermissionObjectDto[] }>(
+      `/permissions?baseId=${baseId}`,
+    ),
+
+  getPermissionSettings: (objectType: string, objectId: string) =>
+    api<PermissionSettingsDto>(`/permissions/${objectType}/${objectId}`),
+
+  updatePermissionSettings: (
+    objectType: string,
+    objectId: string,
+    body: {
+      everyone?: Record<string, unknown>;
+      members?: Array<Record<string, unknown>>;
+    },
+  ) =>
+    api<PermissionSettingsDto>(`/permissions/${objectType}/${objectId}`, {
+      method: 'PUT',
+      body,
     }),
 };

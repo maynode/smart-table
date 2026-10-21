@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -93,5 +94,13 @@ export class SheetsController {
       dto.cells,
       dto.expectedVersion,
     );
+  }
+
+  @Delete('records/:id')
+  deleteRecord(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+  ) {
+    return this.sheetsService.deleteRecord(id, user.sub);
   }
 }

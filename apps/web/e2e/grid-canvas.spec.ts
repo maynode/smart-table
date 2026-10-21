@@ -134,6 +134,17 @@ test.describe('Canvas grid + enterprise shell', () => {
     // Members dialog reflects the workspace owner.
     await page.getByRole('button', { name: '成员', exact: true }).click();
     await expect(page.locator('.modal')).toContainText('网格测试员');
+    await page.locator('.modal .icon-btn').click();
+
+    // Content permissions lists this base's sheet and exposes the ACL editor.
+    await page.locator('[data-testid="permissions-open"]').click();
+    await expect(page.locator('[data-testid="permissions-panel"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="permission-object-row"]').first(),
+    ).toContainText('码库');
+    await expect(page.locator('[data-testid="permission-level"]')).toBeVisible();
+    await page.locator('[data-testid="permissions-close"]').click();
+    await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
 
     await api.dispose();
   });

@@ -9,6 +9,7 @@ import { Prisma, WorkspaceRole } from '@prisma/client';
 import { resolveRecordPageLimit } from 'shared';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
@@ -22,6 +23,7 @@ export class SheetsService {
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
     private readonly automationRunner: AutomationRunnerService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   private async requireBase(
@@ -86,6 +88,12 @@ export class SheetsService {
 
   async getSheet(sheetId: string, userId: string) {
     const sheet = await this.requireSheet(sheetId, userId, 'viewer');
+    const decision = await this.permissions.assertCan(
+      'sheet',
+      sheetId,
+      userId,
+      'read',
+    );
     const fields = await this.prisma.field.findMany({
       where: { sheetId },
       orderBy: { order: 'asc' },
@@ -97,7 +105,7 @@ export class SheetsService {
       name: sheet.name,
       createdAt: sheet.createdAt,
       updatedAt: sheet.updatedAt,
-      fields,
+      fields: this.permissions.filterVisibleFields(decision, fields),
     };
   }
 
@@ -155,7 +163,13 @@ export class SheetsService {
     userId: string,
     cells: Record<string, unknown>,
   ) {
-    await this.requireSheet(sheetId, userId, 'editor');
+    const decision = await this.permissions.assertCan(
+      'sheet',
+      sheetId,
+      userId,
+      'create',
+      { changes: cells },
+    );
     const fields = await this.assertKnownFields(sheetId, cells);
 
     const record = await this.prisma.recordRow.create({
@@ -163,6 +177,7 @@ export class SheetsService {
         sheetId,
         cells: cells as Prisma.InputJsonValue,
         claimStatus: this.claimStatusFor(fields, cells),
+        createdBy: userId,
       },
     });
 
@@ -179,6 +194,28 @@ export class SheetsService {
     return record;
   }
 
+  async deleteRecord(recordId: string, userId: string) {
+    const record = await this.prisma.recordRow.findUnique({
+      where: { id: recordId },
+    });
+    if (!record) throw new NotFoundException('记录不存在');
+    await this.permissions.assertCan(
+      'sheet',
+      record.sheetId,
+      userId,
+      'delete',
+      {
+        record: {
+          id: record.id,
+          cells: (record.cells ?? {}) as Record<string, unknown>,
+          createdBy: record.createdBy,
+        },
+      },
+    );
+    await this.prisma.recordRow.delete({ where: { id: recordId } });
+    return { id: recordId, deleted: true };
+  }
+
   async updateRecord(
     recordId: string,
     userId: string,
@@ -192,7 +229,20 @@ export class SheetsService {
       throw new NotFoundException('记录不存在');
     }
 
-    await this.requireSheet(record.sheetId, userId, 'editor');
+    await this.permissions.assertCan(
+      'sheet',
+      record.sheetId,
+      userId,
+      'update',
+      {
+        record: {
+          id: record.id,
+          cells: (record.cells ?? {}) as Record<string, unknown>,
+          createdBy: record.createdBy,
+        },
+        changes: cells,
+      },
+    );
     const fields = await this.assertKnownFields(record.sheetId, cells);
 
     const currentCells = (record.cells ?? {}) as Record<string, unknown>;
@@ -234,6 +284,12 @@ export class SheetsService {
     query: ListRecordsQueryDto,
   ) {
     await this.requireSheet(sheetId, userId, 'viewer');
+    const decision = await this.permissions.assertCan(
+      'sheet',
+      sheetId,
+      userId,
+      'read',
+    );
 
     const take = resolveRecordPageLimit(query.limit);
     const rows = await this.prisma.recordRow.findMany({
@@ -249,7 +305,7 @@ export class SheetsService {
     const records = hasMore ? rows.slice(0, take) : rows;
 
     return {
-      records,
+      records: this.permissions.applyReadScope(decision, records, userId),
       nextCursor:
         hasMore && records.length > 0
           ? records[records.length - 1].id

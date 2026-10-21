@@ -29,6 +29,21 @@ User ──< Comment            User ──< Notification            GroupChat
 - `bases.workspace_id` 索引；`sheets.base_id` 索引。
 - `fields`：`type` 存 27 种契约类型之一；`options` 为 JSONB（单选 choices、公式、关联等）；`order` 控制列顺序；`hidden` 只影响展示，不删数据。
 
+### 内容权限（content_permissions）
+
+| 列 | 类型 | 说明 |
+| --- | --- | --- |
+| object_type / object_id | text / uuid | 受控对象（sheet、form；仪表盘/报告复用同一表） |
+| subject_type / subject_id | text / text | `everyone`（subject_id 为空串）或 `member`（用户 id） |
+| level | text | `full` / `edit` / `view` / `none` |
+| record_rule | jsonb | `{mode: all\|condition\|own, filter?, canAdd?, canDelete?}`；own 依据 `records.created_by` |
+| field_rule | jsonb | `{mode: all\|fields, fields: {fieldId: {editable, viewable, submitOnce}}, newFields?}` |
+
+- 所有者/管理员始终 `full`，可管理权限；可编辑/只读成员按 `member` 覆盖 > `everyone` > 工作区角色默认档位计算有效权限。
+- 行规则为 `condition` 时读取只返回匹配记录，越权记录编辑返回 403；`own` 按 `created_by` 过滤。
+- 列规则 `viewable=false` 的字段既不出现在表结构也不出现在记录 cells；`editable=false` 拒绝写入；`submitOnce=true` 允许空字段首次写入、之后拒绝。
+- 内容权限同样约束 `POST /sheets/:id/query`，避免绕过列表接口读取越权行；对象管理接口为 `GET/PUT /permissions/:objectType/:objectId`。
+
 ### 公式（formula）与查找引用（lookup）
 
 - 公式字段的表达式存于 `fields.options.formula`，以 `=` 开头；引用本表字段可写 `=[数量]*[单价]` 或 `=数量*单价`，也支持纯常量 `=1+1`。

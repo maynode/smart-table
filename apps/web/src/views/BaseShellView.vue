@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
 import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
+import PermissionsPanel from '../components/PermissionsPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -47,6 +48,7 @@ const members = ref<MemberDto[]>([]);
 
 const automationsOpen = ref(false);
 const formBuilderOpen = ref(false);
+const permissionsOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -355,7 +357,11 @@ onMounted(bootstrap);
         >
           评论
         </button>
-        <button class="topbar-btn" @click="comingSoon('内容权限')">
+        <button
+          class="topbar-btn"
+          data-testid="permissions-open"
+          @click="permissionsOpen = true"
+        >
           内容权限
         </button>
         <button
@@ -516,6 +522,16 @@ onMounted(bootstrap);
         />
         <div v-else class="empty-state">请先选择一张工作表</div>
       </div>
+    </div>
+    <div
+      v-if="permissionsOpen"
+      class="modal-mask"
+      @click.self="permissionsOpen = false"
+    >
+      <PermissionsPanel
+        :base-id="baseId"
+        @close="permissionsOpen = false"
+      />
     </div>
   </div>
 </template>

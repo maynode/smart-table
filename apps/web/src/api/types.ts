@@ -203,6 +203,63 @@ export interface ViewQueryResult {
   rowHeight: string | number;
 }
 
+export type AclLevel = 'full' | 'edit' | 'view' | 'none';
+
+export interface AclFieldAccess {
+  editable?: boolean;
+  viewable?: boolean;
+  submitOnce?: boolean;
+}
+
+export interface AclRecordRule {
+  mode: 'all' | 'condition' | 'own';
+  filter?: unknown;
+  canAdd?: boolean;
+  canDelete?: boolean;
+}
+
+export interface AclFieldRule {
+  mode: 'all' | 'fields';
+  fields?: Record<string, AclFieldAccess>;
+  newFields?: AclFieldAccess;
+}
+
+export interface AclConfig {
+  level: AclLevel;
+  recordRule?: AclRecordRule;
+  fieldRule?: AclFieldRule;
+}
+
+export interface PermissionObjectDto {
+  objectType: 'sheet' | 'form';
+  objectId: string;
+  name: string;
+  kind: string;
+  level: AclLevel;
+}
+
+export interface PermissionSettingsDto {
+  objectType: string;
+  objectId: string;
+  name: string;
+  baseId: string;
+  canManage: boolean;
+  role: string;
+  effective: {
+    level: AclLevel;
+    recordRule: AclRecordRule | null;
+    fieldRule: AclFieldRule | null;
+  };
+  everyone: AclConfig | null;
+  members: Array<AclConfig & { userId: string; name: string; email: string }>;
+  workspaceMembers: Array<{
+    userId: string;
+    name: string;
+    email: string;
+    role: string;
+  }>;
+}
+
 export interface UpsertFormPayload {  baseId: string;
   sheetId: string;
   name: string;

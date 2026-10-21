@@ -120,6 +120,7 @@ model RecordRow {
   version     Int      @default(1)
   // Indexable side column for claim hot paths (never the only representation).
   claimStatus String?  @map("claim_status")
+  createdBy   String?  @map("created_by") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -263,4 +264,25 @@ model GroupChat {
 
   @@index([baseId])
   @@map("group_chats")
+}
+
+model ContentPermission {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  objectType  String   @map("object_type")
+  objectId    String   @map("object_id") @db.Uuid
+  /// everyone | member
+  subjectType String   @map("subject_type") @default("everyone")
+  /// empty string for the everyone row; user id for member rows
+  subjectId   String   @map("subject_id") @default("")
+  /// full | edit | view | none
+  level       String
+  recordRule  Json?    @map("record_rule")
+  fieldRule   Json?    @map("field_rule")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([objectType, objectId, subjectType, subjectId])
+  @@index([workspaceId, objectType])
+  @@map("content_permissions")
 }
