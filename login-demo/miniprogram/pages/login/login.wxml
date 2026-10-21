@@ -1,0 +1,22 @@
+<view class="page">
+  <view class="card">
+    <view class="logo">S</view>
+    <view class="title">smart-table</view>
+    <view class="sub">使用微信身份登录电脑端</view>
+
+    <view class="state {{status}}">
+      <view wx:if="{{status === 'loading'}}" class="spinner"></view>
+      <view wx:if="{{status === 'ok'}}" class="check">✓</view>
+      <text class="state-text">{{message}}</text>
+    </view>
+
+    <view wx:if="{{status === 'ok' && openid}}" class="meta">
+      <text class="meta-label">openid</text>
+      <text class="meta-value">{{openid}}</text>
+    </view>
+
+    <button wx:if="{{status === 'error'}}" class="btn" bindtap="retry">重试</button>
+
+    <view class="tip">仅用于本地练手：会把 wx.login 换到的 openid 回填给电脑端。</view>
+  </view>
+</view>

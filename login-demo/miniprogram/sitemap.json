@@ -1,0 +1,9 @@
+{
+  "desc": "smart-table 登录 demo",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

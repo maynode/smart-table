@@ -1,0 +1,131 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48rpx;
+  box-sizing: border-box;
+}
+
+.card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 32rpx;
+  padding: 64rpx 48rpx 48rpx;
+  box-shadow: 0 24rpx 80rpx rgba(16, 24, 40, 0.06);
+  text-align: center;
+}
+
+.logo {
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 36rpx;
+  margin: 0 auto 28rpx;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-size: 60rpx;
+  font-weight: 700;
+  line-height: 128rpx;
+  box-shadow: 0 20rpx 48rpx rgba(5, 150, 105, 0.25);
+}
+
+.title {
+  font-size: 36rpx;
+  font-weight: 600;
+  margin-bottom: 8rpx;
+}
+
+.sub {
+  font-size: 26rpx;
+  color: #8b93a1;
+  margin-bottom: 48rpx;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  padding: 32rpx;
+  border-radius: 24rpx;
+  background: #f3f5f8;
+  font-size: 28rpx;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.state.ok {
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.state.error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.spinner {
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  border: 4rpx solid #e8ebf0;
+  border-top-color: #07c160;
+  animation: spin 0.9s linear infinite;
+}
+
+.check {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: #07c160;
+  color: #fff;
+  font-size: 52rpx;
+  line-height: 88rpx;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.meta {
+  margin-top: 24rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 20rpx;
+  background: #f3f5f8;
+  text-align: left;
+  font-size: 24rpx;
+  word-break: break-all;
+}
+
+.meta-label {
+  display: block;
+  color: #8b93a1;
+  margin-bottom: 6rpx;
+}
+
+.meta-value {
+  color: #4b5563;
+  font-family: Menlo, Consolas, monospace;
+}
+
+.btn {
+  margin-top: 32rpx;
+  background: #07c160;
+  color: #fff;
+  border-radius: 24rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.btn::after {
+  border: none;
+}
+
+.tip {
+  margin-top: 40rpx;
+  font-size: 22rpx;
+  color: #a6abb3;
+  line-height: 1.7;
+}
