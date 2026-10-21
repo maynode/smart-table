@@ -72,6 +72,7 @@ model Base {
   sheets Sheet[]
   forms  Form[]
   automations Automation[]
+  dashboards Dashboard[]
 
   @@index([workspaceId])
   @@map("bases")
@@ -285,4 +286,77 @@ model ContentPermission {
   @@unique([objectType, objectId, subjectType, subjectId])
   @@index([workspaceId, objectType])
   @@map("content_permissions")
+}
+
+model Dashboard {
+  id        String   @id @default(uuid()) @db.Uuid
+  baseId    String   @map("base_id") @db.Uuid
+  name      String
+  /// dashboard | report
+  kind      String   @default("dashboard")
+  layout    Json     @default("[]")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  base      Base             @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  widgets   DashboardWidget[]
+  schedules DashboardSchedule[]
+
+  @@index([baseId])
+  @@map("dashboards")
+}
+
+model DashboardWidget {
+  id          String   @id @default(uuid()) @db.Uuid
+  dashboardId String   @map("dashboard_id") @db.Uuid
+  /// bar | line | pie | metric | table
+  type        String
+  title       String
+  sheetId     String?  @map("sheet_id") @db.Uuid
+  /// { dimensionFieldId, metricFieldId, aggregation, filters? }
+  config      Json     @default("{}")
+  layout      Json     @default("{}")
+  order       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@index([dashboardId])
+  @@map("dashboard_widgets")
+}
+
+model DashboardSchedule {
+  id          String    @id @default(uuid()) @db.Uuid
+  dashboardId String    @map("dashboard_id") @db.Uuid
+  cron        String
+  /// notification | group-chat | wecom
+  channel     String    @default("notification")
+  enabled     Boolean   @default(true)
+  lastRunAt   DateTime? @map("last_run_at") @db.Timestamptz(6)
+  nextRunAt   DateTime? @map("next_run_at") @db.Timestamptz(6)
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dashboard Dashboard            @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  runs      DashboardScheduleRun[]
+
+  @@index([dashboardId])
+  @@map("dashboard_schedules")
+}
+
+model DashboardScheduleRun {
+  id         String   @id @default(uuid()) @db.Uuid
+  scheduleId String   @map("schedule_id") @db.Uuid
+  status     String
+  message    String   @default("")
+  payload    Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  schedule DashboardSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, createdAt])
+  @@map("dashboard_schedule_runs")
 }

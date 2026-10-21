@@ -260,7 +260,8 @@ export interface PermissionSettingsDto {
   }>;
 }
 
-export interface UpsertFormPayload {  baseId: string;
+export interface UpsertFormPayload {
+  baseId: string;
   sheetId: string;
   name: string;
   coverUrl?: string;
@@ -272,4 +273,75 @@ export interface UpsertFormPayload {  baseId: string;
   };
   successPage?: { templateHtml: string };
   rejectDuplicatePhone?: boolean;
+}
+
+export interface DashboardDto {
+  id: string;
+  baseId: string;
+  name: string;
+  kind: 'dashboard' | 'report';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardWidgetDto {
+  id: string;
+  dashboardId: string;
+  type: 'bar' | 'line' | 'pie' | 'metric' | 'table';
+  title: string;
+  sheetId: string | null;
+  config: {
+    dimensionFieldId?: string;
+    metricFieldId?: string;
+    aggregation?: 'sum' | 'count' | 'avg' | 'min' | 'max';
+    limit?: number;
+    themeColor?: string;
+    showLegend?: boolean;
+    showLabel?: boolean;
+    legendPosition?: 'top' | 'bottom';
+  };
+  order: number;
+}
+
+export interface DashboardWidgetData {
+  id: string;
+  type: string;
+  title: string;
+  labels: string[];
+  values: number[];
+  rows?: Array<{ label: string; value: number }>;
+  config?: {
+    themeColor?: string;
+    showLegend?: boolean;
+    showLabel?: boolean;
+    legendPosition?: 'top' | 'bottom';
+  };
+  driver: string;
+}
+
+export interface DashboardDataDto {
+  dashboard: {
+    id: string;
+    name: string;
+    kind: string;
+    layout: unknown;
+  };
+  widgets: DashboardWidgetData[];
+  driver: string;
+}
+
+export interface DashboardScheduleDto {
+  id: string;
+  dashboardId: string;
+  cron: string;
+  channel: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  runs: Array<{
+    id: string;
+    status: string;
+    message: string;
+    createdAt: string;
+  }>;
 }

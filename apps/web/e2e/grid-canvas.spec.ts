@@ -146,6 +146,18 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('[data-testid="permissions-close"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
 
+    // Dashboard canvas creates an object and exposes chart + schedule builders.
+    await page.locator('[data-testid="dashboard-open"]').click();
+    await expect(page.locator('[data-testid="dashboard-panel"]')).toBeVisible();
+    await page.locator('[data-testid="dashboard-create"]').click();
+    await expect(page.locator('[data-testid="dashboard-row"]').first()).toContainText(
+      '仪表盘',
+    );
+    await expect(
+      page.locator('[data-testid="dashboard-widget-sheet"]'),
+    ).toBeVisible();
+    await page.locator('[data-testid="dashboard-close"]').click();
+
     await api.dispose();
   });
 });

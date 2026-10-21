@@ -88,6 +88,18 @@ export class PermissionsService {
         name: form.name,
       };
     }
+    if (objectType === 'dashboard') {
+      const dashboard = await this.prisma.dashboard.findUnique({
+        where: { id: objectId },
+        include: { base: true },
+      });
+      if (!dashboard) throw new NotFoundException('仪表盘不存在');
+      return {
+        workspaceId: dashboard.base.workspaceId,
+        baseId: dashboard.baseId,
+        name: dashboard.name,
+      };
+    }
     throw new BadRequestException('不支持的对象类型');
   }
 
@@ -293,6 +305,20 @@ export class PermissionsService {
         objectId: form.id,
         name: form.name,
         kind: '收集表单',
+        level: decision.level,
+      });
+    }
+    const dashboards = await this.prisma.dashboard.findMany({
+      where: { baseId },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const dashboard of dashboards) {
+      const decision = await this.decision('dashboard', dashboard.id, userId);
+      objects.push({
+        objectType: 'dashboard',
+        objectId: dashboard.id,
+        name: dashboard.name,
+        kind: dashboard.kind === 'report' ? '分析报告' : '仪表盘',
         level: decision.level,
       });
     }

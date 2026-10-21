@@ -113,3 +113,14 @@ docker compose start api claim-worker
 | 码尽 409 | 码库中「未领」记录不足；补充记录或调整自动化 |
 | 封面 404 | `S3_DRIVER=filesystem` 时确认 `/data/s3` 卷挂载；MinIO 模式确认 bucket 已创建 |
 | worker 不消费 | `AUTOMATION_QUEUE=bullmq` 且 Redis 可达；查看 `claim-worker` 日志 |
+
+## 9. 仪表盘分析引擎（可选 ClickHouse）
+
+默认 `ANALYTICS_ADAPTER=postgres`，仪表盘聚合直接读 PostgreSQL JSONB。需要 ClickHouse 时：
+
+```bash
+docker compose --profile analytics up -d clickhouse
+ANALYTICS_ADAPTER=clickhouse docker compose up -d api
+```
+
+compose 中 ClickHouse 暴露 `8123`（HTTP）与 `9000`（native），数据卷 `clickhousedata`；API 通过 `CLICKHOUSE_URL`、`CLICKHOUSE_DATABASE`、`CLICKHOUSE_USER/PASSWORD` 连接。未启用 profile 时不会启动该容器，也不影响默认栈；图表配置与定时推送见 `docs/DASHBOARD.md`。

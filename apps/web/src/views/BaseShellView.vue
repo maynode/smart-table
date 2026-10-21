@@ -5,6 +5,7 @@ import GridPanel from '../components/GridPanel.vue';
 import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
+import DashboardPanel from '../components/DashboardPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -49,6 +50,8 @@ const members = ref<MemberDto[]>([]);
 const automationsOpen = ref(false);
 const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
+const dashboardOpen = ref(false);
+const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -252,6 +255,11 @@ function handleObjectClick(label: string): void {
     importInput.value?.click();
     return;
   }
+  if (label === '仪表盘' || label === '分析报告') {
+    dashboardKind.value = label === '分析报告' ? 'report' : 'dashboard';
+    dashboardOpen.value = true;
+    return;
+  }
   comingSoon(label);
 }
 
@@ -407,7 +415,15 @@ onMounted(bootstrap);
             v-for="item in sidebarObjects"
             :key="item.label"
             class="sidebar-item muted-item"
-            :data-testid="item.label === '收集表单' ? 'forms-open' : undefined"
+            :data-testid="
+              item.label === '收集表单'
+                ? 'forms-open'
+                : item.label === '仪表盘'
+                  ? 'dashboard-open'
+                  : item.label === '分析报告'
+                    ? 'report-open'
+                    : undefined
+            "
             @click="handleObjectClick(item.label)"
           >
             <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
@@ -531,6 +547,18 @@ onMounted(bootstrap);
       <PermissionsPanel
         :base-id="baseId"
         @close="permissionsOpen = false"
+      />
+    </div>
+    <div
+      v-if="dashboardOpen"
+      class="modal-mask"
+      @click.self="dashboardOpen = false"
+    >
+      <DashboardPanel
+        :base-id="baseId"
+        :kind="dashboardKind"
+        :sheets="sheets"
+        @close="dashboardOpen = false"
       />
     </div>
   </div>

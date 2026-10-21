@@ -19,6 +19,10 @@ import type {
   WorkspaceDto,
   PermissionObjectDto,
   PermissionSettingsDto,
+  DashboardDto,
+  DashboardDataDto,
+  DashboardScheduleDto,
+  DashboardWidgetDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -189,4 +193,60 @@ export const endpoints = {
       method: 'PUT',
       body,
     }),
+
+  listDashboards: (baseId: string, kind?: 'dashboard' | 'report') =>
+    api<DashboardDto[]>(
+      `/bases/${baseId}/dashboards${kind ? `?kind=${kind}` : ''}`,
+    ),
+
+  createDashboard: (
+    baseId: string,
+    body: { name: string; kind?: 'dashboard' | 'report' },
+  ) =>
+    api<DashboardDto>(`/bases/${baseId}/dashboards`, {
+      method: 'POST',
+      body,
+    }),
+
+  getDashboard: (dashboardId: string) =>
+    api<DashboardDto>(`/dashboards/${dashboardId}`),
+
+  getDashboardData: (dashboardId: string) =>
+    api<DashboardDataDto>(`/dashboards/${dashboardId}/data`),
+
+  addDashboardWidget: (
+    dashboardId: string,
+    body: {
+      type: string;
+      title: string;
+      sheetId?: string;
+      config?: Record<string, unknown>;
+      layout?: Record<string, unknown>;
+    },
+  ) =>
+    api<DashboardWidgetDto>(`/dashboards/${dashboardId}/widgets`, {
+      method: 'POST',
+      body,
+    }),
+
+  listDashboardSchedules: (dashboardId: string) =>
+    api<DashboardScheduleDto[]>(`/dashboards/${dashboardId}/schedules`),
+
+  createDashboardSchedule: (
+    dashboardId: string,
+    body: { cron: string; channel?: string },
+  ) =>
+    api<DashboardScheduleDto>(`/dashboards/${dashboardId}/schedules`, {
+      method: 'POST',
+      body,
+    }),
+
+  runDashboardSchedule: (
+    dashboardId: string,
+    scheduleId: string,
+  ) =>
+    api<{ id: string; status: string; notificationId: string }>(
+      `/dashboards/${dashboardId}/schedules/${scheduleId}/run`,
+      { method: 'POST' },
+    ),
 };
