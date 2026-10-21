@@ -383,13 +383,14 @@ export class AutomationRunnerService {
     const where = step.filters
       ? buildFilterSql(step.filters)
       : Prisma.sql`TRUE`;
+    const claimStatus = this.claimStatusPredicate(step, fields);
     const order = buildSortSql(step.sorts);
     const lock = this.stepFeedsModify(step.id, state.automation.steps)
       ? Prisma.sql`FOR UPDATE SKIP LOCKED`
       : Prisma.sql``;
 
     const rows = await tx.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${step.sheetId}::uuid AND (${where}) ${order} LIMIT ${limit} ${lock}`,
+      Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${step.sheetId}::uuid AND (${where}) ${claimStatus} ${order} LIMIT ${limit} ${lock}`,
     );
 
     if (rows.length === 0) {
@@ -600,8 +601,81 @@ export class AutomationRunnerService {
     return rows.map((row) => row.id);
   }
 
-  private async resolveCells(
-    mapping: CellMapping,
+  /**
+   * Claim lookups filter on the JSONB status cell, but the index lives on the
+   * side column. When the filter is an equality on 状态/领取状态, add the
+   * equivalent claim_status predicate so Postgres can use
+   * records(sheet_id, claim_status) without a sequential scan.
+   */
+  private claimStatusPredicate(
+    step: FindRecordsStep,
+    fields: Field[],
+  ): Prisma.Sql {
+    const statusField = fields.find(
+      (field) => field.name === '状态' || field.name === '领取状态',
+    );
+    if (!statusField || !step.filters) return Prisma.sql``;
+
+    const value = this.findEqualsValue(step.filters, statusField.id);
+    if (value === undefined) return Prisma.sql``;
+
+    const status = this.normalizeClaimStatus(value, statusField.options);
+    return status ? Prisma.sql`AND "claim_status" = ${status}` : Prisma.sql``;
+  }
+
+  private findEqualsValue(
+    group: unknown,
+    fieldId: string,
+  ): unknown | undefined {
+    if (!group || typeof group !== 'object') return undefined;
+    const candidate = group as {
+      conditions?: unknown[];
+      groups?: unknown[];
+    };
+    for (const condition of candidate.conditions ?? []) {
+      const match = condition as {
+        fieldId?: string;
+        operator?: string;
+        value?: unknown;
+      };
+      if (match.fieldId === fieldId && match.operator === 'equals') {
+        return match.value;
+      }
+    }
+    for (const nested of candidate.groups ?? []) {
+      const found = this.findEqualsValue(nested, fieldId);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+
+  private normalizeClaimStatus(
+    value: unknown,
+    options: unknown,
+  ): 'claimed' | 'unclaimed' | null {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+
+    const choices = (
+      options as { choices?: Array<{ id?: unknown; name?: unknown }> } | null
+    )?.choices;
+    const choice = Array.isArray(choices)
+      ? choices.find(
+          (item) => item.id === raw || item.name === raw,
+        )
+      : undefined;
+    const normalized = String(choice?.name ?? raw);
+
+    if (['unclaimed', '未领', '未领取', '待领取'].includes(normalized)) {
+      return 'unclaimed';
+    }
+    if (['claimed', '已领', '已领取'].includes(normalized)) {
+      return 'claimed';
+    }
+    return null;
+  }
+
+  private async resolveCells(    mapping: CellMapping,
     state: ExecutionState,
     fields: Field[],
   ): Promise<Record<string, unknown>> {

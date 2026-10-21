@@ -173,6 +173,9 @@ model FormSubmission {
   recordId  String?  @map("record_id") @db.Uuid
   status    String   @default("completed")
   cells     Json     @default("{}")
+  resultHtml String? @map("result_html")
+  stepOutputs Json  @default("{}") @map("step_outputs")
+  error     String?
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   form Form @relation(fields: [formId], references: [id], onDelete: Cascade)

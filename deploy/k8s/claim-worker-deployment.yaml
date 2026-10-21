@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-table-claim-worker
+  namespace: smart-table
+  labels:
+    app.kubernetes.io/name: smart-table-claim-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: smart-table-claim-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: smart-table-claim-worker
+    spec:
+      containers:
+        - name: claim-worker
+          image: smart-table-api:local
+          imagePullPolicy: IfNotPresent
+          command: ["node", "apps/api/dist/worker.js"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: DATABASE_URL
+            - name: DIRECT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: DIRECT_DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: REDIS_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: JWT_SECRET
+            - name: AUTOMATION_QUEUE
+              value: bullmq
+            - name: SUBMIT_MODE
+              value: queue
+            - name: S3_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_DRIVER
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_BUCKET
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: S3_SECRET_KEY
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi

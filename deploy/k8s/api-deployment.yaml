@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-table-api
+  namespace: smart-table
+  labels:
+    app.kubernetes.io/name: smart-table-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: smart-table-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: smart-table-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: api
+          image: smart-table-api:local
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "/app/deploy/entrypoint-api.sh"]
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: API_PORT
+              value: "3000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: DATABASE_URL
+            - name: DIRECT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: DIRECT_DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: REDIS_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: JWT_SECRET
+            - name: PUBLIC_FORM_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: PUBLIC_FORM_BASE_URL
+            - name: SUBMIT_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: SUBMIT_MODE
+            - name: AUTOMATION_QUEUE
+              value: inline
+            - name: S3_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_DRIVER
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: S3_BUCKET
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: smart-table-secrets
+                  key: S3_SECRET_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smart-table-api
+  namespace: smart-table
+spec:
+  selector:
+    app.kubernetes.io/name: smart-table-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

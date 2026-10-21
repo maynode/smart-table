@@ -156,10 +156,14 @@ export class SheetsService {
     cells: Record<string, unknown>,
   ) {
     await this.requireSheet(sheetId, userId, 'editor');
-    await this.assertKnownFields(sheetId, cells);
+    const fields = await this.assertKnownFields(sheetId, cells);
 
     const record = await this.prisma.recordRow.create({
-      data: { sheetId, cells: cells as Prisma.InputJsonValue },
+      data: {
+        sheetId,
+        cells: cells as Prisma.InputJsonValue,
+        claimStatus: this.claimStatusFor(fields, cells),
+      },
     });
 
     try {
@@ -189,10 +193,11 @@ export class SheetsService {
     }
 
     await this.requireSheet(record.sheetId, userId, 'editor');
-    await this.assertKnownFields(record.sheetId, cells);
+    const fields = await this.assertKnownFields(record.sheetId, cells);
 
     const currentCells = (record.cells ?? {}) as Record<string, unknown>;
     const mergedCells = { ...currentCells, ...cells };
+    const claimStatus = this.claimStatusFor(fields, mergedCells);
 
     if (expectedVersion === undefined) {
       return this.prisma.recordRow.update({
@@ -200,6 +205,7 @@ export class SheetsService {
         data: {
           cells: mergedCells as Prisma.InputJsonValue,
           version: { increment: 1 },
+          claimStatus,
         },
       });
     }
@@ -209,6 +215,7 @@ export class SheetsService {
       data: {
         cells: mergedCells as Prisma.InputJsonValue,
         version: { increment: 1 },
+        claimStatus,
       },
     });
 
@@ -253,13 +260,13 @@ export class SheetsService {
   private async assertKnownFields(
     sheetId: string,
     cells: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<Array<{ id: string; name: string; options: unknown }>> {
     const keys = Object.keys(cells);
-    if (keys.length === 0) return;
+    if (keys.length === 0) return [];
 
     const fields = await this.prisma.field.findMany({
       where: { sheetId },
-      select: { id: true },
+      select: { id: true, name: true, options: true },
     });
     const known = new Set(fields.map((field) => field.id));
     const unknown = keys.filter((key) => !known.has(key));
@@ -267,5 +274,37 @@ export class SheetsService {
     if (unknown.length > 0) {
       throw new BadRequestException(`未知字段: ${unknown.join(', ')}`);
     }
+    return fields;
+  }
+
+  private claimStatusFor(
+    fields: Array<{ id: string; name: string; options: unknown }>,
+    cells: Record<string, unknown>,
+  ): string | null {
+    const statusField = fields.find(
+      (field) => field.name === '状态' || field.name === '领取状态',
+    );
+    if (!statusField) return null;
+
+    const raw = String(cells[statusField.id] ?? '').trim();
+    if (!raw) return null;
+
+    const choices = (
+      statusField.options as {
+        choices?: Array<{ id?: unknown; name?: unknown }>;
+      } | null
+    )?.choices;
+    const choice = Array.isArray(choices)
+      ? choices.find((item) => item.id === raw || item.name === raw)
+      : undefined;
+    const normalized = String(choice?.name ?? raw);
+
+    if (['unclaimed', '未领', '未领取', '待领取'].includes(normalized)) {
+      return 'unclaimed';
+    }
+    if (['claimed', '已领', '已领取'].includes(normalized)) {
+      return 'claimed';
+    }
+    return null;
   }
 }

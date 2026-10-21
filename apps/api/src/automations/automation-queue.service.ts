@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Worker } from 'bullmq';
+import type IORedis from 'ioredis';
+import { createRedisConnection } from '../queue/redis-connection';
 import {
   AutomationRunnerService,
   type AutomationRunContext,
@@ -22,6 +24,8 @@ export class AutomationQueueService implements OnModuleDestroy {
   private readonly logger = new Logger(AutomationQueueService.name);
   private readonly queue: Queue | null;
   private readonly worker: Worker | null;
+  private readonly queueConnection: IORedis | null;
+  private readonly workerConnection: IORedis | null;
 
   constructor(
     config: ConfigService,
@@ -31,13 +35,15 @@ export class AutomationQueueService implements OnModuleDestroy {
     if (!enabled) {
       this.queue = null;
       this.worker = null;
+      this.queueConnection = null;
+      this.workerConnection = null;
       return;
     }
 
-    const connection = {
-      url: config.get<string>('REDIS_URL', 'redis://127.0.0.1:6379'),
-    };
-    this.queue = new Queue(QUEUE_NAME, { connection });
+    const url = config.get<string>('REDIS_URL', 'redis://127.0.0.1:6379');
+    this.queueConnection = createRedisConnection(url);
+    this.workerConnection = createRedisConnection(url);
+    this.queue = new Queue(QUEUE_NAME, { connection: this.queueConnection });
     this.worker = new Worker(
       QUEUE_NAME,
       async (job) => {
@@ -47,7 +53,7 @@ export class AutomationQueueService implements OnModuleDestroy {
         };
         return this.runner.runAutomation(data.automationId, data.context);
       },
-      { connection },
+      { connection: this.workerConnection },
     );
     this.worker.on('failed', (job, error) => {
       this.logger.error(
@@ -81,5 +87,7 @@ export class AutomationQueueService implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close();
     await this.queue?.close();
+    await this.workerConnection?.quit();
+    await this.queueConnection?.quit();
   }
 }

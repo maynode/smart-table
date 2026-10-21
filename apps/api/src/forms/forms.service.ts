@@ -5,11 +5,16 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, type Form } from '@prisma/client';
+import { Queue, Worker } from 'bullmq';
+import type IORedis from 'ioredis';
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as QRCode from 'qrcode';
 import {
@@ -19,7 +24,9 @@ import {
   type FormFieldConfig,
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { createRedisConnection } from '../queue/redis-connection';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type {
@@ -33,11 +40,23 @@ interface ShareConfig {
   expiresAt?: string | null;
 }
 
+type SubmissionForm = Prisma.FormGetPayload<{
+  include: { sheet: { include: { fields: true } } };
+}>;
+
+const SUBMISSION_QUEUE = 'form-submissions';
+
 @Injectable()
-export class FormsService {
+export class FormsService implements OnModuleDestroy {
+  private readonly logger = new Logger(FormsService.name);
   private readonly publicBase: string;
   private readonly submitLimit: number;
   private readonly submitHits = new Map<string, number[]>();
+  private readonly submitMode: 'sync' | 'queue';
+  private readonly queue: Queue | null = null;
+  private readonly worker: Worker | null = null;
+  private readonly queueConnection: IORedis | null = null;
+  private readonly workerConnection: IORedis | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -45,6 +64,7 @@ export class FormsService {
     private readonly storage: StorageService,
     private readonly automationRunner: AutomationRunnerService,
     private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
   ) {
     this.publicBase = (
       this.config.get<string>('PUBLIC_FORM_BASE_URL') ??
@@ -53,6 +73,34 @@ export class FormsService {
     this.submitLimit = Number(
       this.config.get<string>('PUBLIC_SUBMIT_RATE_LIMIT') ?? 30,
     );
+    this.submitMode =
+      this.config.get<string>('SUBMIT_MODE') === 'queue' ? 'queue' : 'sync';
+
+    if (this.submitMode === 'queue') {
+      const url = this.config.get<string>(
+        'REDIS_URL',
+        'redis://127.0.0.1:6379',
+      );
+      this.queueConnection = createRedisConnection(url);
+      this.workerConnection = createRedisConnection(url);
+      this.queue = new Queue(SUBMISSION_QUEUE, {
+        connection: this.queueConnection,
+      });
+      this.worker = new Worker(
+        SUBMISSION_QUEUE,
+        async (job) => {
+          await this.processQueuedSubmission(
+            (job.data as { submissionId: string }).submissionId,
+          );
+        },
+        { connection: this.workerConnection, concurrency: 8 },
+      );
+      this.worker.on('failed', (job, error) => {
+        this.logger.error(
+          `submission job ${job?.id ?? 'unknown'} failed: ${error.message}`,
+        );
+      });
+    }
   }
 
   async upsert(formId: string, userId: string, dto: UpsertFormDto) {
@@ -296,9 +344,157 @@ export class FormsService {
 
     const submissionId = randomUUID();
 
+    if (this.submitMode === 'queue') {
+      await this.prisma.formSubmission.create({
+        data: {
+          id: submissionId,
+          formId: form.id,
+          status: 'queued',
+          cells: sanitized as Prisma.InputJsonValue,
+        },
+      });
+      try {
+        const job = await this.queue?.add(
+          'claim',
+          { submissionId },
+          {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 500 },
+            removeOnComplete: 1000,
+          },
+        );
+        this.metrics.increment('form_submit_total', {
+          mode: 'queue',
+          status: 'queued',
+        });
+        return {
+          submissionId,
+          recordId: null,
+          status: 'queued',
+          jobId: job?.id,
+          pollUrl: `/public/forms/${form.shareToken}/submissions/${submissionId}`,
+        };
+      } catch (error) {
+        const message = (error as Error).message;
+        await this.prisma.formSubmission.update({
+          where: { id: submissionId },
+          data: { status: 'failed', error: '提交队列暂不可用' },
+        });
+        this.metrics.increment('form_submit_total', {
+          mode: 'queue',
+          status: 'failed',
+        });
+        this.logger.error(`enqueue submission failed: ${message}`);
+        throw new ServiceUnavailableException('提交队列暂不可用，请稍后再试');
+      }
+    }
+
+    try {
+      const outcome = await this.runClaim(form, sanitized, submissionId, false);
+      const html = this.successHtml(form, sanitized, outcome.stepOutputs);
+      await this.prisma.formSubmission.update({
+        where: { id: submissionId },
+        data: {
+          status: 'completed',
+          resultHtml: html,
+          stepOutputs: outcome.stepOutputs as Prisma.InputJsonValue,
+        },
+      });
+      this.metrics.increment('form_submit_total', {
+        mode: 'sync',
+        status: 'success',
+      });
+      return {
+        submissionId,
+        recordId: outcome.recordId,
+        status: 'completed',
+        success: { html },
+        stepOutputs: outcome.stepOutputs,
+      };
+    } catch (error) {
+      this.metrics.increment('form_submit_total', {
+        mode: 'sync',
+        status: 'failed',
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Worker entry point. Safe to retry: a completed submission is a no-op and
+   * the claim transaction is atomic, so no code is ever consumed twice.
+   */
+  async processQueuedSubmission(submissionId: string): Promise<void> {
+    const submission = await this.prisma.formSubmission.findUnique({
+      where: { id: submissionId },
+      include: { form: { include: { sheet: { include: { fields: true } } } } },
+    });
+    if (!submission || submission.status === 'completed') return;
+
+    const form = submission.form;
+    const sanitized = submission.cells as Record<string, unknown>;
+    try {
+      const outcome = await this.runClaim(form, sanitized, submissionId, true);
+      const html = this.successHtml(form, sanitized, outcome.stepOutputs);
+      await this.prisma.formSubmission.update({
+        where: { id: submissionId },
+        data: {
+          status: 'completed',
+          resultHtml: html,
+          stepOutputs: outcome.stepOutputs as Prisma.InputJsonValue,
+          error: null,
+        },
+      });
+      this.metrics.increment('form_submit_total', {
+        mode: 'queue',
+        status: 'success',
+      });
+    } catch (error) {
+      const message =
+        error instanceof HttpException
+          ? error.message
+          : (error as Error).message;
+      await this.prisma.formSubmission.update({
+        where: { id: submissionId },
+        data: { status: 'failed', error: message },
+      });
+      this.metrics.increment('form_submit_total', {
+        mode: 'queue',
+        status: 'failed',
+      });
+    }
+  }
+
+  async getSubmissionStatus(shareToken: string, submissionId: string) {
+    const submission = await this.prisma.formSubmission.findUnique({
+      where: { id: submissionId },
+      include: { form: true },
+    });
+    if (!submission || submission.form.shareToken !== shareToken) {
+      throw new NotFoundException('提交记录不存在');
+    }
+    return {
+      submissionId: submission.id,
+      recordId: submission.recordId,
+      status: submission.status,
+      success:
+        submission.status === 'completed' && submission.resultHtml
+          ? { html: submission.resultHtml }
+          : undefined,
+      stepOutputs: submission.stepOutputs,
+      error: submission.error,
+    };
+  }
+
+  private async runClaim(
+    form: SubmissionForm,
+    sanitized: Record<string, unknown>,
+    submissionId: string,
+    queued: boolean,
+  ): Promise<{ recordId: string; stepOutputs: Record<string, string> }> {
     // Claim, form record, and submission commit or roll back together: a
     // submission either gets a serial and a record, or writes nothing at all.
-    const outcome = await this.prisma.$transaction(
+    return this.prisma.$transaction(
       async (tx) => {
         if (form.rejectDuplicatePhone) {
           const phoneField = form.sheet.fields.find(
@@ -329,15 +525,23 @@ export class FormsService {
             cells: sanitized as Prisma.InputJsonValue,
           },
         });
-        const submission = await tx.formSubmission.create({
-          data: {
-            id: submissionId,
-            formId: form.id,
-            recordId: record.id,
-            status: 'processing',
-            cells: sanitized as Prisma.InputJsonValue,
-          },
-        });
+
+        if (queued) {
+          await tx.formSubmission.update({
+            where: { id: submissionId },
+            data: { recordId: record.id, status: 'processing' },
+          });
+        } else {
+          await tx.formSubmission.create({
+            data: {
+              id: submissionId,
+              formId: form.id,
+              recordId: record.id,
+              status: 'processing',
+              cells: sanitized as Prisma.InputJsonValue,
+            },
+          });
+        }
 
         const runs = await this.automationRunner.triggerRecordCreated(
           record.id,
@@ -362,16 +566,17 @@ export class FormsService {
           ...runs.map((run) => run.stepOutputs),
         ) as Record<string, string>;
 
-        const completed = await tx.formSubmission.update({
-          where: { id: submission.id },
-          data: { status: 'completed' },
-        });
-
-        return { record, submission: completed, stepOutputs };
+        return { recordId: record.id, stepOutputs };
       },
       { timeout: 30_000 },
     );
+  }
 
+  private successHtml(
+    form: SubmissionForm,
+    sanitized: Record<string, unknown>,
+    stepOutputs: Record<string, string>,
+  ): string {
     const formCellsByName: Record<string, unknown> = {};
     for (const field of form.sheet.fields) {
       if (Object.prototype.hasOwnProperty.call(sanitized, field.id)) {
@@ -380,20 +585,12 @@ export class FormsService {
     }
     const successValues = buildSuccessValues({
       formCells: formCellsByName,
-      stepOutputs: outcome.stepOutputs,
+      stepOutputs,
     });
-    const html = renderSuccessTemplate(
+    return renderSuccessTemplate(
       form.successTemplate || '提交成功',
       successValues,
     );
-
-    return {
-      submissionId: outcome.submission.id,
-      recordId: outcome.record.id,
-      status: 'completed',
-      success: { html },
-      stepOutputs: outcome.stepOutputs,
-    };
   }
 
   async previewSuccess(
@@ -415,6 +612,13 @@ export class FormsService {
       html: renderSuccessTemplate(form.successTemplate, values),
       values,
     };
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.worker?.close();
+    await this.queue?.close();
+    await this.workerConnection?.quit();
+    await this.queueConnection?.quit();
   }
 
   private async requireBaseEditor(baseId: string, userId: string) {

@@ -7,8 +7,9 @@ import {
   Param,
   Post,
   Req,
+  Res,
 } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { FormsService } from './forms.service';
 import { SubmitFormDto } from './dto/form-config.dto';
 
@@ -23,11 +24,24 @@ export class PublicFormsController {
 
   @Post(':token/submit')
   @HttpCode(HttpStatus.CREATED)
-  submit(
+  async submit(
     @Param('token') token: string,
     @Body() dto: SubmitFormDto,
     @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    return this.formsService.submit(token, dto.cells, request.ip);
+    const result = await this.formsService.submit(token, dto.cells, request.ip);
+    if (result.status === 'queued') {
+      reply.code(HttpStatus.ACCEPTED);
+    }
+    return result;
+  }
+
+  @Get(':token/submissions/:submissionId')
+  submissionStatus(
+    @Param('token') token: string,
+    @Param('submissionId') submissionId: string,
+  ) {
+    return this.formsService.getSubmissionStatus(token, submissionId);
   }
 }
