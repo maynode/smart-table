@@ -137,9 +137,31 @@ export const endpoints = {
       body: { cells, expectedVersion },
     }),
 
+  createField: (
+    sheetId: string,
+    body: {
+      name: string;
+      type: string;
+      options?: Record<string, unknown>;
+      required?: boolean;
+      hidden?: boolean;
+      order?: number;
+    },
+  ) =>
+    api<FieldDto>(`/sheets/${sheetId}/fields`, {
+      body,
+    }),
+
   updateField: (
     fieldId: string,
-    patch: { hidden?: boolean; name?: string },
+    patch: {
+      hidden?: boolean;
+      name?: string;
+      type?: string;
+      options?: Record<string, unknown>;
+      required?: boolean;
+      order?: number;
+    },
   ) =>
     api<FieldDto>(`/fields/${fieldId}`, { method: 'PATCH', body: patch }),
 

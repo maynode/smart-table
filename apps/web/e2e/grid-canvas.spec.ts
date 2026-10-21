@@ -101,6 +101,41 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
     await expect(page.locator('.canvas-grid__layer')).toHaveCount(3);
 
+    // Add a field via WeCom-style type picker.
+    await page.locator('[data-testid="add-field"]').click();
+    await expect(page.locator('[data-testid="field-type-picker"]')).toBeVisible();
+    await page.locator('[data-testid="field-name-input"]').fill('备注');
+    await page.locator('[data-testid="field-type-text"]').click();
+    await expect(page.locator('[data-testid="field-type-picker"]')).toBeHidden();
+    await expect
+      .poll(async () => {
+        const response = await api.get(`/sheets/${sheet.id}`, { headers });
+        const body = (await response.json()) as {
+          fields: Array<{ name: string; type: string }>;
+        };
+        return body.fields.some(
+          (field) => field.name === '备注' && field.type === 'text',
+        );
+      })
+      .toBe(true);
+
+    // Click a column header to rename the field.
+    await page.locator('[data-testid="canvas-grid"]').click({
+      position: { x: 120, y: 20 },
+    });
+    await expect(page.locator('[data-testid="field-type-picker"]')).toBeVisible();
+    await page.locator('[data-testid="field-name-input"]').fill('序列号改');
+    await page.locator('[data-testid="field-name-input"]').press('Enter');
+    await expect
+      .poll(async () => {
+        const response = await api.get(`/sheets/${sheet.id}`, { headers });
+        const body = (await response.json()) as {
+          fields: Array<{ name: string }>;
+        };
+        return body.fields.some((field) => field.name === '序列号改');
+      })
+      .toBe(true);
+
     // Double-click the first data cell (header is 40px; row height 36px).
     await page.locator('[data-testid="canvas-grid"]').dblclick({
       position: { x: 90, y: 58 },
@@ -147,6 +182,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
 
     // Dashboard canvas creates an object and exposes chart + schedule builders.
+    await page.locator('[data-testid="create-menu-toggle"]').click();
     await page.locator('[data-testid="dashboard-open"]').click();
     await expect(page.locator('[data-testid="dashboard-panel"]')).toBeVisible();
     await page.locator('[data-testid="dashboard-create"]').click();
@@ -159,6 +195,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('[data-testid="dashboard-close"]').click();
 
     // Folders nest and can own the current base.
+    await page.locator('[data-testid="create-menu-toggle"]').click();
     await page.locator('[data-testid="folder-open"]').click();
     await expect(page.locator('[data-testid="folder-panel"]')).toBeVisible();
     await page.locator('[data-testid="folder-create-name"]').fill('E2E 文件夹');
@@ -192,6 +229,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('[data-testid="sync-close"]').click();
 
     // Template library creates a new base and navigates into it.
+    await page.locator('[data-testid="create-menu-toggle"]').click();
     await page.locator('[data-testid="template-open"]').click();
     await expect(page.locator('[data-testid="template-card"]')).toHaveCount(3);
     await page

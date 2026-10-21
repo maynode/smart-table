@@ -1,6 +1,7 @@
 /**
- * Claim load smoke: 100 concurrent submissions against 50 unclaimed codes.
- * Must yield exactly 50 successes, 50 explicit 409s, zero duplicate serials.
+ * Claim load smoke: N concurrent submissions against N unclaimed codes.
+ * Default 100 concurrent / 50 codes; set PERF_CODES=1000 and
+ * PERF_CONCURRENCY=1000 for the Task 26 gate.
  *
  * Run with:
  *   pnpm --filter api exec dotenv -e ../../.env -- \
@@ -19,8 +20,8 @@ process.env.PUBLIC_SUBMIT_RATE_LIMIT = '10000';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 
-const CODE_COUNT = 50;
-const CONCURRENCY = 100;
+const CODE_COUNT = Number(process.env.PERF_CODES ?? 50);
+const CONCURRENCY = Number(process.env.PERF_CONCURRENCY ?? CODE_COUNT * 2);
 
 function percentile(values: number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -42,6 +43,10 @@ async function main(): Promise<void> {
   await configureApp(app);
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}`;
   const http = () => request(app.getHttpServer());
 
   try {
@@ -168,15 +173,24 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
 
     const responses = await Promise.all(
-      Array.from({ length: CONCURRENCY }, (_, index) => {
+      Array.from({ length: CONCURRENCY }, async (_, index) => {
         const begin = Date.now();
-        return http()
-          .post(`/public/forms/${shareToken}/submit`)
-          .send({ cells: { [phone.body.id]: `1350000${String(index).padStart(4, '0')}` } })
-          .then((response) => {
-            latencies.push(Date.now() - begin);
-            return response;
-          });
+        const response = await fetch(
+          `${baseUrl}/public/forms/${shareToken}/submit`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              cells: {
+                [phone.body.id]: `135${String(index).padStart(8, '0')}`,
+              },
+            }),
+            signal: AbortSignal.timeout(120_000),
+          },
+        );
+        const body = (await response.json()) as Record<string, unknown>;
+        latencies.push(Date.now() - begin);
+        return { status: response.status, body };
       }),
     );
 
@@ -191,12 +205,21 @@ async function main(): Promise<void> {
     );
     const unique = new Set(claimedSerials);
 
-    const records = await http()
-      .get(`/sheets/${codeSheet.body.id}/records?limit=100`)
-      .set(auth);
-    const claimed = records.body.records.filter(
-      (record: { claimStatus: string | null }) =>
-        record.claimStatus === 'claimed',
+    const claimedRows: Array<{ claimStatus: string | null }> = [];
+    let cursor: string | null = null;
+    do {
+      const page = await http()
+        .get(
+          `/sheets/${codeSheet.body.id}/records?limit=500${
+            cursor ? `&cursor=${cursor}` : ''
+          }`,
+        )
+        .set(auth);
+      claimedRows.push(...(page.body.records as typeof claimedRows));
+      cursor = page.body.nextCursor as string | null;
+    } while (cursor);
+    const claimed = claimedRows.filter(
+      (record) => record.claimStatus === 'claimed',
     );
 
     const summary = {

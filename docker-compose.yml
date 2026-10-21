@@ -115,6 +115,7 @@ services:
       S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
       PUBLIC_FORM_BASE_URL: ${PUBLIC_FORM_BASE_URL:-http://127.0.0.1:8080}
       PUBLIC_SUBMIT_RATE_LIMIT: ${PUBLIC_SUBMIT_RATE_LIMIT:-30}
+      SUBMIT_MAX_CONCURRENCY: ${SUBMIT_MAX_CONCURRENCY:-64}
       SUBMIT_MODE: ${SUBMIT_MODE:-sync}
       AUTOMATION_QUEUE: inline
       ANALYTICS_ADAPTER: ${ANALYTICS_ADAPTER:-postgres}
@@ -132,6 +133,9 @@ services:
       QUOTA_MAX_SEATS: ${QUOTA_MAX_SEATS:-50}
       QUOTA_MAX_STORAGE_BYTES: ${QUOTA_MAX_STORAGE_BYTES:-10737418240}
       QUOTA_MAX_AUTOMATION_RUNS_PER_MONTH: ${QUOTA_MAX_AUTOMATION_RUNS_PER_MONTH:-10000}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-smart-table-api}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     command: ["sh", "/app/deploy/entrypoint-api.sh"]
     ports:
       - "${API_PORT:-3000}:3000"
@@ -228,6 +232,17 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smarttable_dev_password}
       S3_BUCKET: ${S3_BUCKET:-smart-table}
     restart: "no"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: smart-table-otel
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_GRPC_PORT:-4317}:4317"
 
 volumes:
   pgdata:

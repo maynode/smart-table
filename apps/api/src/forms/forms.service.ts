@@ -58,6 +58,14 @@ export class FormsService implements OnModuleDestroy {
   private readonly worker: Worker | null = null;
   private readonly queueConnection: IORedis | null = null;
   private readonly workerConnection: IORedis | null = null;
+  /**
+   * Admission control: a single API replica must not push every simultaneous
+   * HTTP submit into Prisma at once. Queued requests are still accepted and
+   * complete as soon as a slot opens; horizontal replicas scale the ceiling.
+   */
+  private readonly submitMaxConcurrency: number;
+  private activeSubmits = 0;
+  private readonly submitWaiters: Array<() => void> = [];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -77,6 +85,10 @@ export class FormsService implements OnModuleDestroy {
     );
     this.submitMode =
       this.config.get<string>('SUBMIT_MODE') === 'queue' ? 'queue' : 'sync';
+    this.submitMaxConcurrency = Math.max(
+      1,
+      Number(this.config.get<string>('SUBMIT_MAX_CONCURRENCY') ?? 64),
+    );
 
     if (this.submitMode === 'queue') {
       const url = this.config.get<string>(
@@ -294,6 +306,36 @@ export class FormsService implements OnModuleDestroy {
   }
 
   async submit(
+    shareToken: string,
+    cells: Record<string, unknown>,
+    ip: string,
+  ) {
+    await this.acquireSubmitSlot();
+    try {
+      return await this.submitWithSlot(shareToken, cells, ip);
+    } finally {
+      this.releaseSubmitSlot();
+    }
+  }
+
+  private async acquireSubmitSlot(): Promise<void> {
+    if (this.activeSubmits < this.submitMaxConcurrency) {
+      this.activeSubmits += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.submitWaiters.push(resolve));
+  }
+
+  private releaseSubmitSlot(): void {
+    this.activeSubmits -= 1;
+    const next = this.submitWaiters.shift();
+    if (next) {
+      this.activeSubmits += 1;
+      next();
+    }
+  }
+
+  private async submitWithSlot(
     shareToken: string,
     cells: Record<string, unknown>,
     ip: string,

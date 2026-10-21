@@ -166,6 +166,7 @@ export class SheetsService {
       where: { id: fieldId },
       data: {
         ...(dto.name === undefined ? {} : { name: dto.name.trim() }),
+        ...(dto.type === undefined ? {} : { type: dto.type }),
         ...(dto.hidden === undefined ? {} : { hidden: dto.hidden }),
         ...(dto.required === undefined ? {} : { required: dto.required }),
         ...(dto.order === undefined ? {} : { order: dto.order }),

@@ -9,6 +9,8 @@ export interface GridColumn {
   id: string;
   name: string;
   width?: number;
+  /** Short glyph drawn before the header label (WeCom field-type cue). */
+  icon?: string;
 }
 
 export interface CellRender {
@@ -41,11 +43,24 @@ export interface CanvasGridOptions {
   getCell?: (row: number, col: number) => CellRender | null;
   getRowColor?: (row: number) => string | null;
   onSelectionChange?: (selection: Selection | null) => void;
+  onCellClick?: (selection: Selection) => void;
   onCellDoubleClick?: (selection: Selection) => void;
   onViewportChange?: (stats: GridStats) => void;
   onColumnResize?: (columnIndex: number, width: number) => void;
+  /** Fired when a data column header is clicked (not resize / add). */
+  onHeaderClick?: (
+    columnIndex: number,
+    anchor: { top: number; left: number },
+  ) => void;
+  /** Fired when the trailing "+" header (id `__add_field__`) is clicked. */
+  onAddColumnClick?: (anchor: { top: number; left: number }) => void;
+  /** Left sticky row-number gutter width; 0 disables. */
+  rowGutterWidth?: number;
   offscreenFactory?: () => OffscreenCanvas | null;
 }
+
+export const ADD_FIELD_COLUMN_ID = '__add_field__';
+const DEFAULT_ROW_GUTTER = 48;
 
 type LayerName = 'grid' | 'content' | 'selection';
 
@@ -82,6 +97,7 @@ export class CanvasGridEngine {
   private readonly rowHeight: number;
   private readonly headerHeight: number;
   private readonly overscan: number;
+  private readonly rowGutterWidth: number;
   private readonly offscreen: OffscreenCanvas | null;
   private readonly offscreenContext: OffscreenCanvasRenderingContext2D | null;
 
@@ -121,6 +137,10 @@ export class CanvasGridEngine {
     this.rowHeight = options.rowHeight ?? ROW_HEIGHT;
     this.headerHeight = options.headerHeight ?? HEADER_HEIGHT;
     this.overscan = options.overscan ?? 3;
+    this.rowGutterWidth = Math.max(
+      0,
+      options.rowGutterWidth ?? DEFAULT_ROW_GUTTER,
+    );
     this.getCell = options.getCell ?? (() => null);
     this.getRowColor = options.getRowColor ?? (() => null);
 
@@ -250,7 +270,10 @@ export class CanvasGridEngine {
     const left = this.columnAxis.offset(col);
     const right = left + this.columnAxis.size(col);
     const scrollLeft = this.scroller.scrollLeft;
-    const viewportWidth = this.host.clientWidth;
+    const viewportWidth = Math.max(
+      0,
+      this.host.clientWidth - this.rowGutterWidth,
+    );
 
     if (left < scrollLeft) {
       this.scroller.scrollLeft = left;
@@ -269,11 +292,19 @@ export class CanvasGridEngine {
     height: number;
   } {
     return {
-      x: this.columnAxis.offset(col) - this.scrollX,
+      x: this.columnScreenX(col),
       y: this.headerHeight + this.rowAxis.offset(row) - this.scrollY,
       width: this.columnAxis.size(col),
       height: this.rowAxis.size(row),
     };
+  }
+
+  private columnScreenX(col: number): number {
+    return this.rowGutterWidth + this.columnAxis.offset(col) - this.scrollX;
+  }
+
+  private contentViewportWidth(width: number): number {
+    return Math.max(0, width - this.rowGutterWidth);
   }
 
   scrollTo(x: number, y: number): void {
@@ -309,7 +340,7 @@ export class CanvasGridEngine {
     const columns = computeVisibleRange(
       this.columnAxis,
       this.scrollX,
-      width,
+      this.contentViewportWidth(width),
       this.overscan,
     );
 
@@ -357,16 +388,43 @@ export class CanvasGridEngine {
       return;
     }
 
+    if (point.x < this.rowGutterWidth) {
+      return;
+    }
+
+    const worldX = point.x - this.rowGutterWidth + this.scrollX;
+
     if (point.y < this.headerHeight) {
-      const boundary = this.columnBoundaryAt(point.x + this.scrollX);
+      const col = this.columnAxis.indexAt(worldX);
+      const column = this.columns[col];
+      if (column?.id === ADD_FIELD_COLUMN_ID) {
+        const rect = this.host.getBoundingClientRect();
+        const x = this.columnScreenX(col);
+        this.options.onAddColumnClick?.({
+          top: rect.top + this.headerHeight + 4,
+          left: rect.left + x,
+        });
+        return;
+      }
+      const boundary = this.columnBoundaryAt(worldX);
       if (boundary !== null) {
+        const boundaryCol = this.columns[boundary];
+        if (boundaryCol?.id === ADD_FIELD_COLUMN_ID) return;
         this.startResize(boundary, event);
+        return;
+      }
+      if (col >= 0 && col < this.columns.length) {
+        const rect = this.host.getBoundingClientRect();
+        this.options.onHeaderClick?.(col, {
+          top: rect.top + this.headerHeight + 4,
+          left: rect.left + this.columnScreenX(col),
+        });
       }
       return;
     }
 
     const row = this.rowAxis.indexAt(point.y - this.headerHeight + this.scrollY);
-    const col = this.columnAxis.indexAt(point.x + this.scrollX);
+    const col = this.columnAxis.indexAt(worldX);
     if (
       row < 0 ||
       row >= this.rowAxis.count ||
@@ -375,18 +433,22 @@ export class CanvasGridEngine {
     ) {
       return;
     }
+    if (this.columns[col]?.id === ADD_FIELD_COLUMN_ID) return;
 
     this.selection = { row, col };
     this.options.onSelectionChange?.(this.selection);
+    this.options.onCellClick?.(this.selection);
     this.invalidate();
   };
 
   private readonly onDoubleClick = (event: MouseEvent): void => {
     const point = this.localPoint(event);
-    if (point.y < this.headerHeight) return;
+    if (point.y < this.headerHeight || point.x < this.rowGutterWidth) return;
 
     const row = this.rowAxis.indexAt(point.y - this.headerHeight + this.scrollY);
-    const col = this.columnAxis.indexAt(point.x + this.scrollX);
+    const col = this.columnAxis.indexAt(
+      point.x - this.rowGutterWidth + this.scrollX,
+    );
     if (
       row < 0 ||
       row >= this.rowAxis.count ||
@@ -484,6 +546,7 @@ export class CanvasGridEngine {
   ): void {
     const context = this.contexts.grid;
     this.prepareContext(context, width, height, true);
+    const gutter = this.rowGutterWidth;
 
     context.fillStyle = COLORS.background;
     context.fillRect(0, 0, width, height);
@@ -498,34 +561,57 @@ export class CanvasGridEngine {
     context.lineTo(width, this.headerHeight - 0.5);
     context.stroke();
 
+    // Column headers (clipped to the right of the sticky gutter).
     context.font = `600 12px ${FONT_STACK}`;
     context.textBaseline = 'middle';
     context.fillStyle = COLORS.headerText;
 
     context.save();
     context.beginPath();
-    context.rect(0, 0, width, this.headerHeight);
+    context.rect(gutter, 0, Math.max(0, width - gutter), this.headerHeight);
     context.clip();
     for (let col = columns.start; col < columns.end; col += 1) {
       const column = this.columns[col];
       if (!column) continue;
-      const x = this.columnAxis.offset(col) - this.scrollX;
+      const x = this.columnScreenX(col);
       const columnWidth = this.columnAxis.size(col);
-      if (x + columnWidth < 0 || x > width) continue;
+      if (x + columnWidth < gutter || x > width) continue;
 
       context.save();
       context.beginPath();
       context.rect(x, 0, columnWidth, this.headerHeight);
       context.clip();
-      context.fillText(column.name, x + 12, this.headerHeight / 2);
+      if (column.id === ADD_FIELD_COLUMN_ID) {
+        context.fillStyle = COLORS.selectionBorder;
+        context.font = `600 16px ${FONT_STACK}`;
+        context.textAlign = 'center';
+        context.fillText('+', x + columnWidth / 2, this.headerHeight / 2);
+        context.textAlign = 'start';
+        context.fillStyle = COLORS.headerText;
+        context.font = `600 12px ${FONT_STACK}`;
+      } else {
+        let textX = x + 12;
+        if (column.icon) {
+          context.fillStyle = COLORS.emptyText;
+          context.fillText(column.icon, x + 10, this.headerHeight / 2);
+          textX = x + 28;
+          context.fillStyle = COLORS.headerText;
+        }
+        context.fillText(column.name, textX, this.headerHeight / 2);
+      }
       context.restore();
     }
     context.restore();
 
-    // Body grid lines (viewport-only).
+    // Body grid lines (viewport-only, right of gutter).
     context.save();
     context.beginPath();
-    context.rect(0, this.headerHeight, width, height - this.headerHeight);
+    context.rect(
+      gutter,
+      this.headerHeight,
+      Math.max(0, width - gutter),
+      height - this.headerHeight,
+    );
     context.clip();
 
     context.strokeStyle = COLORS.border;
@@ -533,11 +619,11 @@ export class CanvasGridEngine {
     for (let row = rows.start; row < rows.end; row += 1) {
       const y =
         this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
-      context.moveTo(0, y);
+      context.moveTo(gutter, y);
       context.lineTo(width, y);
     }
     for (let col = columns.start; col < columns.end; col += 1) {
-      const x = this.columnAxis.offset(col + 1) - this.scrollX - 0.5;
+      const x = this.columnScreenX(col + 1) - 0.5;
       context.moveTo(x, this.headerHeight);
       context.lineTo(x, height);
     }
@@ -547,10 +633,53 @@ export class CanvasGridEngine {
       context.fillStyle = COLORS.emptyText;
       context.font = `13px ${FONT_STACK}`;
       context.textAlign = 'center';
-      context.fillText('暂无记录', width / 2, height / 2);
+      context.fillText(
+        '暂无记录',
+        gutter + Math.max(0, width - gutter) / 2,
+        height / 2,
+      );
       context.textAlign = 'start';
     }
     context.restore();
+
+    this.drawRowGutter(context, width, height, rows);
+  }
+
+  private drawRowGutter(
+    context: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    rows: VisibleRange,
+  ): void {
+    const gutter = this.rowGutterWidth;
+    if (gutter <= 0) return;
+
+    context.fillStyle = COLORS.headerBackground;
+    context.fillRect(0, 0, gutter, height);
+    context.strokeStyle = COLORS.border;
+    context.beginPath();
+    context.moveTo(gutter - 0.5, 0);
+    context.lineTo(gutter - 0.5, height);
+    context.moveTo(0, this.headerHeight - 0.5);
+    context.lineTo(gutter, this.headerHeight - 0.5);
+    context.stroke();
+
+    context.fillStyle = COLORS.emptyText;
+    context.font = `12px ${FONT_STACK}`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    for (let row = rows.start; row < rows.end; row += 1) {
+      const y =
+        this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
+      const rowHeight = this.rowAxis.size(row);
+      if (y + rowHeight < this.headerHeight || y > height) continue;
+      context.fillText(String(row + 1), gutter / 2, y + rowHeight / 2);
+      context.beginPath();
+      context.moveTo(0, y + rowHeight - 0.5);
+      context.lineTo(gutter, y + rowHeight - 0.5);
+      context.stroke();
+    }
+    context.textAlign = 'start';
   }
 
   private drawContent(
@@ -580,9 +709,15 @@ export class CanvasGridEngine {
       this.prepareContext(this.contexts.content, width, height, true);
     }
 
+    const gutter = this.rowGutterWidth;
     target.save();
     target.beginPath();
-    target.rect(0, this.headerHeight, width, height - this.headerHeight);
+    target.rect(
+      gutter,
+      this.headerHeight,
+      Math.max(0, width - gutter),
+      height - this.headerHeight,
+    );
     target.clip();
     target.font = `13px ${FONT_STACK}`;
     target.textBaseline = 'middle';
@@ -596,16 +731,16 @@ export class CanvasGridEngine {
       const rowColor = this.getRowColor(row);
       if (rowColor) {
         target.fillStyle = rowColor;
-        target.fillRect(0, y, width, rowHeight);
+        target.fillRect(gutter, y, Math.max(0, width - gutter), rowHeight);
       }
 
       for (let col = columns.start; col < columns.end; col += 1) {
         const cell = this.getCell(row, col);
         if (!cell || cell.text === '') continue;
 
-        const x = this.columnAxis.offset(col) - this.scrollX;
+        const x = this.columnScreenX(col);
         const columnWidth = this.columnAxis.size(col);
-        if (x + columnWidth < 0 || x > width) continue;
+        if (x + columnWidth < gutter || x > width) continue;
 
         target.save();
         target.beginPath();
@@ -660,7 +795,12 @@ export class CanvasGridEngine {
 
     context.save();
     context.beginPath();
-    context.rect(0, this.headerHeight, width, height - this.headerHeight);
+    context.rect(
+      this.rowGutterWidth,
+      this.headerHeight,
+      Math.max(0, width - this.rowGutterWidth),
+      height - this.headerHeight,
+    );
     context.clip();
 
     context.fillStyle = COLORS.selectionFill;

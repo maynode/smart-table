@@ -67,14 +67,17 @@ const developerOpen = ref(false);
 const quotaOpen = ref(false);
 const syncOpen = ref(false);
 
-const sidebarObjects = [
-  { icon: '📝', label: '收集表单' },
-  { icon: '📊', label: '仪表盘' },
-  { icon: '📈', label: '分析报告' },
-  { icon: '📁', label: '文件夹' },
-  { icon: '📥', label: '导入' },
-  { icon: '🔄', label: '同步' },
-  { icon: '🧩', label: '模板' },
+const createMenuOpen = ref(false);
+
+const createMenuItems = [
+  { icon: '▦', label: '工作表', action: 'sheet' as const },
+  { icon: '📊', label: '仪表盘', action: 'dashboard' as const },
+  { icon: '📝', label: '收集表单', action: 'form' as const },
+  { icon: '📈', label: '分析报告', action: 'report' as const },
+  { icon: '📁', label: '文件夹', action: 'folder' as const },
+  { icon: '📥', label: '导入表格', action: 'import' as const },
+  { icon: '🔄', label: '同步数据', action: 'sync' as const },
+  { icon: '🧩', label: '从模板新建', action: 'template' as const },
 ];
 
 function messageOf(error: unknown): string {
@@ -142,6 +145,35 @@ async function addRow(): Promise<void> {
   }
 }
 
+function coerceCellValue(field: FieldDto, value: string): unknown {
+  if (field.type === 'checkbox') {
+    return value === 'true' || value === '1';
+  }
+  if (
+    field.type === 'number' ||
+    field.type === 'currency' ||
+    field.type === 'percent' ||
+    field.type === 'progress'
+  ) {
+    if (value.trim() === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : value;
+  }
+  if (field.type === 'multiSelect') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      /* fall through */
+    }
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return value;
+}
+
 async function commitCell(payload: {
   record: RecordDto;
   field: FieldDto;
@@ -150,7 +182,7 @@ async function commitCell(payload: {
   try {
     const updated = await endpoints.updateRecord(
       payload.record.id,
-      { [payload.field.id]: payload.value },
+      { [payload.field.id]: coerceCellValue(payload.field, payload.value) },
       payload.record.version,
     );
     records.value = records.value.map((record) =>
@@ -195,6 +227,60 @@ async function toggleField(payload: {
         ),
       };
     }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function createField(payload: {
+  name: string;
+  type: string;
+  options?: Record<string, unknown>;
+}): Promise<void> {
+  if (!activeSheet.value) return;
+  try {
+    const created = await endpoints.createField(activeSheet.value.id, {
+      name: payload.name,
+      type: payload.type,
+      options: payload.options,
+    });
+    activeSheet.value = {
+      ...activeSheet.value,
+      fields: [...(activeSheet.value.fields ?? []), created],
+    };
+    toast(`已添加字段「${created.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function updateFieldMeta(payload: {
+  field: FieldDto;
+  name: string;
+  type: string;
+  options?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    const patch: {
+      name?: string;
+      type?: string;
+      options?: Record<string, unknown>;
+    } = {};
+    if (payload.name !== payload.field.name) patch.name = payload.name;
+    if (payload.type !== payload.field.type) patch.type = payload.type;
+    if (payload.options !== undefined) patch.options = payload.options;
+    if (Object.keys(patch).length === 0) return;
+
+    const updated = await endpoints.updateField(payload.field.id, patch);
+    if (activeSheet.value) {
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).map((field) =>
+          field.id === updated.id ? updated : field,
+        ),
+      };
+    }
+    toast(`已更新字段「${updated.name}」`);
   } catch (error) {
     toast(messageOf(error));
   }
@@ -256,12 +342,19 @@ function comingSoon(label: string): void {
 
 const importInput = ref<HTMLInputElement | null>(null);
 
-function handleObjectClick(label: string): void {
-  if (label === '收集表单') {
+function handleCreateAction(
+  action: (typeof createMenuItems)[number]['action'],
+): void {
+  createMenuOpen.value = false;
+  if (action === 'sheet') {
+    void createSheet();
+    return;
+  }
+  if (action === 'form') {
     formBuilderOpen.value = true;
     return;
   }
-  if (label === '导入') {
+  if (action === 'import') {
     if (!activeSheet.value) {
       toast('请先选择一张工作表');
       return;
@@ -269,20 +362,26 @@ function handleObjectClick(label: string): void {
     importInput.value?.click();
     return;
   }
-  if (label === '仪表盘' || label === '分析报告') {
-    dashboardKind.value = label === '分析报告' ? 'report' : 'dashboard';
+  if (action === 'dashboard' || action === 'report') {
+    dashboardKind.value = action === 'report' ? 'report' : 'dashboard';
     dashboardOpen.value = true;
     return;
   }
-  if (label === '文件夹') {
+  if (action === 'folder') {
     foldersOpen.value = true;
     return;
   }
-  if (label === '模板') {
+  if (action === 'template') {
     templatesOpen.value = true;
     return;
   }
-  comingSoon(label);
+  if (action === 'sync') {
+    if (!activeSheet.value) {
+      toast('请先选择一张工作表');
+      return;
+    }
+    syncOpen.value = true;
+  }
 }
 
 async function onImportFile(event: Event): Promise<void> {
@@ -459,7 +558,12 @@ onMounted(bootstrap);
         <div class="sidebar-section">
           <div class="sidebar-title">
             <span>工作表</span>
-            <button class="icon-btn" title="新建工作表" @click="createSheet">
+            <button
+              class="icon-btn"
+              title="新建工作表"
+              data-testid="create-sheet"
+              @click="createSheet"
+            >
               +
             </button>
           </div>
@@ -474,28 +578,40 @@ onMounted(bootstrap);
           </button>
         </div>
 
-        <div class="sidebar-section">
+        <div class="sidebar-section create-section">
           <button
-            v-for="item in sidebarObjects"
-            :key="item.label"
-            class="sidebar-item muted-item"
-            :data-testid="
-              item.label === '收集表单'
-                ? 'forms-open'
-                : item.label === '仪表盘'
-                  ? 'dashboard-open'
-                  : item.label === '分析报告'
-                    ? 'report-open'
-                    : item.label === '文件夹'
-                      ? 'folder-open'
-                      : item.label === '模板'
-                        ? 'template-open'
-                        : undefined
-            "
-            @click="handleObjectClick(item.label)"
+            class="sidebar-create"
+            data-testid="create-menu-toggle"
+            @click="createMenuOpen = !createMenuOpen"
           >
-            <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
+            <span>+ 新建</span>
+            <span class="create-caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
           </button>
+          <div v-if="createMenuOpen" class="create-menu" data-testid="create-menu">
+            <button
+              v-for="item in createMenuItems"
+              :key="item.action"
+              class="create-menu-item"
+              :data-testid="
+                item.action === 'form'
+                  ? 'forms-open'
+                  : item.action === 'dashboard'
+                    ? 'dashboard-open'
+                    : item.action === 'report'
+                      ? 'report-open'
+                      : item.action === 'folder'
+                        ? 'folder-open'
+                        : item.action === 'template'
+                          ? 'template-open'
+                          : item.action === 'sync'
+                            ? 'sidebar-sync-open'
+                            : undefined
+              "
+              @click="handleCreateAction(item.action)"
+            >
+              <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -517,6 +633,8 @@ onMounted(bootstrap);
           @load-more="loadMore"
           @commit="commitCell"
           @toggle-field="toggleField"
+          @create-field="createField"
+          @update-field="updateFieldMeta"
           @query="applyViewQuery"
         />
         <div v-else class="empty-state">还没有工作表，点击左侧 + 新建。</div>
@@ -722,5 +840,60 @@ onMounted(bootstrap);
   width: min(640px, 92vw);
   max-height: 86vh;
   overflow: auto;
+}
+.create-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.sidebar-create {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.sidebar-create:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.create-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.create-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(31, 35, 41, 0.08);
+}
+.create-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+.create-menu-item:hover {
+  background: var(--bg-hover);
 }
 </style>

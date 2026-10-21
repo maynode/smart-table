@@ -38,13 +38,17 @@ docker push registry.example.com/smart-table-web:1.0.0
 ## 3. 应用
 
 ```bash
+kubectl apply -f deploy/k8s/configmap.yaml
+kubectl apply -f deploy/k8s/otel-collector.yaml
 kubectl apply -f deploy/k8s/api-deployment.yaml
 kubectl apply -f deploy/k8s/claim-worker-deployment.yaml
 kubectl apply -f deploy/k8s/web-deployment.yaml
 kubectl apply -f deploy/k8s/api-hpa.yaml
 ```
 
-- `api`：2 副本起，HPA 按 CPU 70% 扩到 10；`/health` 探针；`/metrics` 供 Prometheus 抓取。
+- `configmap.yaml` 提供非敏感配置；`smart-table-secrets` 仍需按上文创建。
+- `otel-collector.yaml` 部署 OTLP/HTTP collector（当前 debug exporter，生产可改为 Tempo/Jaeger/厂商 endpoint）。
+- `api`：2 副本起，HPA 按 CPU 70% 扩到 10；`/health` 探针；`/metrics` 供 Prometheus 抓取；`OTEL_ENABLED=true` 时上报 trace。
 - `claim-worker`：消费 `form-submissions` 与 `automation-runs` 队列；建议与 API 分开扩容。
 - `web`：nginx 托管静态资源，需在 Ingress 把 `/api`、`/files` 转发到 `smart-table-api:3000`（或直接把 nginx Service 暴露，nginx.conf 已内置反代）。
 

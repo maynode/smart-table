@@ -14,4 +14,6 @@ test-results/
 .acl-recovery/
 .tmp/
 .tmp-esbuild/
+.perf-env.json
+artifacts/perf/
 .data/

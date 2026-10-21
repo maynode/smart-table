@@ -1,0 +1,22 @@
+{
+  "grid10m": {
+    "scrollP95Ms": 50,
+    "maxVisibleRows": 60,
+    "maxCellsDrawn": 600
+  },
+  "windowFetch10m": {
+    "rowsPerPage": 100,
+    "p95Ms": 250
+  },
+  "claim1000": {
+    "concurrency": 1000,
+    "duplicateSerials": 0,
+    "otherStatuses": 0
+  },
+  "formLoad": {
+    "concurrency": 100,
+    "durationSeconds": 30,
+    "successRate": 0.99,
+    "p95Ms": 1000
+  }
+}

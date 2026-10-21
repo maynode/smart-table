@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import CanvasGrid from '../components/CanvasGrid.vue';
 import type { CellRender, GridStats } from '../grid-canvas/engine';
 import type { FieldDto } from '../api/types';
@@ -44,6 +45,11 @@ const fields: FieldDto[] = [
 
 const grid = ref<InstanceType<typeof CanvasGrid> | null>(null);
 const stats = ref<GridStats | null>(null);
+const route = useRoute();
+const rowCount = Math.min(
+  Number(route.query.rows ?? 100_000) || 100_000,
+  10_000_000,
+);
 
 function provider(row: number, col: number): CellRender {
   if (col === 1) {
@@ -69,7 +75,7 @@ function onViewport(next: GridStats): void {
   <div class="bench-page">
     <header class="bench-header">
       <strong>Canvas 性能基准</strong>
-      <span class="muted">100,000 行 · 3 列</span>
+      <span class="muted">{{ rowCount.toLocaleString() }} 行 · 3 列</span>
       <span class="muted" data-testid="bench-stats">
         {{ stats ? `${stats.cellsDrawn} cells` : '' }}
       </span>
@@ -77,7 +83,7 @@ function onViewport(next: GridStats): void {
     <CanvasGrid
       ref="grid"
       :fields="fields"
-      :row-count="100000"
+      :row-count="rowCount"
       :provider="provider"
       :editable="false"
       @viewport="onViewport"

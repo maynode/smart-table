@@ -11,6 +11,12 @@
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "dev": "pnpm -r --parallel --if-present dev",
-    "smoke:compose": "node scripts/smoke-compose.mjs"
+    "smoke:compose": "node scripts/smoke-compose.mjs",
+    "perf:claim": "pnpm --filter api exec ts-node --transpile-only test/claim-load.smoke.ts",
+    "perf:grid": "pnpm --filter web exec playwright test e2e/grid-perf.spec.ts",
+    "perf:window": "node scripts/perf/window-fetch.mjs",
+    "perf:form": "node scripts/perf/form-load.mjs",
+    "perf:queue": "node scripts/perf/queue-smoke.mjs",
+    "perf:soft": "pnpm --filter api test:e2e -- perf-foundation && pnpm --filter web exec playwright test e2e/grid-perf.spec.ts"
   }
 }

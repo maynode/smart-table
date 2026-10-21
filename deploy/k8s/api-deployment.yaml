@@ -62,6 +62,11 @@ spec:
                 configMapKeyRef:
                   name: smart-table-config
                   key: SUBMIT_MODE
+            - name: SUBMIT_MAX_CONCURRENCY
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: SUBMIT_MAX_CONCURRENCY
             - name: AUTOMATION_QUEUE
               value: inline
             - name: S3_DRIVER
@@ -89,6 +94,18 @@ spec:
                 secretKeyRef:
                   name: smart-table-secrets
                   key: S3_SECRET_KEY
+            - name: OTEL_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: OTEL_ENABLED
+            - name: OTEL_SERVICE_NAME
+              value: smart-table-api
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: smart-table-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
           readinessProbe:
             httpGet:
               path: /health

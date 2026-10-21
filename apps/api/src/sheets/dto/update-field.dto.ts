@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
@@ -8,6 +9,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { FIELD_TYPES, type FieldType } from 'shared';
 
 export class UpdateFieldDto {
   @IsOptional()
@@ -15,6 +17,10 @@ export class UpdateFieldDto {
   @MinLength(1)
   @MaxLength(100)
   name?: string;
+
+  @IsOptional()
+  @IsIn(FIELD_TYPES as unknown as string[])
+  type?: FieldType;
 
   @IsOptional()
   @IsObject()
