@@ -11,6 +11,7 @@ import { AutomationRunnerService } from '../automations/automation-runner.servic
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
@@ -26,6 +27,7 @@ export class SheetsService {
     private readonly automationRunner: AutomationRunnerService,
     private readonly permissions: PermissionsService,
     private readonly sharing: SharingService,
+    private readonly webhooks: WebhooksService,
   ) {}
 
   private async requireBase(
@@ -204,6 +206,15 @@ export class SheetsService {
         }`,
       );
     }
+    void this.webhooks
+      .emitForSheet(sheetId, 'record.created', {
+        recordId: record.id,
+        cells: record.cells,
+        createdBy: record.createdBy,
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(`webhook record.created failed: ${String(error)}`);
+      });
 
     return record;
   }
@@ -227,6 +238,14 @@ export class SheetsService {
       },
     );
     await this.prisma.recordRow.delete({ where: { id: recordId } });
+    void this.webhooks
+      .emitForSheet(record.sheetId, 'record.deleted', {
+        recordId,
+        cells: record.cells,
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(`webhook record.deleted failed: ${String(error)}`);
+      });
     return { id: recordId, deleted: true };
   }
 
@@ -263,8 +282,9 @@ export class SheetsService {
     const mergedCells = { ...currentCells, ...cells };
     const claimStatus = this.claimStatusFor(fields, mergedCells);
 
+    let updatedRecord;
     if (expectedVersion === undefined) {
-      return this.prisma.recordRow.update({
+      updatedRecord = await this.prisma.recordRow.update({
         where: { id: recordId },
         data: {
           cells: mergedCells as Prisma.InputJsonValue,
@@ -272,24 +292,35 @@ export class SheetsService {
           claimStatus,
         },
       });
+    } else {
+      const updated = await this.prisma.recordRow.updateMany({
+        where: { id: recordId, version: expectedVersion },
+        data: {
+          cells: mergedCells as Prisma.InputJsonValue,
+          version: { increment: 1 },
+          claimStatus,
+        },
+      });
+
+      if (updated.count === 0) {
+        throw new ConflictException('记录已被他人修改，请刷新后重试');
+      }
+      updatedRecord = await this.prisma.recordRow.findUniqueOrThrow({
+        where: { id: recordId },
+      });
     }
 
-    const updated = await this.prisma.recordRow.updateMany({
-      where: { id: recordId, version: expectedVersion },
-      data: {
-        cells: mergedCells as Prisma.InputJsonValue,
-        version: { increment: 1 },
-        claimStatus,
-      },
-    });
+    void this.webhooks
+      .emitForSheet(record.sheetId, 'record.updated', {
+        recordId,
+        cells: updatedRecord.cells,
+        changes: cells,
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(`webhook record.updated failed: ${String(error)}`);
+      });
 
-    if (updated.count === 0) {
-      throw new ConflictException('记录已被他人修改，请刷新后重试');
-    }
-
-    return this.prisma.recordRow.findUniqueOrThrow({
-      where: { id: recordId },
-    });
+    return updatedRecord;
   }
 
   async listRecords(

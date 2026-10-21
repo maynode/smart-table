@@ -178,6 +178,13 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="share-type"]')).toBeVisible();
     await page.locator('[data-testid="share-close"]').click();
 
+    // Developer panel issues a one-time API key.
+    await page.locator('[data-testid="developer-open"]').click();
+    await expect(page.locator('[data-testid="developer-panel"]')).toBeVisible();
+    await page.locator('[data-testid="api-key-create"]').click();
+    await expect(page.locator('[data-testid="api-key-token"]')).toContainText('st_');
+    await page.locator('[data-testid="developer-close"]').click();
+
     // Template library creates a new base and navigates into it.
     await page.locator('[data-testid="template-open"]').click();
     await expect(page.locator('[data-testid="template-card"]')).toHaveCount(3);

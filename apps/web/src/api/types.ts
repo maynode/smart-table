@@ -415,3 +415,33 @@ export interface PublicViewData {
   records: Array<{ id: string; cells: Record<string, unknown> }>;
   expiresAt: string | null;
 }
+
+export interface ApiKeyDto {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  lastUsedAt: string | null;
+  createdAt: string;
+  token?: string;
+}
+
+export interface WebhookDto {
+  id: string;
+  url: string;
+  secret: string;
+  events: string[];
+  active: boolean;
+  createdAt: string;
+}
+
+export interface WebhookDeliveryDto {
+  id: string;
+  webhookId: string;
+  event: string;
+  status: 'pending' | 'success' | 'failed';
+  attempts: number;
+  responseStatus: number | null;
+  error: string;
+  createdAt: string;
+}

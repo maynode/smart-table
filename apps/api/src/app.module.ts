@@ -8,6 +8,9 @@ import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { FoldersModule } from './folders/folders.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { OpenApiModule } from './openapi/openapi.module';
 import { PublicViewsModule } from './public-views/public-views.module';
 import { SharingModule } from './sharing/sharing.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -41,6 +44,9 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     FoldersModule,
     SharingModule,
     PublicViewsModule,
+    ApiKeysModule,
+    WebhooksModule,
+    OpenApiModule,
     TemplatesModule,
   ],
   controllers: [HealthController],

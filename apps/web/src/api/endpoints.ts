@@ -29,6 +29,9 @@ import type {
   CrossWorkspaceShareDto,
   PublicViewDto,
   PublicViewData,
+  ApiKeyDto,
+  WebhookDto,
+  WebhookDeliveryDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -346,4 +349,48 @@ export const endpoints = {
         password ? `?password=${encodeURIComponent(password)}` : ''
       }`,
     ),
+
+  listApiKeys: (workspaceId: string) =>
+    api<ApiKeyDto[]>(`/workspaces/${workspaceId}/api-keys`),
+
+  createApiKey: (
+    workspaceId: string,
+    body: { name: string; scopes?: Array<'read' | 'write'> },
+  ) =>
+    api<ApiKeyDto>(`/workspaces/${workspaceId}/api-keys`, {
+      method: 'POST',
+      body,
+    }),
+
+  revokeApiKey: (keyId: string) =>
+    api<{ id: string; revoked: boolean }>(`/api-keys/${keyId}`, {
+      method: 'DELETE',
+    }),
+
+  listWebhooks: (workspaceId: string) =>
+    api<WebhookDto[]>(`/workspaces/${workspaceId}/webhooks`),
+
+  createWebhook: (
+    workspaceId: string,
+    body: { url: string; events?: string[] },
+  ) =>
+    api<WebhookDto>(`/workspaces/${workspaceId}/webhooks`, {
+      method: 'POST',
+      body,
+    }),
+
+  deleteWebhook: (webhookId: string) =>
+    api<{ id: string; deleted: boolean }>(`/webhooks/${webhookId}`, {
+      method: 'DELETE',
+    }),
+
+  listWebhookDeliveries: (webhookId: string, status?: string) =>
+    api<WebhookDeliveryDto[]>(
+      `/webhooks/${webhookId}/deliveries${status ? `?status=${status}` : ''}`,
+    ),
+
+  retryWebhookDelivery: (deliveryId: string) =>
+    api<WebhookDeliveryDto>(`/webhook-deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+    }),
 };
