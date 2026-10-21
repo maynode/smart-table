@@ -114,6 +114,7 @@ model Sheet {
   records RecordRow[]
   comments Comment[]
   forms   Form[]
+  publicViews PublicView[]
 
   @@index([baseId])
   @@map("sheets")
@@ -404,4 +405,21 @@ model CrossWorkspaceShare {
   @@index([targetWorkspaceId])
   @@index([sourceWorkspaceId])
   @@map("cross_workspace_shares")
+}
+
+model PublicView {
+  id           String    @id @default(uuid()) @db.Uuid
+  sheetId      String    @map("sheet_id") @db.Uuid
+  token        String    @unique
+  name         String
+  passwordHash String?   @map("password_hash")
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  enabled      Boolean   @default(true)
+  createdBy    String?   @map("created_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId])
+  @@map("public_views")
 }

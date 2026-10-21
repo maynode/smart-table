@@ -9,6 +9,7 @@ import DashboardPanel from '../components/DashboardPanel.vue';
 import FolderPanel from '../components/FolderPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import SharePanel from '../components/SharePanel.vue';
+import PublicViewPanel from '../components/PublicViewPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -58,6 +59,7 @@ const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
 const foldersOpen = ref(false);
 const templatesOpen = ref(false);
 const shareOpen = ref(false);
+const publicViewOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -400,6 +402,14 @@ onMounted(bootstrap);
         </button>
         <button
           class="topbar-btn"
+          data-testid="public-view-open"
+          :disabled="!activeSheet"
+          @click="publicViewOpen = true"
+        >
+          公开视图
+        </button>
+        <button
+          class="topbar-btn"
           data-testid="automation-open"
           @click="automationsOpen = true"
         >
@@ -613,6 +623,17 @@ onMounted(bootstrap);
         :base-id="baseId"
         :sheet-id="activeSheet?.id"
         @close="shareOpen = false"
+      />
+    </div>
+
+    <div
+      v-if="publicViewOpen && activeSheet"
+      class="modal-mask"
+      @click.self="publicViewOpen = false"
+    >
+      <PublicViewPanel
+        :sheet-id="activeSheet.id"
+        @close="publicViewOpen = false"
       />
     </div>
 

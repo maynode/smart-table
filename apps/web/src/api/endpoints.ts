@@ -27,6 +27,8 @@ import type {
   TemplateDto,
   TemplateInstantiateResult,
   CrossWorkspaceShareDto,
+  PublicViewDto,
+  PublicViewData,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -320,4 +322,28 @@ export const endpoints = {
     api<{ id: string; revoked: boolean }>(`/shares/${shareId}`, {
       method: 'DELETE',
     }),
+
+  listPublicViews: (sheetId: string) =>
+    api<PublicViewDto[]>(`/sheets/${sheetId}/public-views`),
+
+  createPublicView: (
+    sheetId: string,
+    body: { name?: string; password?: string; expiresAt?: string | null },
+  ) =>
+    api<PublicViewDto>(`/sheets/${sheetId}/public-views`, {
+      method: 'POST',
+      body,
+    }),
+
+  revokePublicView: (viewId: string) =>
+    api<{ id: string; revoked: boolean }>(`/public-views/${viewId}`, {
+      method: 'DELETE',
+    }),
+
+  getPublicView: (token: string, password?: string) =>
+    api<PublicViewData>(
+      `/public-views/${token}${
+        password ? `?password=${encodeURIComponent(password)}` : ''
+      }`,
+    ),
 };

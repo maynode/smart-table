@@ -188,6 +188,19 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
     await expect(page).toHaveURL(/\/bases\/[0-9a-f-]+/);
 
+    // Public read-only link renders a table and offers no editing surface.
+    await page.locator('[data-testid="public-view-open"]').click();
+    await expect(page.locator('[data-testid="public-view-panel"]')).toBeVisible();
+    await page.locator('[data-testid="public-view-close"]').click();
+    const viewResponse = await api.post(`/sheets/${sheet.id}/public-views`, {
+      headers,
+      data: { name: 'E2E 只读视图' },
+    });
+    const publicView = (await viewResponse.json()) as { token: string };
+    await page.goto(`/view/${publicView.token}`);
+    await expect(page.locator('[data-testid="public-view-table"]')).toBeVisible();
+    await expect(page.locator('[data-testid="cell-editor"]')).toHaveCount(0);
+
     await api.dispose();
   });
 });

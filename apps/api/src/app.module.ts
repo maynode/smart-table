@@ -8,6 +8,7 @@ import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { FoldersModule } from './folders/folders.module';
+import { PublicViewsModule } from './public-views/public-views.module';
 import { SharingModule } from './sharing/sharing.module';
 import { TemplatesModule } from './templates/templates.module';
 import { MetricsModule } from './metrics/metrics.module';
@@ -39,6 +40,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     DashboardsModule,
     FoldersModule,
     SharingModule,
+    PublicViewsModule,
     TemplatesModule,
   ],
   controllers: [HealthController],

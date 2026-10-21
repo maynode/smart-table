@@ -388,3 +388,30 @@ export interface CrossWorkspaceShareDto {
   targetWorkspaceName: string;
   createdAt: string;
 }
+
+export interface PublicViewDto {
+  id: string;
+  sheetId: string;
+  name: string;
+  token: string;
+  passwordRequired: boolean;
+  expiresAt: string | null;
+  enabled: boolean;
+  createdAt: string;
+  url: string;
+}
+
+export interface PublicViewData {
+  readonly: true;
+  name: string;
+  sheet: { id: string; name: string };
+  fields: Array<{
+    id: string;
+    name: string;
+    type: string;
+    options?: unknown;
+    required?: boolean;
+  }>;
+  records: Array<{ id: string; cells: Record<string, unknown> }>;
+  expiresAt: string | null;
+}
