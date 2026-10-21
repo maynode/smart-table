@@ -41,6 +41,7 @@ model Workspace {
 
   members WorkspaceMember[]
   bases   Base[]
+  folders Folder[]
 
   @@map("workspaces")
 }
@@ -73,9 +74,30 @@ model Base {
   forms  Form[]
   automations Automation[]
   dashboards Dashboard[]
+  folderId String? @map("folder_id") @db.Uuid
+  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
+  @@index([folderId])
   @@map("bases")
+}
+
+model Folder {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  parentId    String?  @map("parent_id") @db.Uuid
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Folder[]  @relation("FolderChildren")
+  bases     Base[]
+
+  @@index([workspaceId])
+  @@index([parentId])
+  @@map("folders")
 }
 
 model Sheet {

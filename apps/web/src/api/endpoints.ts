@@ -23,6 +23,9 @@ import type {
   DashboardDataDto,
   DashboardScheduleDto,
   DashboardWidgetDto,
+  FolderTreeDto,
+  TemplateDto,
+  TemplateInstantiateResult,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -249,4 +252,47 @@ export const endpoints = {
       `/dashboards/${dashboardId}/schedules/${scheduleId}/run`,
       { method: 'POST' },
     ),
+
+  listFolderTree: (workspaceId: string) =>
+    api<FolderTreeDto>(`/workspaces/${workspaceId}/folders`),
+
+  createFolder: (
+    workspaceId: string,
+    body: { name: string; parentId?: string | null },
+  ) =>
+    api<FolderTreeDto['folders'][number]>(`/workspaces/${workspaceId}/folders`, {
+      method: 'POST',
+      body,
+    }),
+
+  updateFolder: (
+    folderId: string,
+    body: { name?: string; parentId?: string | null },
+  ) =>
+    api<FolderTreeDto['folders'][number]>(`/folders/${folderId}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  deleteFolder: (folderId: string) =>
+    api<{ id: string; deleted: boolean }>(`/folders/${folderId}`, {
+      method: 'DELETE',
+    }),
+
+  moveBaseToFolder: (baseId: string, folderId: string | null) =>
+    api<{ id: string; name: string; folderId: string | null }>(
+      `/bases/${baseId}/move`,
+      { method: 'POST', body: { folderId } },
+    ),
+
+  listTemplates: () => api<TemplateDto[]>('/templates'),
+
+  instantiateTemplate: (
+    key: string,
+    body: { workspaceId: string; folderId?: string | null },
+  ) =>
+    api<TemplateInstantiateResult>(`/templates/${key}/instantiate`, {
+      method: 'POST',
+      body,
+    }),
 };

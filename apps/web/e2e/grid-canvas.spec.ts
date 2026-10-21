@@ -158,6 +158,30 @@ test.describe('Canvas grid + enterprise shell', () => {
     ).toBeVisible();
     await page.locator('[data-testid="dashboard-close"]').click();
 
+    // Folders nest and can own the current base.
+    await page.locator('[data-testid="folder-open"]').click();
+    await expect(page.locator('[data-testid="folder-panel"]')).toBeVisible();
+    await page.locator('[data-testid="folder-create-name"]').fill('E2E 文件夹');
+    await page.locator('[data-testid="folder-create-root"]').click();
+    await expect(page.locator('[data-testid="folder-row"]').first()).toContainText(
+      'E2E 文件夹',
+    );
+    await page.locator('[data-testid="folder-move-base"]').click();
+    await expect(page.locator('[data-testid="folder-panel"]')).toContainText(
+      '序列号领取',
+    );
+    await page.locator('[data-testid="folder-close"]').click();
+
+    // Template library creates a new base and navigates into it.
+    await page.locator('[data-testid="template-open"]').click();
+    await expect(page.locator('[data-testid="template-card"]')).toHaveCount(3);
+    await page
+      .locator('[data-testid="template-card"][data-key="project-tasks"]')
+      .locator('[data-testid="template-use"]')
+      .click();
+    await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
+    await expect(page).toHaveURL(/\/bases\/[0-9a-f-]+/);
+
     await api.dispose();
   });
 });

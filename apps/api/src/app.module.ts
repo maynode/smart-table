@@ -7,6 +7,8 @@ import { AutomationsModule } from './automations/automations.module';
 import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { DashboardsModule } from './dashboards/dashboards.module';
+import { FoldersModule } from './folders/folders.module';
+import { TemplatesModule } from './templates/templates.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -34,6 +36,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     PermissionsModule,
     ViewsModule,
     DashboardsModule,
+    FoldersModule,
+    TemplatesModule,
   ],
   controllers: [HealthController],
 })

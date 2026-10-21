@@ -6,6 +6,8 @@ import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import DashboardPanel from '../components/DashboardPanel.vue';
+import FolderPanel from '../components/FolderPanel.vue';
+import TemplatePanel from '../components/TemplatePanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -52,6 +54,8 @@ const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
 const dashboardOpen = ref(false);
 const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
+const foldersOpen = ref(false);
+const templatesOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -260,6 +264,14 @@ function handleObjectClick(label: string): void {
     dashboardOpen.value = true;
     return;
   }
+  if (label === '文件夹') {
+    foldersOpen.value = true;
+    return;
+  }
+  if (label === '模板') {
+    templatesOpen.value = true;
+    return;
+  }
   comingSoon(label);
 }
 
@@ -329,6 +341,11 @@ function roleLabel(role: string): string {
       viewer: '只读',
     }[role] ?? role
   );
+}
+
+function openCreatedBase(result: { baseId: string }): void {
+  templatesOpen.value = false;
+  void router.push(`/workspaces/${workspaceId.value}/bases/${result.baseId}`);
 }
 
 onMounted(bootstrap);
@@ -422,7 +439,11 @@ onMounted(bootstrap);
                   ? 'dashboard-open'
                   : item.label === '分析报告'
                     ? 'report-open'
-                    : undefined
+                    : item.label === '文件夹'
+                      ? 'folder-open'
+                      : item.label === '模板'
+                        ? 'template-open'
+                        : undefined
             "
             @click="handleObjectClick(item.label)"
           >
@@ -559,6 +580,29 @@ onMounted(bootstrap);
         :kind="dashboardKind"
         :sheets="sheets"
         @close="dashboardOpen = false"
+      />
+    </div>
+    <div
+      v-if="foldersOpen"
+      class="modal-mask"
+      @click.self="foldersOpen = false"
+    >
+      <FolderPanel
+        :workspace-id="workspaceId"
+        :base-id="baseId"
+        @close="foldersOpen = false"
+      />
+    </div>
+
+    <div
+      v-if="templatesOpen"
+      class="modal-mask"
+      @click.self="templatesOpen = false"
+    >
+      <TemplatePanel
+        :workspace-id="workspaceId"
+        @close="templatesOpen = false"
+        @created="openCreatedBase"
       />
     </div>
   </div>

@@ -345,3 +345,33 @@ export interface DashboardScheduleDto {
     createdAt: string;
   }>;
 }
+
+export interface FolderNodeDto {
+  id: string;
+  name: string;
+  parentId: string | null;
+  bases: Array<{ id: string; name: string }>;
+  children: FolderNodeDto[];
+}
+
+export interface FolderTreeDto {
+  folders: FolderNodeDto[];
+  unfiled: Array<{ id: string; name: string }>;
+}
+
+export interface TemplateDto {
+  key: string;
+  name: string;
+  category: string;
+  icon: string;
+  description: string;
+  sheets: Array<{ name: string; fields: number }>;
+}
+
+export interface TemplateInstantiateResult {
+  template: string;
+  baseId: string;
+  sheets: Array<{ id: string; name: string }>;
+  codes?: number;
+  shareUrl?: string;
+}
