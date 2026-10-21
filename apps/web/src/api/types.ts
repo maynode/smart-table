@@ -467,3 +467,35 @@ export interface QuotaSnapshot {
     automationRuns: boolean;
   };
 }
+
+export interface DataSyncDto {
+  id: string;
+  sheetId: string;
+  name: string;
+  sourceType: 'http' | 'file';
+  config: {
+    url?: string;
+    headers?: Record<string, string>;
+    fileId?: string;
+  };
+  mapping: Record<string, string>;
+  matchFieldId: string | null;
+  mode: 'upsert' | 'replace';
+  cron: string | null;
+  enabled: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  createdAt: string;
+}
+
+export interface DataSyncRunDto {
+  id: string;
+  syncId: string;
+  status: 'running' | 'success' | 'failed';
+  trigger: string;
+  rowsRead: number;
+  rowsWritten: number;
+  error: string;
+  startedAt: string;
+  finishedAt: string | null;
+}

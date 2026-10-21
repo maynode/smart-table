@@ -13,6 +13,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { OpenApiModule } from './openapi/openapi.module';
 import { AuditModule } from './audit/audit.module';
 import { QuotasModule } from './quotas/quotas.module';
+import { DataSyncModule } from './sync/data-sync.module';
 import { PublicViewsModule } from './public-views/public-views.module';
 import { SharingModule } from './sharing/sharing.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -51,6 +52,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     OpenApiModule,
     AuditModule,
     QuotasModule,
+    DataSyncModule,
     TemplatesModule,
   ],
   controllers: [HealthController],

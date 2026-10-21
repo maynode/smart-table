@@ -33,6 +33,8 @@ import type {
   WebhookDto,
   WebhookDeliveryDto,
   QuotaSnapshot,
+  DataSyncDto,
+  DataSyncRunDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -407,4 +409,51 @@ export const endpoints = {
       method: 'PUT',
       body: { scope: 'installation', ...body },
     }),
+
+  listDataSyncs: (sheetId: string) =>
+    api<DataSyncDto[]>(`/sheets/${sheetId}/data-syncs`),
+
+  createDataSync: (
+    sheetId: string,
+    body: {
+      name: string;
+      sourceType: 'http' | 'file';
+      config: { url?: string; headers?: Record<string, string>; fileId?: string };
+      mapping: Record<string, string>;
+      matchFieldId?: string;
+      mode?: 'upsert' | 'replace';
+      cron?: string;
+    },
+  ) =>
+    api<DataSyncDto>(`/sheets/${sheetId}/data-syncs`, {
+      method: 'POST',
+      body,
+    }),
+
+  runDataSync: (syncId: string) =>
+    api<DataSyncRunDto>(`/data-syncs/${syncId}/run`, { method: 'POST' }),
+
+  listDataSyncRuns: (syncId: string) =>
+    api<DataSyncRunDto[]>(`/data-syncs/${syncId}/runs`),
+
+  deleteDataSync: (syncId: string) =>
+    api<{ id: string; deleted: boolean }>(`/data-syncs/${syncId}`, {
+      method: 'DELETE',
+    }),
+
+  uploadSyncFile: async (sheetId: string, file: File) => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const response = await fetch(`${base}/sheets/${sheetId}/data-syncs/files`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as { id: string; filename: string; size: number };
+  },
 };

@@ -12,6 +12,7 @@ import SharePanel from '../components/SharePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import DeveloperPanel from '../components/DeveloperPanel.vue';
 import QuotaPanel from '../components/QuotaPanel.vue';
+import SyncPanel from '../components/SyncPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -64,6 +65,7 @@ const shareOpen = ref(false);
 const publicViewOpen = ref(false);
 const developerOpen = ref(false);
 const quotaOpen = ref(false);
+const syncOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -406,6 +408,14 @@ onMounted(bootstrap);
         </button>
         <button
           class="topbar-btn"
+          data-testid="sync-open"
+          :disabled="!activeSheet"
+          @click="syncOpen = true"
+        >
+          同步数据
+        </button>
+        <button
+          class="topbar-btn"
           data-testid="quota-open"
           @click="quotaOpen = true"
         >
@@ -641,6 +651,18 @@ onMounted(bootstrap);
         :base-id="baseId"
         :sheet-id="activeSheet?.id"
         @close="shareOpen = false"
+      />
+    </div>
+
+    <div
+      v-if="syncOpen && activeSheet"
+      class="modal-mask"
+      @click.self="syncOpen = false"
+    >
+      <SyncPanel
+        :sheet-id="activeSheet.id"
+        :fields="activeSheet.fields ?? []"
+        @close="syncOpen = false"
       />
     </div>
 
