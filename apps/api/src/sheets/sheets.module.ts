@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { AutomationsModule } from '../automations/automations.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { ExcelController } from './excel.controller';
+import { ExcelService } from './excel.service';
 import { SheetsController } from './sheets.controller';
 import { SheetsService } from './sheets.service';
 
 @Module({
   imports: [WorkspacesModule, AutomationsModule],
-  controllers: [SheetsController],
-  providers: [SheetsService],
+  controllers: [SheetsController, ExcelController],
+  providers: [SheetsService, ExcelService],
   exports: [SheetsService],
 })
 export class SheetsModule {}

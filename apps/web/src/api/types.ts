@@ -183,8 +183,13 @@ export interface AutomationRunDto {
   steps: AutomationRunStepDto[];
 }
 
-export interface UpsertFormPayload {
-  baseId: string;
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  errors: Array<{ row: number; message: string }>;
+}
+
+export interface UpsertFormPayload {  baseId: string;
   sheetId: string;
   name: string;
   coverUrl?: string;

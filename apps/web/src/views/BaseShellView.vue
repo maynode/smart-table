@@ -229,6 +229,57 @@ function comingSoon(label: string): void {
   toast(`${label}：该能力将在后续任务开放`);
 }
 
+const importInput = ref<HTMLInputElement | null>(null);
+
+function handleObjectClick(label: string): void {
+  if (label === '收集表单') {
+    formBuilderOpen.value = true;
+    return;
+  }
+  if (label === '导入') {
+    if (!activeSheet.value) {
+      toast('请先选择一张工作表');
+      return;
+    }
+    importInput.value?.click();
+    return;
+  }
+  comingSoon(label);
+}
+
+async function onImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || !activeSheet.value) return;
+  try {
+    const result = await endpoints.importSheet(activeSheet.value.id, file);
+    toast(
+      result.errors.length > 0
+        ? `已导入 ${result.imported} 条，${result.errors.length} 行有误`
+        : `已导入 ${result.imported} 条记录`,
+    );
+    await selectSheet(activeSheet.value.id, false);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function exportActiveSheet(): Promise<void> {
+  if (!activeSheet.value) {
+    toast('请先选择一张工作表');
+    return;
+  }
+  try {
+    await endpoints.exportSheet(
+      activeSheet.value.id,
+      `${activeSheet.value.name}.xlsx`,
+    );
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 function roleLabel(role: string): string {
   return (
     {
@@ -245,6 +296,14 @@ onMounted(bootstrap);
 
 <template>
   <div class="shell">
+    <input
+      ref="importInput"
+      type="file"
+      accept=".xlsx"
+      class="hidden-file"
+      data-testid="excel-import-input"
+      @change="onImportFile"
+    />
     <header class="topbar">
       <div class="topbar-left">
         <span class="brand-mark small">▦</span>
@@ -276,6 +335,13 @@ onMounted(bootstrap);
         >
           自动化
         </button>
+        <button
+          class="topbar-btn"
+          data-testid="excel-export"
+          @click="exportActiveSheet"
+        >
+          导出
+        </button>
         <button class="topbar-btn" @click="comingSoon('更多')">更多</button>
       </div>
     </header>
@@ -306,11 +372,7 @@ onMounted(bootstrap);
             :key="item.label"
             class="sidebar-item muted-item"
             :data-testid="item.label === '收集表单' ? 'forms-open' : undefined"
-            @click="
-              item.label === '收集表单'
-                ? (formBuilderOpen = true)
-                : comingSoon(item.label)
-            "
+            @click="handleObjectClick(item.label)"
           >
             <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
           </button>
@@ -425,6 +487,9 @@ onMounted(bootstrap);
 </template>
 
 <style scoped>
+.hidden-file {
+  display: none;
+}
 .automation-modal {
   width: min(780px, 92vw);
   max-height: 82vh;

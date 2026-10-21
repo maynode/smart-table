@@ -1,4 +1,4 @@
-import { api } from './client';
+import { ApiError, api, getToken } from './client';
 import type {
   AuthResult,
   AutomationDto,
@@ -8,6 +8,7 @@ import type {
   FieldDto,
   FormDto,
   FormSubmitResult,
+  ImportResult,
   MemberDto,
   PublicFormDto,
   RecordDto,
@@ -16,6 +17,48 @@ import type {
   UpsertFormPayload,
   WorkspaceDto,
 } from './types';
+
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+
+async function importSheetFile(
+  sheetId: string,
+  file: File,
+): Promise<ImportResult> {
+  const body = new FormData();
+  body.append('file', file);
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/sheets/${sheetId}/import`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body,
+  });
+  const data = (await response.json()) as unknown;
+  if (!response.ok) throw new ApiError(response.status, data);
+  return data as ImportResult;
+}
+
+async function exportSheetFile(
+  sheetId: string,
+  filename: string,
+): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/sheets/${sheetId}/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as unknown;
+    throw new ApiError(response.status, data);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 export const endpoints = {
   login: (email: string, password: string) =>
@@ -112,4 +155,7 @@ export const endpoints = {
     api<AutomationRunDto[]>(
       `/automations/${automationId}/runs?limit=${limit}`,
     ),
+
+  importSheet: importSheetFile,
+  exportSheet: exportSheetFile,
 };
