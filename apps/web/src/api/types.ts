@@ -189,6 +189,20 @@ export interface ImportResult {
   errors: Array<{ row: number; message: string }>;
 }
 
+export interface ViewQueryResult {
+  records: RecordDto[];
+  total: number;
+  groups: Array<{
+    fieldId: string;
+    key: string;
+    label: string;
+    count: number;
+  }>;
+  colors: Record<string, string>;
+  cellColors: Record<string, Record<string, string>>;
+  rowHeight: string | number;
+}
+
 export interface UpsertFormPayload {  baseId: string;
   sheetId: string;
   name: string;

@@ -39,6 +39,7 @@ export interface CanvasGridOptions {
   headerHeight?: number;
   overscan?: number;
   getCell?: (row: number, col: number) => CellRender | null;
+  getRowColor?: (row: number) => string | null;
   onSelectionChange?: (selection: Selection | null) => void;
   onCellDoubleClick?: (selection: Selection) => void;
   onViewportChange?: (stats: GridStats) => void;
@@ -88,6 +89,7 @@ export class CanvasGridEngine {
   private columnAxis: AxisLayout;
   private columnWidths: number[];
   private getCell: (row: number, col: number) => CellRender | null;
+  private getRowColor: (row: number) => string | null;
   private selection: Selection | null = null;
   private scrollX = 0;
   private scrollY = 0;
@@ -120,6 +122,7 @@ export class CanvasGridEngine {
     this.headerHeight = options.headerHeight ?? HEADER_HEIGHT;
     this.overscan = options.overscan ?? 3;
     this.getCell = options.getCell ?? (() => null);
+    this.getRowColor = options.getRowColor ?? (() => null);
 
     // The host is positioned by CSS (absolute inset: 0); forcing
     // position:relative here would collapse it inside a flex row.
@@ -589,6 +592,12 @@ export class CanvasGridEngine {
         this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
       const rowHeight = this.rowAxis.size(row);
       if (y + rowHeight < this.headerHeight || y > height) continue;
+
+      const rowColor = this.getRowColor(row);
+      if (rowColor) {
+        target.fillStyle = rowColor;
+        target.fillRect(0, y, width, rowHeight);
+      }
 
       for (let col = columns.start; col < columns.end; col += 1) {
         const cell = this.getCell(row, col);

@@ -29,6 +29,14 @@ User ──< Comment            User ──< Notification            GroupChat
 - `bases.workspace_id` 索引；`sheets.base_id` 索引。
 - `fields`：`type` 存 27 种契约类型之一；`options` 为 JSONB（单选 choices、公式、关联等）；`order` 控制列顺序；`hidden` 只影响展示，不删数据。
 
+### 公式（formula）与查找引用（lookup）
+
+- 公式字段的表达式存于 `fields.options.formula`，以 `=` 开头；引用本表字段可写 `=[数量]*[单价]` 或 `=数量*单价`，也支持纯常量 `=1+1`。
+- 服务端 `POST /sheets/:sheetId/query` 与前端网格使用同一份 `packages/shared/src/formula.ts`（HyperFormula）求值，结果不落库，避免脏写。
+- 已接入并测试的常用函数：`SUM`、`AVERAGE`、`COUNT`、`COUNTA`、`MIN`、`MAX`、`IF`、`IFERROR`、`ROUND`、`ROUNDUP`、`ROUNDDOWN`、`CONCATENATE`、`TEXT`、`AND`、`OR`、`NOT`、`ABS`、`CEILING`、`FLOOR`、`POWER`、`SQRT`、`VLOOKUP`、`INDEX`、`MATCH`。
+- 查找引用字段的 `options.lookup = { relationFieldId, targetFieldId, aggregate }`；`relationFieldId` 指向本表关联字段，`targetFieldId` 指向目标表字段，`aggregate` 支持 `first|count|sum|min|max|array`。服务端按关联记录批量解析，同样只读不落库。
+
+
 ### records
 | 列 | 类型 | 说明 |
 | --- | --- | --- |

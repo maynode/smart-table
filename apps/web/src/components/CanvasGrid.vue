@@ -22,12 +22,16 @@ const props = withDefaults(
     rowCount?: number;
     provider?: ((row: number, col: number) => CellRender | null) | null;
     editable?: boolean;
+    rowHeight?: number;
+    rowColors?: Record<string, string>;
   }>(),
   {
     records: () => [],
     rowCount: undefined,
     provider: null,
     editable: true,
+    rowHeight: 36,
+    rowColors: () => ({}),
   },
 );
 
@@ -192,12 +196,17 @@ function handleViewport(stats: GridStats): void {
   emit('viewport', stats);
 }
 
-onMounted(() => {
+function createEngine(): void {
   if (!host.value) return;
   engine = new CanvasGridEngine(host.value, {
     columns: columns.value,
     rowCount: props.rowCount ?? props.records.length,
+    rowHeight: props.rowHeight,
     getCell: renderCell,
+    getRowColor: (row) => {
+      const record = props.records[row];
+      return record ? (props.rowColors[record.id] ?? null) : null;
+    },
     onCellDoubleClick: (selection) => beginEdit(selection.row, selection.col),
     onColumnResize: (columnIndex, width) => {
       const field = visibleFields.value[columnIndex];
@@ -205,7 +214,9 @@ onMounted(() => {
     },
     onViewportChange: handleViewport,
   });
-});
+}
+
+onMounted(createEngine);
 
 watch(
   [() => props.fields, () => props.records, () => props.rowCount],
@@ -216,6 +227,21 @@ watch(
     engine.setCellProvider(renderCell);
     engine.invalidate();
   },
+  { deep: true },
+);
+
+watch(
+  () => props.rowHeight,
+  () => {
+    engine?.destroy();
+    engine = null;
+    createEngine();
+  },
+);
+
+watch(
+  () => props.rowColors,
+  () => engine?.invalidate(),
   { deep: true },
 );
 

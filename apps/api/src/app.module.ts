@@ -10,6 +10,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SheetsModule } from './sheets/sheets.module';
 import { StorageModule } from './storage/storage.module';
+import { ViewsModule } from './views/views.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
@@ -28,6 +29,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     FormsModule,
     StorageModule,
     MetricsModule,
+    ViewsModule,
   ],
   controllers: [HealthController],
 })

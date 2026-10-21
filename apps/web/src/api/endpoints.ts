@@ -15,8 +15,10 @@ import type {
   RecordPage,
   SheetDto,
   UpsertFormPayload,
+  ViewQueryResult,
   WorkspaceDto,
 } from './types';
+import type { ViewQuery } from 'shared';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
 
@@ -158,4 +160,10 @@ export const endpoints = {
 
   importSheet: importSheetFile,
   exportSheet: exportSheetFile,
+
+  querySheet: (sheetId: string, query: ViewQuery) =>
+    api<ViewQueryResult>(`/sheets/${sheetId}/query`, {
+      method: 'POST',
+      body: query as unknown as Record<string, unknown>,
+    }),
 };

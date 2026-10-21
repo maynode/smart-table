@@ -7,6 +7,7 @@ import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
+import type { ViewQuery } from 'shared';
 import type {
   BaseDto,
   CommentDto,
@@ -30,6 +31,11 @@ const records = ref<RecordDto[]>([]);
 const nextCursor = ref<string | null>(null);
 const loading = ref(false);
 const bootError = ref('');
+const rowColors = ref<Record<string, string>>({});
+const rowHeightPx = ref(36);
+const viewGroups = ref<
+  Array<{ fieldId: string; key: string; label: string; count: number }>
+>([]);
 
 const commentsOpen = ref(false);
 const comments = ref<CommentDto[]>([]);
@@ -265,6 +271,30 @@ async function onImportFile(event: Event): Promise<void> {
   }
 }
 
+async function applyViewQuery(query: ViewQuery): Promise<void> {
+  if (!activeSheet.value) return;
+  loading.value = true;
+  try {
+    const result = await endpoints.querySheet(activeSheet.value.id, query);
+    records.value = result.records;
+    nextCursor.value = null;
+    rowColors.value = result.colors;
+    viewGroups.value = result.groups;
+    rowHeightPx.value =
+      typeof result.rowHeight === 'number'
+        ? result.rowHeight
+        : result.rowHeight === 'short'
+          ? 28
+          : result.rowHeight === 'tall'
+            ? 48
+            : 36;
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function exportActiveSheet(): Promise<void> {
   if (!activeSheet.value) {
     toast('请先选择一张工作表');
@@ -390,10 +420,14 @@ onMounted(bootstrap);
           :records="records"
           :next-cursor="nextCursor"
           :loading="loading"
+          :row-colors="rowColors"
+          :row-height="rowHeightPx"
+          :groups="viewGroups"
           @add-row="addRow"
           @load-more="loadMore"
           @commit="commitCell"
           @toggle-field="toggleField"
+          @query="applyViewQuery"
         />
         <div v-else class="empty-state">还没有工作表，点击左侧 + 新建。</div>
       </main>

@@ -1,0 +1,251 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, type Field } from '@prisma/client';
+import {
+  evaluateFilterGroup,
+  evaluateFormulaRows,
+  type ColorRule,
+  type FilterGroup,
+  type ViewQuery,
+} from 'shared';
+import { PrismaService } from '../prisma/prisma.service';
+import { WorkspacesService } from '../workspaces/workspaces.service';
+import { buildFilterSql, buildSortSql } from '../automations/automation-filter.sql';
+
+interface QueryRow {
+  id: string;
+  cells: Record<string, unknown>;
+}
+
+@Injectable()
+export class ViewsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly workspacesService: WorkspacesService,
+  ) {}
+
+  async query(sheetId: string, userId: string, query: ViewQuery) {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      include: {
+        base: true,
+        fields: { orderBy: { order: 'asc' } },
+      },
+    });
+    if (!sheet) throw new NotFoundException('工作表不存在');
+    await this.workspacesService.requireMember(
+      sheet.base.workspaceId,
+      userId,
+      'viewer',
+    );
+
+    const fields = sheet.fields as Field[];
+    const where = query.filters
+      ? buildFilterSql(query.filters)
+      : Prisma.sql`TRUE`;
+    const order =
+      query.sorts && query.sorts.length > 0
+        ? buildSortSql(query.sorts)
+        : Prisma.sql`ORDER BY id ASC`;
+
+    const rows = await this.prisma.$queryRaw<QueryRow[]>(
+      Prisma.sql`SELECT id, cells FROM "records" WHERE "sheet_id" = ${sheetId}::uuid AND (${where}) ${order} LIMIT 1000`,
+    );
+
+    const formulaValues = evaluateFormulaRows(
+      fields.map((field) => ({
+        id: field.id,
+        name: field.name,
+        type: field.type,
+        options: field.options as { formula?: string } | null,
+      })),
+      rows,
+    );
+    const lookupValues = await this.resolveLookups(fields, rows);
+
+    const records = rows.map((row, index) => ({
+      id: row.id,
+      cells: {
+        ...row.cells,
+        ...(formulaValues[index] ?? {}),
+        ...(lookupValues[index] ?? {}),
+      },
+    }));
+
+    const colors: Record<string, string> = {};
+    const cellColors: Record<string, Record<string, string>> = {};
+    for (const record of records) {
+      for (const rule of query.colorRules ?? []) {
+        if (!this.matchesColorRule(rule, record.cells)) continue;
+        if (rule.scope === 'cell') {
+          cellColors[record.id] = {
+            ...(cellColors[record.id] ?? {}),
+            [rule.fieldId]: rule.color,
+          };
+        } else {
+          colors[record.id] = rule.color;
+        }
+      }
+    }
+
+    return {
+      records,
+      total: records.length,
+      groups: this.buildGroups(records, query.groups ?? [], fields),
+      colors,
+      cellColors,
+      rowHeight: query.rowHeight ?? 'medium',
+    };
+  }
+
+  private matchesColorRule(
+    rule: ColorRule,
+    cells: Record<string, unknown>,
+  ): boolean {
+    const group: FilterGroup = {
+      conjunction: 'and',
+      conditions: [
+        { fieldId: rule.fieldId, operator: rule.operator, value: rule.value },
+      ],
+    };
+    return evaluateFilterGroup(group, cells);
+  }
+
+  private buildGroups(
+    records: Array<{ id: string; cells: Record<string, unknown> }>,
+    specs: ViewQuery['groups'],
+    fields: Field[],
+  ) {
+    if (!specs || specs.length === 0) return [];
+    const groups: Array<{
+      fieldId: string;
+      key: string;
+      label: string;
+      count: number;
+    }> = [];
+
+    const walk = (
+      rows: Array<{ id: string; cells: Record<string, unknown> }>,
+      depth: number,
+    ): void => {
+      if (depth >= specs.length || rows.length === 0) return;
+      const spec = specs[depth];
+      const field = fields.find((item) => item.id === spec.fieldId);
+      if (!field) return;
+      const buckets = new Map<string, typeof rows>();
+      for (const row of rows) {
+        const key = String(row.cells[field.id] ?? '');
+        buckets.set(key, [...(buckets.get(key) ?? []), row]);
+      }
+      for (const [key, bucket] of buckets.entries()) {
+        groups.push({
+          fieldId: field.id,
+          key,
+          label: this.displayValue(field, key),
+          count: bucket.length,
+        });
+        walk(bucket, depth + 1);
+      }
+    };
+
+    walk(records, 0);
+    return groups;
+  }
+
+  private displayValue(field: Field, value: string): string {
+    const choices = (
+      field.options as {
+        choices?: Array<{ id?: unknown; name?: unknown }>;
+      } | null
+    )?.choices;
+    const choice = Array.isArray(choices)
+      ? choices.find((item) => String(item.id) === value)
+      : undefined;
+    return String(choice?.name ?? value ?? '(空)') || '(空)';
+  }
+
+  /**
+   * Resolve lookup fields: relation values -> target sheet cell, aggregated.
+   * The values are computed for the response and never written back.
+   */
+  private async resolveLookups(
+    fields: Field[],
+    rows: QueryRow[],
+  ): Promise<Array<Record<string, unknown>>> {
+    const results: Array<Record<string, unknown>> = rows.map(() => ({}));
+    const lookupFields = fields.filter((field) => field.type === 'lookup');
+
+    for (const lookupField of lookupFields) {
+      const config = (
+        lookupField.options as {
+          lookup?: {
+            relationFieldId?: string;
+            targetFieldId?: string;
+            aggregate?: 'first' | 'count' | 'sum' | 'min' | 'max' | 'array';
+          };
+        } | null
+      )?.lookup;
+      if (!config?.relationFieldId || !config.targetFieldId) continue;
+
+      const relationField = fields.find(
+        (field) => field.id === config.relationFieldId,
+      );
+      const targetSheetId = (
+        relationField?.options as {
+          relation?: { targetSheetId?: string };
+        } | null
+      )?.relation?.targetSheetId;
+      if (!targetSheetId) continue;
+
+      const ids = new Set<string>();
+      for (const row of rows) {
+        const value = row.cells[config.relationFieldId];
+        const list = Array.isArray(value) ? value : [value];
+        for (const item of list) {
+          if (typeof item === 'string' && item) ids.add(item);
+        }
+      }
+      if (ids.size === 0) continue;
+
+      const targets = await this.prisma.recordRow.findMany({
+        where: { id: { in: [...ids] } },
+      });
+      const byId = new Map(
+        targets.map((record) => [
+          record.id,
+          (record.cells as Record<string, unknown>)[config.targetFieldId!],
+        ]),
+      );
+
+      rows.forEach((row, index) => {
+        const value = row.cells[config.relationFieldId!];
+        const list = (Array.isArray(value) ? value : [value])
+          .filter((item): item is string => typeof item === 'string' && !!item)
+          .map((item) => byId.get(item))
+          .filter((item) => item !== undefined && item !== null);
+        results[index][lookupField.id] = this.aggregate(
+          list,
+          config.aggregate ?? 'first',
+        );
+      });
+    }
+
+    return results;
+  }
+
+  private aggregate(
+    values: unknown[],
+    mode: 'first' | 'count' | 'sum' | 'min' | 'max' | 'array',
+  ): unknown {
+    if (mode === 'count') return values.length;
+    if (mode === 'array') return values;
+    if (values.length === 0) return '';
+    if (mode === 'first') return values[0];
+    const numbers = values
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    if (numbers.length === 0) return '';
+    if (mode === 'sum') return numbers.reduce((sum, value) => sum + value, 0);
+    if (mode === 'min') return Math.min(...numbers);
+    return Math.max(...numbers);
+  }
+}
