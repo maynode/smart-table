@@ -4,10 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, WorkspaceRole } from '@prisma/client';
 import { evaluateFilterGroup, type FilterGroup } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { SharingService } from '../sharing/sharing.service';
 
 export type AclLevel = 'full' | 'edit' | 'view' | 'none';
 export type AclAction = 'read' | 'create' | 'update' | 'delete';
@@ -61,6 +62,7 @@ export class PermissionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly sharing: SharingService,
   ) {}
 
   async resolveObject(objectType: string, objectId: string) {
@@ -109,10 +111,23 @@ export class PermissionsService {
     userId: string,
   ): Promise<AclDecision> {
     const object = await this.resolveObject(objectType, objectId);
-    const membership = await this.workspacesService.requireMember(
-      object.workspaceId,
-      userId,
-    );
+    let role: WorkspaceRole;
+    try {
+      const membership = await this.workspacesService.requireMember(
+        object.workspaceId,
+        userId,
+      );
+      role = membership.role;
+    } catch (error) {
+      if (objectType !== 'sheet') throw error;
+      const shared = await this.sharing.roleForObject(
+        'sheet',
+        objectId,
+        userId,
+      );
+      if (!shared) throw error;
+      role = shared.role;
+    }
     const rows = await this.prisma.contentPermission.findMany({
       where: { objectType, objectId },
     });
@@ -121,7 +136,6 @@ export class PermissionsService {
       (row) => row.subjectType === 'member' && row.subjectId === userId,
     );
 
-    const role = membership.role;
     if (role === 'owner' || role === 'admin') {
       return {
         objectType,

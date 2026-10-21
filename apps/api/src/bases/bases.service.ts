@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { SharingService } from '../sharing/sharing.service';
 
 @Injectable()
 export class BasesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly sharing: SharingService,
   ) {}
 
   async create(workspaceId: string, userId: string, name: string) {
@@ -18,10 +20,15 @@ export class BasesService {
 
   async list(workspaceId: string, userId: string) {
     await this.workspacesService.requireMember(workspaceId, userId, 'viewer');
-    return this.prisma.base.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: 'asc' },
-    });
+    const [own, shared] = await Promise.all([
+      this.prisma.base.findMany({
+        where: { workspaceId },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.sharing.sharedBases(workspaceId, userId),
+    ]);
+    const seen = new Set(own.map((base) => base.id));
+    return [...own, ...shared.filter((base) => !seen.has(base.id))];
   }
 
   async getDetail(baseId: string, userId: string) {
@@ -29,11 +36,15 @@ export class BasesService {
     if (!base) {
       throw new NotFoundException('Base 不存在');
     }
-    await this.workspacesService.requireMember(
-      base.workspaceId,
-      userId,
-      'viewer',
-    );
+    try {
+      await this.workspacesService.requireMember(
+        base.workspaceId,
+        userId,
+        'viewer',
+      );
+    } catch (error) {
+      await this.sharing.assertAccess('base', baseId, userId, 'viewer');
+    }
     return base;
   }
 }

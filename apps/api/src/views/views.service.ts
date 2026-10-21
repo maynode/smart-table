@@ -9,6 +9,7 @@ import {
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import { SharingService } from '../sharing/sharing.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { buildFilterSql, buildSortSql } from '../automations/automation-filter.sql';
 
@@ -23,6 +24,7 @@ export class ViewsService {
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
     private readonly permissions: PermissionsService,
+    private readonly sharing: SharingService,
   ) {}
 
   async query(sheetId: string, userId: string, query: ViewQuery) {
@@ -34,11 +36,15 @@ export class ViewsService {
       },
     });
     if (!sheet) throw new NotFoundException('工作表不存在');
-    await this.workspacesService.requireMember(
-      sheet.base.workspaceId,
-      userId,
-      'viewer',
-    );
+    try {
+      await this.workspacesService.requireMember(
+        sheet.base.workspaceId,
+        userId,
+        'viewer',
+      );
+    } catch (error) {
+      await this.sharing.assertAccess('sheet', sheetId, userId, 'viewer');
+    }
     const decision = await this.permissions.assertCan(
       'sheet',
       sheetId,

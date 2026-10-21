@@ -8,6 +8,7 @@ import PermissionsPanel from '../components/PermissionsPanel.vue';
 import DashboardPanel from '../components/DashboardPanel.vue';
 import FolderPanel from '../components/FolderPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
+import SharePanel from '../components/SharePanel.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
@@ -56,6 +57,7 @@ const dashboardOpen = ref(false);
 const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
 const foldersOpen = ref(false);
 const templatesOpen = ref(false);
+const shareOpen = ref(false);
 
 const sidebarObjects = [
   { icon: '📝', label: '收集表单' },
@@ -391,6 +393,13 @@ onMounted(bootstrap);
         </button>
         <button
           class="topbar-btn"
+          data-testid="share-open"
+          @click="shareOpen = true"
+        >
+          共享
+        </button>
+        <button
+          class="topbar-btn"
           data-testid="automation-open"
           @click="automationsOpen = true"
         >
@@ -591,6 +600,19 @@ onMounted(bootstrap);
         :workspace-id="workspaceId"
         :base-id="baseId"
         @close="foldersOpen = false"
+      />
+    </div>
+
+    <div
+      v-if="shareOpen"
+      class="modal-mask"
+      @click.self="shareOpen = false"
+    >
+      <SharePanel
+        :workspace-id="workspaceId"
+        :base-id="baseId"
+        :sheet-id="activeSheet?.id"
+        @close="shareOpen = false"
       />
     </div>
 

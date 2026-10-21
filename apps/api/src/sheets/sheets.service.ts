@@ -10,6 +10,7 @@ import { resolveRecordPageLimit } from 'shared';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import { SharingService } from '../sharing/sharing.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
@@ -24,6 +25,7 @@ export class SheetsService {
     private readonly workspacesService: WorkspacesService,
     private readonly automationRunner: AutomationRunnerService,
     private readonly permissions: PermissionsService,
+    private readonly sharing: SharingService,
   ) {}
 
   private async requireBase(
@@ -35,11 +37,15 @@ export class SheetsService {
     if (!base) {
       throw new NotFoundException('Base 不存在');
     }
-    await this.workspacesService.requireMember(
-      base.workspaceId,
-      userId,
-      minimum,
-    );
+    try {
+      await this.workspacesService.requireMember(
+        base.workspaceId,
+        userId,
+        minimum,
+      );
+    } catch (error) {
+      await this.sharing.assertAccess('base', baseId, userId, minimum);
+    }
     return base;
   }
 
@@ -55,11 +61,15 @@ export class SheetsService {
     if (!sheet) {
       throw new NotFoundException('工作表不存在');
     }
-    await this.workspacesService.requireMember(
-      sheet.base.workspaceId,
-      userId,
-      minimum,
-    );
+    try {
+      await this.workspacesService.requireMember(
+        sheet.base.workspaceId,
+        userId,
+        minimum,
+      );
+    } catch (error) {
+      await this.sharing.assertAccess('sheet', sheetId, userId, minimum);
+    }
     return sheet;
   }
 
@@ -80,8 +90,12 @@ export class SheetsService {
 
   async listByBase(baseId: string, userId: string) {
     await this.requireBase(baseId, userId, 'viewer');
+    const accessible = await this.sharing.accessibleSheetIds(baseId, userId);
     return this.prisma.sheet.findMany({
-      where: { baseId },
+      where: {
+        baseId,
+        ...(accessible === null ? {} : { id: { in: accessible } }),
+      },
       orderBy: { createdAt: 'asc' },
     });
   }
@@ -138,8 +152,8 @@ export class SheetsService {
     if (!field) {
       throw new NotFoundException('字段不存在');
     }
-    await this.workspacesService.requireMember(
-      field.sheet.base.workspaceId,
+    await this.requireSheet(
+      field.sheetId,
       userId,
       'editor',
     );

@@ -375,3 +375,16 @@ export interface TemplateInstantiateResult {
   codes?: number;
   shareUrl?: string;
 }
+
+export interface CrossWorkspaceShareDto {
+  id: string;
+  objectType: 'base' | 'sheet';
+  objectId: string;
+  objectName: string;
+  role: 'view' | 'edit';
+  sourceWorkspaceId: string;
+  sourceWorkspaceName: string;
+  targetWorkspaceId: string;
+  targetWorkspaceName: string;
+  createdAt: string;
+}

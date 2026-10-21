@@ -26,6 +26,7 @@ import type {
   FolderTreeDto,
   TemplateDto,
   TemplateInstantiateResult,
+  CrossWorkspaceShareDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -294,5 +295,29 @@ export const endpoints = {
     api<TemplateInstantiateResult>(`/templates/${key}/instantiate`, {
       method: 'POST',
       body,
+    }),
+
+  listShares: (workspaceId: string, direction: 'in' | 'out' = 'out') =>
+    api<CrossWorkspaceShareDto[]>(
+      `/workspaces/${workspaceId}/shares?direction=${direction}`,
+    ),
+
+  createShare: (
+    workspaceId: string,
+    body: {
+      targetWorkspaceId: string;
+      objectType: 'base' | 'sheet';
+      objectId: string;
+      role: 'view' | 'edit';
+    },
+  ) =>
+    api<CrossWorkspaceShareDto>(`/workspaces/${workspaceId}/shares`, {
+      method: 'POST',
+      body,
+    }),
+
+  revokeShare: (shareId: string) =>
+    api<{ id: string; revoked: boolean }>(`/shares/${shareId}`, {
+      method: 'DELETE',
     }),
 };
