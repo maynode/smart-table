@@ -31,7 +31,7 @@ test.describe('W1 grid parity features', () => {
     const sheet = await (
       await api.post(`/bases/${base.id}/sheets`, {
         headers,
-        data: { name: '客户表' },
+        data: { name: '客户表', seed: false },
       })
     ).json();
 
@@ -117,6 +117,7 @@ test.describe('W1 grid parity features', () => {
 
     // Select option editor adds, recolors, and persists a choice.
     await page.getByTestId('table-settings').click();
+    await page.getByTestId('field-more-状态').click();
     await page.getByTestId('edit-options-状态').click();
     await expect(page.getByTestId('field-options-editor')).toBeVisible();
     await page.getByTestId('field-option-add').click();
@@ -221,6 +222,7 @@ test.describe('W1 grid parity features', () => {
 
     // Delete a field from table settings with confirmation.
     await page.getByTestId('table-settings').click();
+    await page.getByTestId('field-more-临时字段').click();
     await page.getByTestId('delete-field-临时字段').click();
     await page.getByTestId('delete-field-confirm-button').click();
     await expect
@@ -262,13 +264,13 @@ test.describe('W1 grid parity features', () => {
     const first = await (
       await api.post(`/bases/${base.id}/sheets`, {
         headers,
-        data: { name: '待改名' },
+        data: { name: '待改名', seed: false },
       })
     ).json();
     const second = await (
       await api.post(`/bases/${base.id}/sheets`, {
         headers,
-        data: { name: '备用表' },
+        data: { name: '备用表', seed: false },
       })
     ).json();
 
@@ -284,9 +286,11 @@ test.describe('W1 grid parity features', () => {
     );
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
-    page.once('dialog', (dialog) => dialog.accept('已改名'));
     await page.getByTestId('sheet-menu-待改名').click();
     await page.locator('.sheet-menu').getByText('重命名').click();
+    await expect(page.getByTestId('app-dialog')).toBeVisible();
+    await page.getByTestId('app-dialog-input').fill('已改名');
+    await page.getByTestId('app-dialog-confirm').click();
     await expect(page.getByTestId('sheet-menu-已改名')).toBeVisible();
     await expect
       .poll(async () => {
@@ -300,9 +304,9 @@ test.describe('W1 grid parity features', () => {
       })
       .toBe(true);
 
-    page.once('dialog', (dialog) => dialog.accept());
     await page.getByTestId('more-open').click();
     await page.getByTestId('more-delete-sheet').click();
+    await page.getByTestId('app-dialog-confirm').click();
     await expect
       .poll(async () => {
         const list = await (

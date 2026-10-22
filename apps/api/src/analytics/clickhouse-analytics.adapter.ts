@@ -39,13 +39,15 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
         ? 'count()'
         : `${mode}(toFloat64OrZero(JSONExtractString(cells, '${this.escape(metric)}')))`;
     const limit = Math.min(Math.max(request.limit ?? 20, 1), 100);
+    const sortBy = request.sortBy === 'label' ? 'label' : 'value';
+    const sortDir = request.sortOrder === 'asc' ? 'ASC' : 'DESC';
     const sql = [
       `SELECT JSONExtractString(cells, '${this.escape(request.dimensionFieldId)}') AS label,`,
       `${aggregation} AS value`,
       'FROM records',
       `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
       'GROUP BY label',
-      'ORDER BY value DESC',
+      `ORDER BY ${sortBy} ${sortDir}`,
       `LIMIT ${limit}`,
       'FORMAT JSON',
     ].join(' ');

@@ -30,13 +30,13 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   const codeSheet = await (
     await api.post(`/bases/${base.id}/sheets`, {
       headers,
-      data: { name: '码库' },
+      data: { name: '码库', seed: false },
     })
   ).json();
   const leadSheet = await (
     await api.post(`/bases/${base.id}/sheets`, {
       headers,
-      data: { name: '领取登记' },
+      data: { name: '领取登记', seed: false },
     })
   ).json();
   async function createField(
@@ -90,34 +90,41 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   await page.getByTestId('add-step-findRecords').click();
   const findStep = page.getByTestId('automation-step-findRecords');
   await findStep.getByTestId('step-sheet').selectOption(codeSheet.id);
-  await findStep.getByTestId('step-filter-field').selectOption(codeStatus.id);
-  await findStep.getByTestId('step-filter-operator').selectOption('equals');
-  await findStep.getByTestId('step-filter-value').fill('unclaimed');
-  await expect(findStep.locator('input[type="number"]')).toHaveValue('1');
+  await findStep.getByTestId('step-open-filter').click();
+  const filterDialog = page.getByTestId('filter-editor-dialog');
+  await filterDialog.getByTestId('step-filter-field').selectOption(codeStatus.id);
+  await filterDialog.getByTestId('step-filter-operator').selectOption('equals');
+  await filterDialog.getByTestId('step-filter-value').fill('unclaimed');
+  await expect(filterDialog.getByTestId('step-filter-limit')).toHaveValue('1');
+  await filterDialog.getByRole('button', { name: '完成' }).click();
 
   // Step 2: modify the found record and bind the prior find step.
   await page.getByTestId('automation-add-step').click();
   await page.getByTestId('add-step-modifyRecords').click();
   const modifyStep = page.getByTestId('automation-step-modifyRecords');
   await modifyStep.getByTestId('step-target-from').selectOption({ index: 1 });
-  await modifyStep.getByRole('button', { name: '+ 字段' }).click();
-  const mapping = modifyStep.locator('.mapping-row').first();
+  await modifyStep.getByTestId('step-open-content').click();
+  const contentDialog = page.getByTestId('content-editor-dialog');
+  const mapping = contentDialog.locator('.mapping-row').first();
   await mapping.locator('select').first().selectOption(codeStatus.id);
   await mapping.locator('select').nth(1).selectOption('literal');
   await mapping.locator('input').fill('claimed');
+  await contentDialog.getByRole('button', { name: '完成' }).click();
 
   // Step 3: send a message with an inserted variable.
   await page.getByTestId('automation-add-step').click();
   await page.getByTestId('add-step-sendMessage').click();
   const messageStep = page.getByTestId('automation-step-sendMessage');
-  await messageStep.getByTestId('step-message-text').fill('领取成功 {{序列号}}');
-  await messageStep.getByRole('button', { name: '序列号' }).first().click();
-  await expect(messageStep.getByTestId('step-message-text')).toHaveValue(
-    '领取成功 {{序列号}}{{序列号}}',
+  await messageStep.getByTestId('step-message-text').fill('领取成功 ');
+  await messageStep.getByTestId('message-insert-variable').click();
+  await page.getByRole('button', { name: /第2步/ }).click();
+  await page.getByTestId('variable-submenu').getByRole('button', { name: '序列号' }).click();
+  await expect(messageStep.getByTestId('step-message-preview')).toContainText(
+    '领取成功',
   );
-  await messageStep
-    .getByTestId('step-message-text')
-    .fill('领取成功 {{序列号}}');
+  await expect(messageStep.getByTestId('step-message-preview')).toContainText(
+    '序列号',
+  );
 
   await page.getByTestId('automation-save-enable').click();
   await expect(page.getByTestId('automation-panel')).toBeVisible();
@@ -153,6 +160,7 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     kind: 'literal',
     value: 'claimed',
   });
+  expect(automation.steps[2].content.text).toBe('领取成功 {{第2步.序列号}}');
 
   // Enable/disable round-trips through the real API.
   await page.getByTestId('automation-toggle').first().click();
@@ -199,19 +207,21 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     )
     .toBe('claimed');
 
-  await page.getByTestId('automation-runs-open').first().click();
+  await page.getByTestId('automation-more').first().click();
+  await page.getByTestId('automation-runs-open').click();
   await expect(page.getByTestId('automation-runs-panel')).toBeVisible();
   const runRow = page.getByTestId('automation-run-row').first();
   await expect(runRow).toHaveAttribute('data-status', 'success');
-  await runRow.click();
-  await expect(page.locator('.run-steps')).toContainText('查找记录');
-  await expect(page.locator('.run-steps')).toContainText('修改记录');
-  await expect(page.locator('.run-steps')).toContainText('发送消息');
+  await runRow.getByRole('button', { name: '详情' }).click();
+  await expect(page.locator('.run-detail-row')).toContainText('查找记录');
+  await expect(page.locator('.run-detail-row')).toContainText('修改记录');
+  await expect(page.locator('.run-detail-row')).toContainText('发送消息');
 
   await page.getByTestId('automation-runs-back').click();
 
   // Edit and delete are real CRUD operations.
-  await page.getByTestId('automation-edit').first().click();
+  await page.getByTestId('automation-more').first().click();
+  await page.getByTestId('automation-edit').click();
   await page.getByTestId('automation-name').fill('W3 领取自动化（已编辑）');
   await page.getByTestId('automation-save').click();
   await expect
@@ -224,7 +234,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
       );
     })
     .toBe(true);
-  await page.getByTestId('automation-delete').first().click();
+  await page.getByTestId('automation-more').first().click();
+  await page.getByTestId('automation-delete').click();
   await page.getByTestId('app-dialog-confirm').click();
   await expect
     .poll(async () => {

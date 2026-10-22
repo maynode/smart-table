@@ -110,9 +110,15 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
 | 关联 / 公式 / lookup 配置 | **已完成** | FieldOptionsEditor；格子内关联选记录 |
 | 地理位置 / 条码 / 群聊格子 | **已完成** | 地址文本、条码输入、群聊多选成员 |
 | 自动化条件任意/全部 | **已完成** | 触发/查找 conjunction + 不包含运算符；失败运行可重试 |
-| 视觉像素级对齐 | 未完成 | 功能可用，未逐屏对照企微截图 |
-| 自动化变量树 / 消息按钮 | 部分 | 仍缺第N步变量树、自然时间、消息按钮/表情 |
-| 仪表盘图表全集 | 部分 | 缺条形/组合/词云/文本与堆积子类、更多轴配置 |
+| 视觉像素级对齐 | **进行中** | 2026-10-22 起按 `SCREENSHOT-INDEX` 逐屏对齐主路径交互（非纯像素） |
+| 自动化变量树 / 消息按钮 | **已完成** | 变量树（今天/明天/昨天、第N步.字段）、消息按钮标题/链接、表情快捷插入；runner `interpolate` + `content.buttons` |
+| 自动化编辑器企微交互对齐 | **已完成** | 查找「满足条件」弹层、修改「指定内容」、发送双卡+消息芯片、变量侧栏、列表额度/NL pills、运行详情表、步骤类型下拉 |
+| 收集表单企微交互对齐 | **已完成** | 编辑/填写 Tab、可添加字段栏、画布选中工具条、分享表单浮层、成功页「已提交/再填一次」 |
+| 表格设置显隐 | **已完成** | 眼睛图标切换字段显隐 |
+| 内容权限首页钻取 | **已完成** | 全员权限对象列表 → 点入细调；「+为指定成员添加额外权限」 |
+| 仪表盘图表配置壳 | **已完成** | 类型宫格、主题色板、左配右预览；文案对齐横轴/记录行数 |
+| 模板库壳 | **已完成** | 搜索、分区、展开更多；Excel/我的模板入口占位 |
+| 仪表盘图表全集 | **已完成** | API 白名单含条形/组合/词云/文本；堆积/百分比、图例位置、轴/网格、排序依据；字段加载防竞态；W4 e2e 含 horizontalBar+text（2026-10-22 通过） |
 
 ### 产品目标与边界（2026-10-22 对齐）
 
@@ -143,7 +149,7 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
 | `pnpm --filter web exec playwright test e2e/automation-w3.spec.ts` | 1/1 passed |
 | `pnpm --filter web exec playwright test e2e/platform-w4.spec.ts` | 1/1 passed |
 | `pnpm --filter web exec playwright test e2e/serial-claim.spec.ts` | 1/1 passed |
-| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（45.1s）**，含 grid-perf：1000 万行 p50 16.7ms / p95 17.8ms |
+| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-22 复跑）**：含 W1–W4、serial-claim、grid-perf；e2e 用 `seed: false` 建空表，AppDialog/`field-more` 菜单对齐 |
 | `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` | passed |
 | `pnpm --filter web exec vitest run` | 8/8 passed（2 files） |
 | 全量 API e2e | 未跑绿；此前 wecom-oauth 一次 flake；见 P0-1 |
@@ -186,4 +192,11 @@ pnpm --filter web exec playwright test
 - 产品方案：`docs/智能表格-产品与技术方案.md`
 - 实施计划：`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`
 - 性能：`docs/PERFORMANCE.md`
+- **企微源码级校验（2026-10-22）**：
+  - ①领取 `VERIFY-01-automation-claim.md`
+  - ②表格筛选/乐观锁 `VERIFY-02-grid-query-lock.md`
+  - ③公开表单 `VERIFY-03-public-form.md`
+  - ④schedule 抢占 `VERIFY-04-automation-schedule.md`
+  - ⑤仪表盘聚合 `VERIFY-05-dashboard-analytics.md`
+  - 路径：`docs/design-refs/wecom/smart-table/`
 - 企微截图索引：`docs/design-refs/wecom/SCREENSHOT-INDEX.md`

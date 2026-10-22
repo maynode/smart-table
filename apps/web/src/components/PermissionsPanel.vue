@@ -20,6 +20,9 @@ const settings = ref<PermissionSettingsDto | null>(null);
 const fields = ref<FieldDto[]>([]);
 const loading = ref(false);
 const saving = ref(false);
+/** home = 全员权限列表；detail = 对象细调 */
+const viewMode = ref<'home' | 'detail'>('home');
+const memberFocus = ref(false);
 
 const level = ref<AclLevel>('edit');
 const recordMode = ref<'all' | 'condition' | 'own'>('all');
@@ -79,12 +82,43 @@ async function loadObjects(): Promise<void> {
   try {
     const result = await endpoints.listPermissionObjects(props.baseId);
     objects.value = result.objects;
-    if (result.objects[0]) await selectObject(result.objects[0]);
+    viewMode.value = 'home';
+    selected.value = null;
+    settings.value = null;
+    memberFocus.value = false;
   } catch (error) {
     toast(messageOf(error));
   } finally {
     loading.value = false;
   }
+}
+
+function levelLabel(value: AclLevel | string): string {
+  return levels.find((item) => item.value === value)?.label ?? String(value);
+}
+
+function backToHome(): void {
+  viewMode.value = 'home';
+  selected.value = null;
+  settings.value = null;
+  memberFocus.value = false;
+}
+
+async function openObject(object: PermissionObjectDto): Promise<void> {
+  memberFocus.value = false;
+  await selectObject(object);
+  viewMode.value = 'detail';
+}
+
+async function openMemberExtra(): Promise<void> {
+  const first = objects.value[0];
+  if (!first) {
+    toast('暂无对象');
+    return;
+  }
+  memberFocus.value = true;
+  await selectObject(first);
+  viewMode.value = 'detail';
 }
 
 async function selectObject(object: PermissionObjectDto): Promise<void> {
@@ -203,9 +237,17 @@ onMounted(loadObjects);
   <section class="permission-panel" data-testid="permissions-panel">
     <header class="panel-header">
       <div>
-        <strong>内容权限</strong>
+        <div class="title-row">
+          <strong>内容权限</strong>
+          <span class="free-badge">限时免费</span>
+        </div>
         <p class="panel-subtitle">
-          设置全员与指定成员对工作表/表单的访问档位、记录范围与字段权限。
+          <template v-if="viewMode === 'home'">
+            了解功能用法和使用场景
+          </template>
+          <template v-else>
+            全员权限对可编辑/仅浏览成员生效；仅浏览成员编辑前仍需申请文档编辑权。
+          </template>
         </p>
       </div>
       <button class="icon-btn" data-testid="permissions-close" @click="emit('close')">
@@ -213,8 +255,45 @@ onMounted(loadObjects);
       </button>
     </header>
 
-    <div class="permission-body">
+    <div v-if="viewMode === 'home'" class="home-body">
+      <section class="home-card">
+        <header class="home-card-head">
+          <span>全员权限</span>
+          <span class="info-dot" title="对可编辑/仅浏览成员生效">i</span>
+        </header>
+        <button
+          v-for="object in objects"
+          :key="object.objectId"
+          class="home-object-row"
+          data-testid="permission-object-row"
+          @click="openObject(object)"
+        >
+          <span class="home-object-name">
+            <span class="home-object-icon">{{ object.kind === 'sheet' ? '▦' : object.kind === 'form' ? '▭' : '◔' }}</span>
+            {{ object.name }}
+          </span>
+          <span class="home-object-level">
+            {{ levelLabel(object.level) }}
+            <span class="chevron">›</span>
+          </span>
+        </button>
+        <p v-if="!objects.length && !loading" class="empty-hint">暂无对象</p>
+      </section>
+      <button
+        class="home-card member-extra"
+        type="button"
+        data-testid="permission-add-extra"
+        @click="openMemberExtra"
+      >
+        + 为指定成员添加额外权限
+      </button>
+    </div>
+
+    <div v-else class="permission-body">
       <aside class="object-list">
+        <button class="back-link" type="button" data-testid="permission-back" @click="backToHome">
+          ← 返回
+        </button>
         <p class="section-label">对象</p>
         <button
           v-for="object in objects"
@@ -222,13 +301,13 @@ onMounted(loadObjects);
           class="object-row"
           :class="{ active: selected?.objectId === object.objectId }"
           data-testid="permission-object-row"
-          @click="selectObject(object)"
+          @click="openObject(object)"
         >
           <span>
             <strong>{{ object.name }}</strong>
             <small>{{ object.kind }}</small>
           </span>
-          <span class="level-badge">{{ levels.find((item) => item.value === object.level)?.label }}</span>
+          <span class="level-badge">{{ levelLabel(object.level) }}</span>
         </button>
         <p v-if="!objects.length && !loading" class="empty-hint">暂无对象</p>
       </aside>
@@ -236,7 +315,7 @@ onMounted(loadObjects);
       <div v-if="settings" class="detail">
         <div class="detail-head">
           <div>
-            <strong>{{ settings.name }}</strong>
+            <strong>{{ settings.name }}的权限</strong>
             <p class="panel-subtitle">全员权限对可编辑/仅浏览成员生效。</p>
           </div>
           <label class="level-select">
@@ -347,7 +426,11 @@ onMounted(loadObjects);
           </div>
         </fieldset>
 
-        <fieldset class="rule-block">
+        <fieldset
+          class="rule-block"
+          :class="{ highlight: memberFocus }"
+          data-testid="permission-member-block"
+        >
           <legend>指定成员额外权限</legend>
           <div class="member-add">
             <select v-model="addMemberId" data-testid="permission-member-select">
@@ -394,8 +477,8 @@ onMounted(loadObjects);
       <div v-else class="detail empty-detail">选择左侧对象查看权限。</div>
     </div>
 
-    <footer class="panel-footer">
-      <button class="btn" @click="emit('close')">取消</button>
+    <footer v-if="viewMode === 'detail'" class="panel-footer">
+      <button class="btn" type="button" @click="backToHome">取消</button>
       <button
         class="btn btn-primary"
         data-testid="permission-save"
@@ -426,10 +509,128 @@ onMounted(loadObjects);
   padding: 18px 22px;
   border-bottom: 1px solid #e5e6eb;
 }
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.free-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #fff7e6;
+  color: #d46b08;
+  font-size: 11px;
+  font-weight: 500;
+}
 .panel-subtitle {
   margin: 4px 0 0;
   font-size: 12px;
   color: #8a9099;
+}
+.home-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+  background: #f5f6f7;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.home-card {
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.home-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 16px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+}
+.info-dot {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #eef0f3;
+  color: #8f959e;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+.home-object-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-top: 1px solid #f2f3f5;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+}
+.home-object-row:hover {
+  background: #f7f8fa;
+}
+.home-object-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #1f2329;
+}
+.home-object-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #f2f3f5;
+  color: #646a73;
+}
+.home-object-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8f959e;
+  font-size: 13px;
+}
+.home-object-level .chevron {
+  font-size: 16px;
+  color: #c0c4cc;
+}
+.member-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  color: #1d6fdc;
+  font-size: 14px;
+  cursor: pointer;
+}
+.back-link {
+  margin: 0 0 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1d6fdc;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rule-block.highlight {
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(29, 111, 220, 0.12);
 }
 .permission-body {
   display: flex;

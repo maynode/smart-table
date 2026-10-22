@@ -54,7 +54,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     const sheet = await (
       await api.post(`/bases/${base.id}/sheets`, {
         headers,
-        data: { name: '码库' },
+        data: { name: '码库', seed: false },
       })
     ).json();
 
@@ -175,8 +175,10 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('[data-testid="permissions-open"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeVisible();
     await expect(
-      page.locator('[data-testid="permission-object-row"]').first(),
-    ).toContainText('码库');
+      page
+        .locator('[data-testid="permission-object-row"]')
+        .filter({ hasText: '码库' }),
+    ).toBeVisible();
     await expect(page.locator('[data-testid="permission-level"]')).toBeVisible();
     await page.locator('[data-testid="permissions-close"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();

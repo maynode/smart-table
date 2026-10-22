@@ -464,7 +464,10 @@ onMounted(() => {
             >
               ●
             </span>
-            <input v-model="choice.name" data-testid="field-option-name" />
+            <input
+              v-model="choice.name"
+              :data-testid="`field-option-name-${index}`"
+            />
             <select v-model="choice.color">
               <option v-for="color in COLORS" :key="color.id" :value="color.id">
                 {{ color.label }}

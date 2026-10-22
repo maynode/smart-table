@@ -37,7 +37,9 @@ export class SheetsController {
     @Param('baseId') baseId: string,
     @Body() dto: CreateSheetDto,
   ) {
-    return this.sheetsService.createSheet(baseId, user.sub, dto.name);
+    return this.sheetsService.createSheet(baseId, user.sub, dto.name, {
+      seed: dto.seed,
+    });
   }
 
   @Get('bases/:baseId/sheets')

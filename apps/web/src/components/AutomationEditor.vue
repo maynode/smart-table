@@ -17,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   saved: [automation: AutomationDto];
+  'open-runs': [];
 }>();
 
 type StepType =
@@ -57,6 +58,12 @@ interface UiStep {
   userIds: string[];
   memberUserIds: string[];
   memberUserIdsText: string;
+  buttons: Array<{ title: string; url: string }>;
+}
+
+interface VariableMenuGroup {
+  label: string;
+  items: Array<{ label: string; token: string }>;
 }
 
 const sheets = ref<SheetDto[]>([]);
@@ -81,15 +88,36 @@ const onFindEmpty = ref<'continue' | 'stop'>('continue');
 const monthlyQuota = ref<number | null>(null);
 const steps = ref<UiStep[]>([]);
 const addStepOpen = ref(false);
+const variableMenuStepId = ref('');
+const variableMenuGroup = ref('');
+const emojiMenuStepId = ref('');
+const buttonDraft = ref<{ stepId: string; title: string; url: string } | null>(
+  null,
+);
+/** 修改记录「指定内容」弹层所编辑的步骤 id */
+const contentEditorStepId = ref('');
+/** 查找记录「满足条件」弹层所编辑的步骤 id */
+const filterEditorStepId = ref('');
+/** 消息正文尾部正在输入的明文（插入变量前会刷入 step.text） */
+const messageTailByStep = ref<Record<string, string>>({});
 
-const stepTypes: Array<{ value: StepType; label: string; icon: string }> = [
-  { value: 'findRecords', label: '查找记录', icon: '🔍' },
-  { value: 'createRecord', label: '新增记录', icon: '➕' },
-  { value: 'modifyRecords', label: '修改记录', icon: '✏️' },
-  { value: 'sendMessage', label: '发送消息', icon: '💬' },
-  { value: 'startGroupChat', label: '创建群聊', icon: '👥' },
-  { value: 'addGroupMembers', label: '添加群成员', icon: '🙋' },
+const EMOJIS = ['👍', '🎉', '✅', '❗', '📌', '🔥', '😊', '🙏', '💡', '📎'];
+
+const stepTypes: Array<{
+  value: StepType;
+  label: string;
+  icon: string;
+  color: string;
+}> = [
+  { value: 'sendMessage', label: '发送消息', icon: '💬', color: '#fa8c16' },
+  { value: 'createRecord', label: '新增记录', icon: '➕', color: '#52c41a' },
+  { value: 'modifyRecords', label: '修改记录', icon: '✏️', color: '#fa8c16' },
+  { value: 'findRecords', label: '查找记录', icon: '🔍', color: '#722ed1' },
+  { value: 'startGroupChat', label: '发起群聊', icon: '👥', color: '#13c2c2' },
+  { value: 'addGroupMembers', label: '添加群成员', icon: '🙋', color: '#2f54eb' },
 ];
+
+const typeMenuStepId = ref('');
 
 const triggerFields = computed(() =>
   sheetFields(triggerSheetId.value),
@@ -130,6 +158,7 @@ function blankStep(type: StepType): UiStep {
     channel: 'doc',
     groupChatId: '',
     text: '',
+    buttons: [],
     recipientMode: 'trigger',
     recipientField: '',
     userIds: [],
@@ -138,13 +167,56 @@ function blankStep(type: StepType): UiStep {
   };
 }
 
-function addStep(type: StepType): void {
+function addStep(type: StepType, atIndex?: number): void {
   const step = blankStep(type);
   if (type === 'modifyRecords') {
-    step.fromStepId = previousFindSteps.value.at(-1)?.id ?? '';
+    const find = previousFindSteps.value.at(-1);
+    step.fromStepId = find?.id ?? '';
+    if (find?.sheetId) step.sheetId = find.sheetId;
   }
-  steps.value = [...steps.value, step];
+  if (type === 'findRecords') {
+    step.sheetId = triggerSheetId.value || sheets.value[0]?.id || '';
+    step.onEmpty = 'stop';
+  }
+  if (typeof atIndex === 'number') {
+    const list = [...steps.value];
+    list.splice(atIndex, 0, step);
+    steps.value = list;
+  } else {
+    steps.value = [...steps.value, step];
+  }
   addStepOpen.value = false;
+  typeMenuStepId.value = '';
+}
+
+function changeStepType(step: UiStep, type: StepType): void {
+  if (step.type === type) {
+    typeMenuStepId.value = '';
+    return;
+  }
+  const next = blankStep(type);
+  next.id = step.id;
+  next.name = step.name;
+  if (type === 'modifyRecords') {
+    const find = previousFindSteps.value.find((item) => item.id !== step.id);
+    next.fromStepId = find?.id ?? '';
+    next.sheetId = find?.sheetId ?? step.sheetId;
+  } else if (type === 'findRecords' || type === 'createRecord') {
+    next.sheetId = step.sheetId || triggerSheetId.value;
+  } else if (type === 'sendMessage') {
+    next.text = step.text;
+    next.buttons = step.buttons;
+    next.channel = step.channel;
+    next.recipientMode = step.recipientMode;
+    next.recipientField = step.recipientField;
+    next.userIds = step.userIds;
+  }
+  steps.value = steps.value.map((item) => (item.id === step.id ? next : item));
+  typeMenuStepId.value = '';
+}
+
+function stepTypeMeta(type: StepType) {
+  return stepTypes.find((item) => item.value === type);
 }
 
 function removeStep(index: number): void {
@@ -251,8 +323,8 @@ function stepSummary(step: UiStep): string {
     }
     case 'startGroupChat':
       return step.name
-        ? `创建群聊「${step.name}」`
-        : '创建群聊';
+        ? `发起群聊「${step.name}」`
+        : '发起群聊';
     case 'addGroupMembers':
       return `向群聊添加 ${step.memberUserIds.length || '若干'} 名成员`;
     default:
@@ -309,7 +381,6 @@ function variableFieldsFor(step: UiStep): string[] {
   const names = new Set<string>();
   for (const field of triggerFields.value) names.add(field.name);
   for (const field of sheetFields(targetSheetId)) names.add(field.name);
-  // Include earlier find-step sheet fields.
   for (const candidate of steps.value) {
     if (candidate.id === step.id) break;
     for (const field of sheetFields(stepSheetId(candidate))) {
@@ -319,8 +390,233 @@ function variableFieldsFor(step: UiStep): string[] {
   return [...names];
 }
 
-function insertVariable(step: UiStep, field: string): void {
-  step.text = `${step.text}{{${field}}}`;
+function triggerStepMenuLabel(): string {
+  if (triggerType.value === 'recordUpdated') return '第1步更新记录的';
+  if (triggerType.value === 'schedule') return '第1步定时触发的';
+  return '第1步新增记录的';
+}
+
+function stepMenuLabel(stepNo: number, type: StepType): string {
+  const action =
+    type === 'findRecords'
+      ? '查找记录'
+      : type === 'modifyRecords'
+        ? '修改记录'
+        : type === 'createRecord'
+          ? '新增记录'
+          : type === 'sendMessage'
+            ? '发送消息'
+            : stepTypeLabel(type);
+  return `第${stepNo}步${action}的`;
+}
+
+function variableMenuGroups(step: UiStep): VariableMenuGroup[] {
+  const groups: VariableMenuGroup[] = [
+    {
+      label: '自然时间',
+      items: [
+        { label: '今天', token: '今天' },
+        { label: '明天', token: '明天' },
+        { label: '昨天', token: '昨天' },
+      ],
+    },
+  ];
+  const triggerItems: VariableMenuGroup['items'] = [
+    { label: '记录链接', token: '第1步.记录链接' },
+    { label: '操作时间', token: '第1步.操作时间' },
+    { label: '操作人', token: '第1步.操作人' },
+    { label: '填写者', token: '第1步.填写者' },
+    { label: '提交时间', token: '第1步.提交时间' },
+    ...triggerFields.value.map((field) => ({
+      label: field.name,
+      token: `第1步.${field.name}`,
+    })),
+  ];
+  groups.push({ label: triggerStepMenuLabel(), items: triggerItems });
+
+  steps.value.forEach((candidate, index) => {
+    if (candidate.id === step.id) return;
+    const stepNo = index + 2;
+    const fields = sheetFields(stepSheetId(candidate));
+    const metaItems: VariableMenuGroup['items'] =
+      candidate.type === 'findRecords' || candidate.type === 'modifyRecords'
+        ? [
+            { label: '记录链接', token: `第${stepNo}步.记录链接` },
+            { label: '操作时间', token: `第${stepNo}步.操作时间` },
+            { label: '操作人', token: `第${stepNo}步.操作人` },
+          ]
+        : [];
+    groups.push({
+      label: stepMenuLabel(stepNo, candidate.type),
+      items: [
+        ...metaItems,
+        ...fields.map((field) => ({
+          label: field.name,
+          token: `第${stepNo}步.${field.name}`,
+        })),
+      ],
+    });
+  });
+  return groups;
+}
+
+type MessagePart =
+  | { kind: 'text'; value: string }
+  | { kind: 'var'; token: string; label: string };
+
+function tokenDisplayLabel(token: string): string {
+  const parts = token.split('.');
+  if (parts.length >= 2) {
+    const stepBit = parts[0] ?? '';
+    const fieldBit = parts.slice(1).join('.');
+    // 「第3步修改记录的 序列号」：用菜单组名拼展示
+    const stepMatch = /^第(\d+)步/.exec(stepBit);
+    if (stepMatch) {
+      const no = Number(stepMatch[1]);
+      if (no === 1) return `${triggerStepMenuLabel()} ${fieldBit}`;
+      const step = steps.value[no - 2];
+      if (step) return `${stepMenuLabel(no, step.type)} ${fieldBit}`;
+    }
+  }
+  return token;
+}
+
+function messageParts(text: string): MessagePart[] {
+  const parts: MessagePart[] = [];
+  const re = /\{\{([^}]+)\}\}/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    if (match.index > last) {
+      parts.push({ kind: 'text', value: text.slice(last, match.index) });
+    }
+    const token = match[1] ?? '';
+    parts.push({
+      kind: 'var',
+      token,
+      label: tokenDisplayLabel(token),
+    });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    parts.push({ kind: 'text', value: text.slice(last) });
+  }
+  return parts;
+}
+
+function serializeMessageParts(parts: MessagePart[]): string {
+  return parts
+    .map((part) =>
+      part.kind === 'var' ? `{{${part.token}}}` : part.value,
+    )
+    .join('');
+}
+
+function flushMessageTail(step: UiStep): void {
+  const tail = messageTailByStep.value[step.id] ?? '';
+  if (!tail) return;
+  step.text = `${step.text}${tail}`;
+  messageTailByStep.value = { ...messageTailByStep.value, [step.id]: '' };
+}
+
+function insertVariableToken(step: UiStep, token: string): void {
+  flushMessageTail(step);
+  step.text = `${step.text}{{${token}}}`;
+  variableMenuStepId.value = '';
+  variableMenuGroup.value = '';
+}
+
+function removeMessageVar(step: UiStep, partIndex: number): void {
+  const parts = messageParts(step.text);
+  parts.splice(partIndex, 1);
+  step.text = serializeMessageParts(parts);
+}
+
+function recipientPillLabel(step: UiStep): string {
+  const field = step.recipientField?.trim() || '填写者';
+  return `${triggerStepMenuLabel()} ${field}`;
+}
+
+function openContentEditor(step: UiStep): void {
+  if (step.mappings.length === 0) addMapping(step);
+  contentEditorStepId.value = step.id;
+  filterEditorStepId.value = '';
+}
+
+function closeContentEditor(): void {
+  contentEditorStepId.value = '';
+}
+
+function contentEditorStep(): UiStep | null {
+  return steps.value.find((step) => step.id === contentEditorStepId.value) ?? null;
+}
+
+function openFilterEditor(step: UiStep): void {
+  filterEditorStepId.value = step.id;
+  contentEditorStepId.value = '';
+}
+
+function closeFilterEditor(): void {
+  filterEditorStepId.value = '';
+}
+
+function filterEditorStep(): UiStep | null {
+  return steps.value.find((step) => step.id === filterEditorStepId.value) ?? null;
+}
+
+function findFilterSummary(step: UiStep): string {
+  if (!step.filterFieldId) return '满足条件的记录';
+  const field = fieldName(step.sheetId, step.filterFieldId);
+  if (step.filterOperator === 'isEmpty' || step.filterOperator === 'isNotEmpty') {
+    return `${field}${operatorLabel(step.filterOperator)}`;
+  }
+  return `${field}${operatorLabel(step.filterOperator)}${step.filterValue || '…'}`;
+}
+
+function findStepOptionLabel(candidate: UiStep): string {
+  const idx = steps.value.findIndex((item) => item.id === candidate.id);
+  return `第 ${idx + 2} 步查找的记录`;
+}
+
+function onModifyFromStepChange(step: UiStep): void {
+  const source = steps.value.find((item) => item.id === step.fromStepId);
+  if (source?.sheetId) step.sheetId = source.sheetId;
+}
+
+function setFindOnEmpty(step: UiStep, value: 'continue' | 'stop'): void {
+  step.onEmpty = value;
+  onFindEmpty.value = value;
+}
+
+function insertEmoji(step: UiStep, emoji: string): void {
+  flushMessageTail(step);
+  step.text = `${step.text}${emoji}`;
+  emojiMenuStepId.value = '';
+}
+
+function setMessageTail(step: UiStep, value: string): void {
+  messageTailByStep.value = { ...messageTailByStep.value, [step.id]: value };
+}
+
+function openButtonDraft(step: UiStep): void {
+  buttonDraft.value = { stepId: step.id, title: '前往查看', url: '{{第1步.记录链接}}' };
+}
+
+function confirmButton(): void {
+  const draft = buttonDraft.value;
+  if (!draft) return;
+  const step = steps.value.find((item) => item.id === draft.stepId);
+  if (step && draft.title.trim() && draft.url.trim()) {
+    step.buttons = [
+      ...step.buttons,
+      { title: draft.title.trim(), url: draft.url.trim() },
+    ];
+  }
+  buttonDraft.value = null;
+}
+
+function removeButton(step: UiStep, index: number): void {
+  step.buttons = step.buttons.filter((_, i) => i !== index);
 }
 
 function memberName(userId: string): string {
@@ -436,17 +732,29 @@ function buildSteps(): Array<Record<string, unknown>> {
           target: { mode: 'fromStep', stepId: step.fromStepId },
           cells: buildMappings(step),
         };
-      case 'sendMessage':
+      case 'sendMessage': {
+        flushMessageTail(step);
         return {
           id: step.id,
           type: step.type,
-          channel: 'doc',
+          channel: step.channel || 'doc',
           recipients:
             step.recipientMode === 'fixed'
               ? [{ source: 'fixed', userIds: step.userIds }]
-              : [{ source: 'trigger', field: step.recipientField }],
-          content: { text: step.text },
+              : [{ source: 'trigger', field: step.recipientField || '填写者' }],
+          content: {
+            text: step.text,
+            ...(step.buttons.length
+              ? {
+                  buttons: step.buttons.map((button) => ({
+                    title: button.title,
+                    url: button.url,
+                  })),
+                }
+              : {}),
+          },
         };
+      }
       case 'startGroupChat':
         return {
           id: step.id,
@@ -489,8 +797,11 @@ function validate(): string {
     if (step.type === 'modifyRecords' && !step.fromStepId) {
       return `第 ${index + 1} 步需要绑定之前的查找记录步骤`;
     }
-    if (step.type === 'sendMessage' && !step.text.trim()) {
-      return `第 ${index + 1} 步消息内容不能为空`;
+    if (step.type === 'sendMessage') {
+      flushMessageTail(step);
+      if (!step.text.trim()) {
+        return `第 ${index + 1} 步消息内容不能为空`;
+      }
     }
     if (step.type === 'startGroupChat' && !step.name.trim()) {
       return `第 ${index + 1} 步群聊名称不能为空`;
@@ -555,6 +866,14 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
   step.fromStepId = String(raw.fromStepId ?? target?.stepId ?? '');
   const content = raw.content as { text?: string } | undefined;
   step.text = content?.text ?? '';
+  const buttons = (content as { buttons?: Array<{ title?: string; url?: string }> } | undefined)
+    ?.buttons;
+  step.buttons = Array.isArray(buttons)
+    ? buttons.map((button) => ({
+        title: String(button.title ?? ''),
+        url: String(button.url ?? ''),
+      }))
+    : [];
   step.channel = String(raw.channel ?? 'doc') === 'group' ? 'group' : 'doc';
   const recipients = raw.recipients as
     | Array<{ source?: string; userIds?: string[]; field?: string }>
@@ -669,16 +988,15 @@ onMounted(load);
         />
       </div>
       <div class="editor-head-actions">
-        <label class="quota-inline">
-          月额度
-          <input
-            v-model.number="monthlyQuota"
-            type="number"
-            min="0"
-            placeholder="不限"
-            data-testid="automation-quota"
-          />
-        </label>
+        <button
+          v-if="props.automation"
+          class="btn ghost small"
+          type="button"
+          data-testid="automation-editor-runs"
+          @click="emit('open-runs')"
+        >
+          运行日志
+        </button>
         <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
       </div>
     </header>
@@ -750,27 +1068,16 @@ onMounted(load);
                 ×
               </button>
             </div>
-            <div class="nl-sentence" style="margin-top: 4px">
-              <span>条件关系</span>
-              <select
-                v-model="triggerConjunction"
-                class="nl-chip"
-                data-testid="trigger-conjunction"
-              >
-                <option value="and">全部满足</option>
-                <option value="or">任意满足</option>
-              </select>
-            </div>
             <button
               class="nl-add-link"
               type="button"
               data-testid="trigger-add-filter"
               @click="addTriggerFilter"
             >
-              + 添加{{ triggerConjunction === 'or' ? '任意' : '同时' }}满足的条件
+              + 添加同时满足的条件
             </button>
             <p class="nl-hint">
-              条件未满足时，不会触发后续操作
+              条件未满足时，任何编辑均不会触发后续操作
             </p>
           </div>
         </div>
@@ -779,45 +1086,73 @@ onMounted(load);
       <section class="nl-section">
         <div class="nl-section-head">
           <h4 class="nl-section-title">就执行以下操作</h4>
-          <div class="add-step-wrap">
-            <button
-              class="btn btn-primary"
-              data-testid="automation-add-step"
-              type="button"
-              @click="addStepOpen = !addStepOpen"
-            >
-              + 添加步骤
-            </button>
-            <div v-if="addStepOpen" class="add-step-menu">
-              <button
-                v-for="item in stepTypes"
-                :key="item.value"
-                type="button"
-                :data-testid="`add-step-${item.value}`"
-                @click="addStep(item.value)"
-              >
-                <span>{{ item.icon }}</span>{{ item.label }}
-              </button>
-            </div>
-          </div>
         </div>
 
         <p v-if="steps.length === 0" class="empty-steps">
-          还没有操作步骤。点击「添加步骤」开始配置。
+          还没有操作步骤。点击下方「+ 添加操作」开始配置。
         </p>
 
-        <article
+        <div
           v-for="(step, index) in steps"
           :key="step.id"
+          class="timeline-block"
+        >
+          <div class="timeline-rail">
+            <span class="timeline-dot" />
+            <span class="timeline-line" />
+          </div>
+          <div class="timeline-main">
+            <div class="timeline-step-no">第{{ index + 2 }}步</div>
+        <article
           class="nl-card step-card"
           :data-testid="`automation-step-${step.type}`"
         >
           <div class="nl-card-head">
-            <div class="nl-step-label">第 {{ index + 2 }} 步 · {{ stepTypeLabel(step.type) }}</div>
+            <div class="type-picker">
+              <button
+                type="button"
+                class="type-trigger"
+                data-testid="step-type-trigger"
+                @click="
+                  typeMenuStepId =
+                    typeMenuStepId === step.id ? '' : step.id;
+                  addStepOpen = false;
+                "
+              >
+                <span
+                  class="type-badge"
+                  :style="{
+                    background: stepTypeMeta(step.type)?.color ?? '#1d6fdc',
+                  }"
+                >
+                  {{ stepTypeMeta(step.type)?.icon }}
+                </span>
+                {{ stepTypeLabel(step.type) }}
+                <span class="chevron">▾</span>
+              </button>
+              <div
+                v-if="typeMenuStepId === step.id"
+                class="add-step-menu type-menu"
+                data-testid="step-type-menu"
+              >
+                <button
+                  v-for="item in stepTypes"
+                  :key="item.value"
+                  type="button"
+                  :data-testid="`change-step-${item.value}`"
+                  @click="changeStepType(step, item.value)"
+                >
+                  <span
+                    class="type-badge small"
+                    :style="{ background: item.color }"
+                  >{{ item.icon }}</span>
+                  {{ item.label }}
+                  <span v-if="item.value === step.type" class="check">✓</span>
+                </button>
+              </div>
+            </div>
             <div class="nl-card-actions">
-              <button class="icon-btn" type="button" title="上移" :disabled="index === 0" @click="moveStep(index, -1)">↑</button>
-              <button class="icon-btn" type="button" title="下移" :disabled="index === steps.length - 1" @click="moveStep(index, 1)">↓</button>
-              <button class="icon-btn danger" type="button" title="删除" @click="removeStep(index)">×</button>
+              <button class="icon-btn danger" type="button" title="删除" @click="removeStep(index)">🗑</button>
             </div>
           </div>
 
@@ -830,55 +1165,36 @@ onMounted(load);
                     {{ sheet.name }}
                   </option>
                 </select>
-                <span>中查找最多</span>
-                <input v-model.number="step.limit" class="nl-chip nl-chip-input nl-chip-num" type="number" min="1" />
-                <span>条记录</span>
-              </div>
-              <div class="nl-sentence">
-                <span>满足</span>
-                <select
-                  v-model="step.filterConjunction"
-                  class="nl-chip"
-                  data-testid="step-filter-conjunction"
+                <span>里，查找</span>
+                <button
+                  class="nl-chip nl-chip-btn"
+                  type="button"
+                  data-testid="step-open-filter"
+                  @click="openFilterEditor(step)"
                 >
-                  <option value="and">全部</option>
-                  <option value="or">任意</option>
-                </select>
-                <span>条件</span>
-                <select v-model="step.filterFieldId" class="nl-chip" data-testid="step-filter-field">
-                  <option value="">不筛选</option>
-                  <option v-for="field in fieldOptions(step.sheetId)" :key="field.id" :value="field.id">
-                    {{ field.name }}
-                  </option>
-                </select>
-                <template v-if="step.filterFieldId">
-                  <select
-                    v-model="step.filterOperator"
-                    class="nl-chip"
-                    data-testid="step-filter-operator"
-                  >
-                    <option value="equals">等于</option>
-                    <option value="notEquals">不等于</option>
-                    <option value="contains">包含</option>
-                    <option value="notContains">不包含</option>
-                    <option value="isEmpty">为空</option>
-                    <option value="isNotEmpty">不为空</option>
-                  </select>
-                  <input
-                    v-if="step.filterOperator !== 'isEmpty' && step.filterOperator !== 'isNotEmpty'"
-                    v-model="step.filterValue"
-                    class="nl-chip nl-chip-input"
-                    data-testid="step-filter-value"
-                    placeholder="值"
-                  />
-                </template>
+                  {{ findFilterSummary(step) }}
+                </button>
               </div>
-              <div class="nl-sentence">
-                <span>未找到时</span>
-                <select v-model="step.onEmpty" class="nl-chip">
-                  <option value="continue">继续执行</option>
-                  <option value="stop">终止</option>
-                </select>
+              <div class="on-empty-block">
+                <span class="on-empty-label">未查找到记录时</span>
+                <label class="radio-pill">
+                  <input
+                    type="radio"
+                    :name="`on-empty-${step.id}`"
+                    :checked="step.onEmpty === 'continue'"
+                    @change="setFindOnEmpty(step, 'continue')"
+                  />
+                  继续执行
+                </label>
+                <label class="radio-pill">
+                  <input
+                    type="radio"
+                    :name="`on-empty-${step.id}`"
+                    :checked="step.onEmpty === 'stop'"
+                    @change="setFindOnEmpty(step, 'stop')"
+                  />
+                  终止
+                </label>
               </div>
             </template>
 
@@ -921,8 +1237,27 @@ onMounted(load);
 
             <template v-else-if="step.type === 'modifyRecords'">
               <div class="nl-sentence">
-                <span>修改</span>
-                <select v-model="step.fromStepId" class="nl-chip" data-testid="step-target-from">
+                <span>在</span>
+                <select
+                  class="nl-chip"
+                  data-testid="step-modify-sheet"
+                  :value="stepSheetId(step)"
+                  @change="
+                    step.sheetId = ($event.target as HTMLSelectElement).value;
+                  "
+                >
+                  <option value="">选择工作表</option>
+                  <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
+                    {{ sheet.name }}
+                  </option>
+                </select>
+                <span>里，对</span>
+                <select
+                  v-model="step.fromStepId"
+                  class="nl-chip"
+                  data-testid="step-target-from"
+                  @change="onModifyFromStepChange(step)"
+                >
                   <option value="">选择查找步骤</option>
                   <option
                     v-for="candidate in previousFindSteps.filter(
@@ -931,92 +1266,245 @@ onMounted(load);
                     :key="candidate.id"
                     :value="candidate.id"
                   >
-                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 查找记录
+                    {{ findStepOptionLabel(candidate) }}
                   </option>
                 </select>
-                <span>找到的记录：</span>
-              </div>
-              <div class="mapping-head">
-                <span>修改字段</span>
-                <button class="btn small" type="button" @click="addMapping(step)">+ 字段</button>
-              </div>
-              <div v-for="(mapping, mappingIndex) in step.mappings" :key="mappingIndex" class="mapping-row">
-                <select v-model="mapping.fieldId">
-                  <option value="">选择字段</option>
-                  <option v-for="field in fieldOptions(stepSheetId(step))" :key="field.id" :value="field.id">
-                    {{ field.name }}
-                  </option>
-                </select>
-                <select v-model="mapping.mode">
-                  <option value="literal">固定值</option>
-                  <option value="variable">变量</option>
-                </select>
-                <input v-if="mapping.mode === 'literal'" v-model="mapping.value" placeholder="值" />
-                <template v-else>
-                  <select v-model="mapping.variableSource">
-                    <option value="trigger">触发记录</option>
-                    <option value="step">前序步骤</option>
-                  </select>
-                  <input v-model="mapping.variableField" placeholder="字段名" />
-                </template>
-                <button class="icon-btn danger" type="button" @click="removeMapping(step, mappingIndex)">×</button>
+                <span>，修改</span>
+                <button
+                  class="nl-chip nl-chip-btn"
+                  type="button"
+                  data-testid="step-open-content"
+                  @click="openContentEditor(step)"
+                >
+                  {{
+                    step.mappings.filter((row) => row.fieldId).length
+                      ? `指定内容（${step.mappings.filter((row) => row.fieldId).length}）`
+                      : '指定内容'
+                  }}
+                </button>
               </div>
             </template>
 
             <template v-else-if="step.type === 'sendMessage'">
-              <div class="nl-sentence">
-                <span>向</span>
-                <select v-model="step.recipientMode" class="nl-chip" data-testid="step-recipient-mode">
-                  <option value="trigger">触发记录中的人员</option>
-                  <option value="fixed">指定成员</option>
-                </select>
-                <template v-if="step.recipientMode === 'trigger'">
-                  <select v-model="step.recipientField" class="nl-chip" data-testid="step-recipient-field">
-                    <option value="">触发人</option>
-                    <option
-                      v-for="field in triggerFields.filter((item) => item.type === 'person')"
-                      :key="field.id"
-                      :value="field.name"
-                    >
-                      {{ field.name }}
-                    </option>
+              <div class="field-block">
+                <div class="field-label">发送方式</div>
+                <div class="channel-cards" data-testid="step-message-channel">
+                  <button
+                    type="button"
+                    class="channel-card"
+                    :class="{ active: step.channel === 'doc' }"
+                    data-testid="channel-doc"
+                    @click="step.channel = 'doc'"
+                  >
+                    <span class="channel-radio" />
+                    <span class="channel-title">文档消息</span>
+                    <span class="channel-desc">通过文档动态发送</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="channel-card"
+                    :class="{ active: step.channel === 'group' }"
+                    data-testid="channel-group"
+                    @click="step.channel = 'group'"
+                  >
+                    <span class="channel-radio" />
+                    <span class="channel-title">群消息</span>
+                    <span class="channel-desc">通过应用发送到群</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="field-block">
+                <div class="field-label">发送给</div>
+                <div class="recipient-row">
+                  <select
+                    v-model="step.recipientMode"
+                    class="nl-chip"
+                    data-testid="step-recipient-mode"
+                  >
+                    <option value="trigger">触发记录中的人员</option>
+                    <option value="fixed">指定成员</option>
                   </select>
-                </template>
-                <span>发送消息</span>
+                  <template v-if="step.recipientMode === 'trigger'">
+                    <span class="recipient-pill" data-testid="step-recipient-pill">
+                      {{ recipientPillLabel(step) }}
+                    </span>
+                    <select
+                      v-model="step.recipientField"
+                      class="nl-chip"
+                      data-testid="step-recipient-field"
+                    >
+                      <option value="">填写者</option>
+                      <option
+                        v-for="field in triggerFields.filter((item) => item.type === 'person')"
+                        :key="field.id"
+                        :value="field.name"
+                      >
+                        {{ field.name }}
+                      </option>
+                    </select>
+                  </template>
+                </div>
+                <div v-if="step.recipientMode === 'fixed'" class="member-picker">
+                  <label v-for="member in members" :key="member.userId" class="inline-check">
+                    <input
+                      type="checkbox"
+                      :checked="step.userIds.includes(member.userId)"
+                      @change="toggleUser(step, member.userId)"
+                    />
+                    {{ member.name }}
+                  </label>
+                </div>
               </div>
-              <div v-if="step.recipientMode === 'fixed'" class="member-picker">
-                <label v-for="member in members" :key="member.userId" class="inline-check">
+
+              <div class="field-block">
+                <div class="field-label">消息内容</div>
+                <div class="message-composer" data-testid="step-message-preview">
+                  <template
+                    v-for="(part, partIndex) in messageParts(step.text)"
+                    :key="`${part.kind}-${partIndex}`"
+                  >
+                    <span v-if="part.kind === 'text'" class="msg-plain">{{ part.value }}</span>
+                    <span v-else class="var-chip">
+                      {{ part.label }}
+                      <button
+                        type="button"
+                        class="var-chip-x"
+                        @click.stop="removeMessageVar(step, partIndex)"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </template>
                   <input
-                    type="checkbox"
-                    :checked="step.userIds.includes(member.userId)"
-                    @change="toggleUser(step, member.userId)"
+                    class="msg-tail"
+                    data-testid="step-message-text"
+                    :value="messageTailByStep[step.id] ?? ''"
+                    placeholder="输入消息内容"
+                    @input="
+                      setMessageTail(
+                        step,
+                        ($event.target as HTMLInputElement).value,
+                      )
+                    "
+                    @blur="flushMessageTail(step)"
+                    @keydown.enter.prevent="flushMessageTail(step)"
                   />
-                  {{ member.name }}
-                </label>
-              </div>
-              <textarea
-                v-model="step.text"
-                rows="3"
-                placeholder="消息内容，可插入变量"
-                data-testid="step-message-text"
-              ></textarea>
-              <div class="variable-actions">
-                <span class="muted tiny">插入变量：</span>
-                <button
-                  v-for="field in variableFieldsFor(step).slice(0, 8)"
-                  :key="field"
-                  class="var-chip"
-                  type="button"
-                  @click="insertVariable(step, field)"
-                >
-                  {{ field }}
-                </button>
+                </div>
+                <div v-if="step.buttons.length" class="message-buttons">
+                  <div
+                    v-for="(button, buttonIndex) in step.buttons"
+                    :key="buttonIndex"
+                    class="message-button-row"
+                  >
+                    <span class="btn-pill">{{ button.title }}</span>
+                    <span class="muted tiny">{{ button.url }}</span>
+                    <button
+                      class="icon-btn danger"
+                      type="button"
+                      @click="removeButton(step, buttonIndex)"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+                <div class="message-toolbar">
+                  <div class="toolbar-left">
+                    <div class="toolbar-item">
+                      <button
+                        class="toolbar-btn"
+                        type="button"
+                        data-testid="message-add-emoji"
+                        @click="
+                          emojiMenuStepId =
+                            emojiMenuStepId === step.id ? '' : step.id;
+                          variableMenuStepId = '';
+                        "
+                      >
+                        😊 添加表情
+                      </button>
+                      <div v-if="emojiMenuStepId === step.id" class="var-popup emoji-popup">
+                        <button
+                          v-for="emoji in EMOJIS"
+                          :key="emoji"
+                          type="button"
+                          class="emoji-btn"
+                          @click="insertEmoji(step, emoji)"
+                        >
+                          {{ emoji }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="toolbar-item">
+                      <button
+                        class="toolbar-btn"
+                        type="button"
+                        data-testid="message-insert-variable"
+                        @click="
+                          variableMenuStepId =
+                            variableMenuStepId === step.id ? '' : step.id;
+                          variableMenuGroup = '';
+                          emojiMenuStepId = '';
+                        "
+                      >
+                        ƒx 插入变量
+                      </button>
+                      <div
+                        v-if="variableMenuStepId === step.id"
+                        class="var-flyout"
+                        data-testid="variable-menu"
+                      >
+                        <div class="var-flyout-main">
+                          <button
+                            v-for="group in variableMenuGroups(step)"
+                            :key="group.label"
+                            type="button"
+                            class="var-menu-row"
+                            :class="{
+                              active: variableMenuGroup === group.label,
+                            }"
+                            @mouseenter="variableMenuGroup = group.label"
+                            @click="variableMenuGroup = group.label"
+                          >
+                            {{ group.label }}
+                            <span>›</span>
+                          </button>
+                        </div>
+                        <div
+                          v-if="variableMenuGroup"
+                          class="var-flyout-sub"
+                          data-testid="variable-submenu"
+                        >
+                          <button
+                            v-for="item in variableMenuGroups(step).find(
+                              (group) => group.label === variableMenuGroup,
+                            )?.items ?? []"
+                            :key="item.token"
+                            type="button"
+                            class="var-menu-row"
+                            @click="insertVariableToken(step, item.token)"
+                          >
+                            {{ item.label }}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    class="toolbar-btn"
+                    type="button"
+                    data-testid="message-add-button"
+                    @click="openButtonDraft(step)"
+                  >
+                    + 添加按钮
+                  </button>
+                </div>
               </div>
             </template>
 
             <template v-else-if="step.type === 'startGroupChat'">
               <div class="nl-sentence">
-                <span>创建群聊</span>
+                <span>发起群聊</span>
                 <input v-model="step.name" class="nl-chip nl-chip-input" placeholder="群聊名称" />
               </div>
               <div class="member-picker">
@@ -1041,7 +1529,7 @@ onMounted(load);
                     :key="candidate.id"
                     :value="candidate.id"
                   >
-                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 创建群聊
+                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 发起群聊
                   </option>
                 </select>
                 <span>添加成员</span>
@@ -1063,14 +1551,36 @@ onMounted(load);
             </template>
           </div>
         </article>
+          </div>
+        </div>
 
-        <label class="on-empty-inline">
-          查找步骤为空时
-          <select v-model="onFindEmpty">
-            <option value="continue">继续执行</option>
-            <option value="stop">终止流程</option>
-          </select>
-        </label>
+        <div class="add-op-row">
+          <div class="add-step-wrap">
+            <button
+              class="nl-add-link"
+              data-testid="automation-add-step"
+              type="button"
+              @click="addStepOpen = !addStepOpen; typeMenuStepId = ''"
+            >
+              + 添加操作
+            </button>
+            <div v-if="addStepOpen" class="add-step-menu">
+              <button
+                v-for="item in stepTypes"
+                :key="item.value"
+                type="button"
+                :data-testid="`add-step-${item.value}`"
+                @click="addStep(item.value)"
+              >
+                <span
+                  class="type-badge small"
+                  :style="{ background: item.color }"
+                >{{ item.icon }}</span>
+                {{ item.label }}
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <footer class="editor-footer">
@@ -1087,6 +1597,188 @@ onMounted(load);
           {{ saving ? '保存中…' : '保存并启用' }}
         </button>
       </footer>
+
+      <!-- 查找：满足条件弹层 -->
+      <div
+        v-if="filterEditorStep()"
+        class="button-draft-mask"
+        data-testid="filter-editor-dialog"
+        @click.self="closeFilterEditor"
+      >
+        <div class="content-editor-card">
+          <header class="content-editor-head">
+            <h4>满足条件的记录</h4>
+            <button class="icon-btn" type="button" @click="closeFilterEditor">×</button>
+          </header>
+          <div class="nl-sentence">
+            <span>满足以下</span>
+            <select
+              v-model="filterEditorStep()!.filterConjunction"
+              class="nl-chip"
+              data-testid="step-filter-conjunction"
+            >
+              <option value="and">全部</option>
+              <option value="or">任意</option>
+            </select>
+            <span>条件</span>
+          </div>
+          <div class="mapping-row">
+            <select
+              v-model="filterEditorStep()!.filterFieldId"
+              data-testid="step-filter-field"
+            >
+              <option value="">不筛选</option>
+              <option
+                v-for="field in fieldOptions(filterEditorStep()!.sheetId)"
+                :key="field.id"
+                :value="field.id"
+              >
+                {{ field.name }}
+              </option>
+            </select>
+            <select
+              v-if="filterEditorStep()!.filterFieldId"
+              v-model="filterEditorStep()!.filterOperator"
+              data-testid="step-filter-operator"
+            >
+              <option value="equals">等于</option>
+              <option value="notEquals">不等于</option>
+              <option value="contains">包含</option>
+              <option value="notContains">不包含</option>
+              <option value="isEmpty">为空</option>
+              <option value="isNotEmpty">不为空</option>
+            </select>
+            <input
+              v-if="
+                filterEditorStep()!.filterFieldId &&
+                filterEditorStep()!.filterOperator !== 'isEmpty' &&
+                filterEditorStep()!.filterOperator !== 'isNotEmpty'
+              "
+              v-model="filterEditorStep()!.filterValue"
+              data-testid="step-filter-value"
+              placeholder="值"
+            />
+          </div>
+          <label class="form-field" style="margin-top: 12px">
+            <span>最多查找条数</span>
+            <input
+              v-model.number="filterEditorStep()!.limit"
+              type="number"
+              min="1"
+              data-testid="step-filter-limit"
+            />
+          </label>
+          <footer class="content-editor-footer">
+            <button class="btn btn-primary" type="button" @click="closeFilterEditor">
+              完成
+            </button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- 修改：指定内容弹层 -->
+      <div
+        v-if="contentEditorStep()"
+        class="button-draft-mask"
+        data-testid="content-editor-dialog"
+        @click.self="closeContentEditor"
+      >
+        <div class="content-editor-card">
+          <header class="content-editor-head">
+            <h4>指定内容</h4>
+            <button class="icon-btn" type="button" @click="closeContentEditor">×</button>
+          </header>
+          <div class="mapping-head">
+            <span>将字段修改为</span>
+            <button
+              class="btn small"
+              type="button"
+              data-testid="content-add-field"
+              @click="addMapping(contentEditorStep()!)"
+            >
+              + 字段
+            </button>
+          </div>
+          <div
+            v-for="(mapping, mappingIndex) in contentEditorStep()!.mappings"
+            :key="mappingIndex"
+            class="mapping-row"
+          >
+            <select v-model="mapping.fieldId">
+              <option value="">选择字段</option>
+              <option
+                v-for="field in fieldOptions(stepSheetId(contentEditorStep()!))"
+                :key="field.id"
+                :value="field.id"
+              >
+                {{ field.name }}
+              </option>
+            </select>
+            <select v-model="mapping.mode">
+              <option value="literal">固定值</option>
+              <option value="variable">变量</option>
+            </select>
+            <input
+              v-if="mapping.mode === 'literal'"
+              v-model="mapping.value"
+              placeholder="值"
+            />
+            <template v-else>
+              <select v-model="mapping.variableSource">
+                <option value="trigger">触发记录</option>
+                <option value="step">前序步骤</option>
+              </select>
+              <input v-model="mapping.variableField" placeholder="字段名" />
+            </template>
+            <button
+              class="icon-btn danger"
+              type="button"
+              @click="removeMapping(contentEditorStep()!, mappingIndex)"
+            >
+              ×
+            </button>
+          </div>
+          <footer class="content-editor-footer">
+            <button class="btn btn-primary" type="button" @click="closeContentEditor">
+              完成
+            </button>
+          </footer>
+        </div>
+      </div>
+
+      <div
+        v-if="buttonDraft"
+        class="button-draft-mask"
+        data-testid="message-button-dialog"
+        @click.self="buttonDraft = null"
+      >
+        <div class="button-draft-card">
+          <h4>添加按钮</h4>
+          <label class="ai-label">按钮标题</label>
+          <input
+            v-model="buttonDraft.title"
+            data-testid="message-button-title"
+            placeholder="输入文本"
+          />
+          <label class="ai-label">按钮链接</label>
+          <input
+            v-model="buttonDraft.url"
+            data-testid="message-button-url"
+            placeholder="粘贴链接"
+          />
+          <footer>
+            <button class="btn" type="button" @click="buttonDraft = null">取消</button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              data-testid="message-button-confirm"
+              @click="confirmButton"
+            >
+              确定
+            </button>
+          </footer>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -1165,6 +1857,41 @@ onMounted(load);
   font-weight: 600;
   color: #1d2129;
 }
+.timeline-block {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 16px;
+  padding-top: 6px;
+}
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #c0c4cc;
+  flex-shrink: 0;
+}
+.timeline-line {
+  flex: 1;
+  width: 2px;
+  margin-top: 4px;
+  background: #e5e6eb;
+  min-height: 24px;
+}
+.timeline-main {
+  flex: 1;
+  min-width: 0;
+}
+.timeline-step-no {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #8f959e;
+}
 .nl-card {
   padding: 14px 16px;
   border: 1px solid #e5e6eb;
@@ -1181,6 +1908,55 @@ onMounted(load);
 .nl-card-actions {
   display: flex;
   gap: 2px;
+}
+.type-picker {
+  position: relative;
+}
+.type-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px 0 4px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+}
+.type-badge.small {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+.chevron {
+  color: #8f959e;
+  font-size: 10px;
+}
+.type-menu .check {
+  margin-left: auto;
+  color: #1d6fdc;
+}
+.add-op-row {
+  margin-top: 4px;
+  padding-left: 26px;
+}
+.btn.ghost.small {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dee0e3;
+  background: #fff;
+  font-size: 12px;
 }
 .nl-step-label {
   font-size: 12px;
@@ -1338,17 +2114,152 @@ onMounted(load);
   flex-direction: column;
   gap: 4px;
 }
-.on-empty-inline {
-  display: inline-flex;
+.nl-chip-btn {
+  cursor: pointer;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-empty-block {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 12px 16px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #344054;
+}
+.on-empty-label {
   color: #667085;
 }
-.on-empty-inline select {
+.radio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #344054;
+}
+.channel-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.channel-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 14px 12px 36px;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+.channel-card.active {
+  border-color: #1d6fdc;
+  background: #f5f9ff;
+}
+.channel-radio {
+  position: absolute;
+  left: 12px;
+  top: 16px;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #c0c4cc;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.channel-card.active .channel-radio {
+  border-color: #1d6fdc;
+  background: radial-gradient(circle at center, #1d6fdc 40%, transparent 45%);
+}
+.channel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d2129;
+}
+.channel-desc {
+  font-size: 12px;
+  color: #98a2b3;
+}
+.recipient-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.recipient-pill {
+  display: inline-flex;
+  align-items: center;
   height: 28px;
-  border: 1px solid #d0d5dd;
+  padding: 0 10px;
   border-radius: 6px;
+  background: #eef2ff;
+  color: #3b5bdb;
+  font-size: 12px;
+}
+.message-composer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 88px;
+  padding: 10px 12px;
+  border: 1px solid #c7d7f5;
+  border-radius: 10px;
+  background: #fff;
+}
+.message-composer:focus-within {
+  border-color: #1d6fdc;
+  box-shadow: 0 0 0 3px rgba(29, 111, 220, 0.12);
+}
+.msg-plain {
+  font-size: 13px;
+  color: #1d2129;
+  white-space: pre-wrap;
+}
+.msg-tail {
+  flex: 1;
+  min-width: 120px;
+  height: 28px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+}
+.var-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #e8f3ff;
+  color: #1d6fdc;
+  font-size: 12px;
+}
+.var-chip-x {
+  border: none;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
 }
 .member-picker {
   display: flex;
@@ -1358,21 +2269,185 @@ onMounted(load);
   border-radius: 8px;
   background: #f8f9fb;
 }
-.variable-actions {
+.message-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f5f6f8;
+}
+.toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
   align-items: center;
 }
-.var-chip {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid #d6e4ff;
-  border-radius: 999px;
-  background: #f5f8ff;
-  color: #1d6fdc;
-  font-size: 11px;
+.toolbar-item {
+  position: relative;
+}
+.toolbar-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #475467;
+  font-size: 12px;
   cursor: pointer;
+}
+.toolbar-btn:hover {
+  background: #eef0f4;
+}
+.var-popup,
+.var-flyout {
+  position: absolute;
+  bottom: 34px;
+  left: 0;
+  z-index: 40;
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+.var-popup {
+  min-width: 200px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+}
+.var-flyout {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  overflow: visible;
+}
+.var-flyout-main {
+  min-width: 180px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+}
+.var-flyout-sub {
+  min-width: 160px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  border-left: 1px solid #eaecf0;
+}
+.var-menu-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.var-menu-row:hover,
+.var-menu-row.active {
+  background: #f5f8ff;
+}
+.emoji-popup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 180px;
+}
+.emoji-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+.emoji-btn:hover {
+  background: #f5f8ff;
+}
+.message-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.message-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #e8f3ff;
+  color: #1d6fdc;
+  font-size: 12px;
+}
+.button-draft-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.35);
+}
+.button-draft-card,
+.content-editor-card {
+  width: min(480px, 92vw);
+  padding: 16px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.2);
+}
+.button-draft-card h4,
+.content-editor-head h4 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.content-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.content-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.button-draft-card input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 34px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+.button-draft-card footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ai-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #667085;
 }
 .editor-error {
   color: #d92d20;

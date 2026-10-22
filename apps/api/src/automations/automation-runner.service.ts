@@ -105,12 +105,14 @@ export class AutomationRunnerService {
     recordId: string,
     outerTx?: Prisma.TransactionClient,
     idempotencyKey?: string,
+    submitterUserId?: string,
   ): Promise<AutomationRunResult[]> {
     return this.triggerRecord(
       'recordCreated',
       recordId,
       outerTx,
       idempotencyKey,
+      submitterUserId,
     );
   }
 
@@ -118,12 +120,14 @@ export class AutomationRunnerService {
     recordId: string,
     outerTx?: Prisma.TransactionClient,
     idempotencyKey?: string,
+    submitterUserId?: string,
   ): Promise<AutomationRunResult[]> {
     return this.triggerRecord(
       'recordUpdated',
       recordId,
       outerTx,
       idempotencyKey,
+      submitterUserId,
     );
   }
 
@@ -132,17 +136,23 @@ export class AutomationRunnerService {
     recordId: string,
     outerTx?: Prisma.TransactionClient,
     idempotencyKey?: string,
+    submitterUserId?: string,
   ): Promise<AutomationRunResult[]> {
     const db = outerTx ?? this.prisma;
-    const record = await db.recordRow.findUnique({ where: { id: recordId } });
+    const record = await db.recordRow.findUnique({
+      where: { id: recordId },
+      include: { sheet: { select: { baseId: true } } },
+    });
     if (!record) return [];
 
     const fields = await db.field.findMany({
       where: { sheetId: record.sheetId },
     });
     const cells = (record.cells ?? {}) as Record<string, unknown>;
+    // Scope to the base that owns this sheet — avoid scanning every
+    // workspace automation on each form submit (WeCom pad-scoped list).
     const automations = await db.automation.findMany({
-      where: { enabled: true },
+      where: { enabled: true, baseId: record.sheet.baseId },
     });
 
     const results: AutomationRunResult[] = [];
@@ -163,6 +173,7 @@ export class AutomationRunnerService {
           automation.id,
           {
             triggerRecordId: record.id,
+            submitterUserId,
             idempotencyKey: idempotencyKey ?? `${type}:${record.id}`,
           },
           outerTx,
@@ -340,13 +351,41 @@ export class AutomationRunnerService {
       }
     }
 
+    const flatValues: Record<string, string> = {
+      今天: this.naturalTime('today'),
+      明天: this.naturalTime('tomorrow'),
+      昨天: this.naturalTime('yesterday'),
+      操作时间: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      提交时间: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    };
+    if (context.triggerRecordId) {
+      flatValues['记录链接'] = `/records/${context.triggerRecordId}`;
+    }
+    if (context.submitterUserId) {
+      flatValues['填写者'] = context.submitterUserId;
+      flatValues['操作人'] = context.submitterUserId;
+      const submitter = await tx.user.findUnique({
+        where: { id: context.submitterUserId },
+        select: { name: true },
+      });
+      if (submitter?.name) {
+        flatValues['填写者'] = submitter.name;
+        flatValues['操作人'] = submitter.name;
+      }
+    }
+    for (const [name, value] of triggerByName.entries()) {
+      if (value !== undefined && value !== null && value !== '') {
+        flatValues[name] = String(value);
+      }
+    }
+
     return {
       automation: definition,
       triggerCells,
       triggerByName,
       triggerUser: context.submitterUserId,
       stepOutputs: new Map(),
-      flatValues: {},
+      flatValues,
     };
   }
 
@@ -486,10 +525,17 @@ export class AutomationRunnerService {
       where: { id: { in: ids } },
     });
     const updated: RecordRow[] = [];
+    // Cache field defs per sheet — WeCom update_record applies one mapping
+    // shape; avoid N+1 field loads when claiming many ids in one step.
+    const fieldsBySheet = new Map<string, Field[]>();
     let lastFields: Field[] = [];
 
     for (const record of records) {
-      const fields = await this.fieldsOfSheet(tx, record.sheetId);
+      let fields = fieldsBySheet.get(record.sheetId);
+      if (!fields) {
+        fields = await this.fieldsOfSheet(tx, record.sheetId);
+        fieldsBySheet.set(record.sheetId, fields);
+      }
       lastFields = fields;
       const pending = await this.resolveCells(step.cells, state, fields);
       const current = (record.cells ?? {}) as Record<string, unknown>;
@@ -528,9 +574,13 @@ export class AutomationRunnerService {
     const text = this.interpolate(step.content.text, state);
     const title = step.name ?? '自动化通知';
     const recipients = await this.resolveRecipients(step, state, tx);
+    const buttons = (step.content.buttons ?? []).map((button) => ({
+      title: this.interpolate(button.title, state),
+      url: this.interpolate(button.url, state),
+    }));
     const data = {
       automationId: state.automation.id,
-      buttons: step.content.buttons ?? [],
+      buttons,
     } as unknown as Prisma.InputJsonValue;
 
     for (const userId of recipients) {
@@ -743,6 +793,11 @@ export class AutomationRunnerService {
   private naturalTime(kind: string | undefined): string {
     const now = new Date();
     const day = 86_400_000;
+    // WeCom message/title templates use wall-clock「操作时间」; claim stamps
+    // need datetime, not date-only「今天」.
+    if (kind === 'now') {
+      return now.toISOString().replace('T', ' ').slice(0, 19);
+    }
     if (kind === 'tomorrow') {
       return new Date(now.getTime() + day).toISOString().slice(0, 10);
     }
@@ -755,6 +810,31 @@ export class AutomationRunnerService {
   private interpolate(text: string, state: ExecutionState): string {
     return text.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawKey: string) => {
       const key = rawKey.trim();
+      if (key === '今天' || key === '明天' || key === '昨天') {
+        return this.naturalTime(
+          key === '明天' ? 'tomorrow' : key === '昨天' ? 'yesterday' : 'today',
+        );
+      }
+      // 「第N步.字段」：第1步=触发记录，第2步起=执行步骤（与编辑器序号一致）。
+      const stepMatch = /^第(\d+)步[·.\s]*(.+)$/.exec(key);
+      if (stepMatch) {
+        const stepNo = Number(stepMatch[1]);
+        const field = stepMatch[2].trim();
+        if (stepNo === 1) {
+          if (state.triggerByName.has(field)) {
+            return String(state.triggerByName.get(field));
+          }
+          if (Object.prototype.hasOwnProperty.call(state.flatValues, field)) {
+            return state.flatValues[field];
+          }
+        } else if (stepNo >= 2) {
+          const outputs = [...state.stepOutputs.values()];
+          const output = outputs[stepNo - 2];
+          if (output?.values?.[field] !== undefined) {
+            return String(output.values[field]);
+          }
+        }
+      }
       if (Object.prototype.hasOwnProperty.call(state.flatValues, key)) {
         return state.flatValues[key];
       }

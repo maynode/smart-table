@@ -3,7 +3,12 @@ import { computed, onMounted, ref } from 'vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import AutomationEditor from './AutomationEditor.vue';
-import type { AutomationDto, AutomationRunDto } from '../api/types';
+import type {
+  AutomationDto,
+  AutomationRunDto,
+  QuotaSnapshot,
+  SheetDto,
+} from '../api/types';
 import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 
@@ -11,6 +16,8 @@ const props = defineProps<{ baseId: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 const automations = ref<AutomationDto[]>([]);
+const sheets = ref<SheetDto[]>([]);
+const quota = ref<QuotaSnapshot | null>(null);
 const runs = ref<Record<string, AutomationRunDto[]>>({});
 const loading = ref(true);
 const error = ref('');
@@ -20,16 +27,20 @@ const runningId = ref('');
 const expandedRunId = ref('');
 const runsViewAutomation = ref<AutomationDto | null>(null);
 const runsLoading = ref(false);
+const menuOpenId = ref('');
+const runStatusFilter = ref<'all' | 'success' | 'failed'>('all');
+const runDateFrom = ref('');
+const runDateTo = ref('');
 
 const statusLabels: Record<string, string> = {
-  success: '成功',
-  failed: '失败',
-  skipped: '跳过',
+  success: '运行成功',
+  failed: '运行失败',
+  skipped: '已跳过',
   running: '运行中',
 };
 
 const triggerLabels: Record<string, string> = {
-  recordCreated: '新增记录时',
+  recordCreated: '添加新记录时',
   recordUpdated: '更新记录时',
   schedule: '定时触发',
 };
@@ -39,7 +50,7 @@ const stepLabels: Record<string, string> = {
   createRecord: '新增记录',
   modifyRecords: '修改记录',
   sendMessage: '发送消息',
-  startGroupChat: '创建群聊',
+  startGroupChat: '发起群聊',
   addGroupMembers: '添加群成员',
 };
 
@@ -47,12 +58,51 @@ const enabledCount = computed(
   () => automations.value.filter((item) => item.enabled).length,
 );
 
+const remainingRuns = computed(() => {
+  const snap = quota.value;
+  if (!snap) {
+    const used = automations.value.reduce(
+      (sum, item) => sum + (item.monthlyRunCount ?? 0),
+      0,
+    );
+    const caps = automations.value
+      .map((item) => item.monthlyQuota)
+      .filter((value): value is number => typeof value === 'number');
+    const limit = caps.length ? Math.min(...caps) : 10000;
+    return Math.max(0, limit - used);
+  }
+  return Math.max(
+    0,
+    snap.limits.maxAutomationRunsPerMonth -
+      snap.usage.automationRunsThisMonth,
+  );
+});
+
+const quotaLimit = computed(
+  () => quota.value?.limits.maxAutomationRunsPerMonth ?? 10000,
+);
+
+const filteredRuns = computed(() => {
+  const automation = runsViewAutomation.value;
+  if (!automation) return [] as AutomationRunDto[];
+  let list = runs.value[automation.id] ?? [];
+  if (runStatusFilter.value !== 'all') {
+    list = list.filter((run) => run.status === runStatusFilter.value);
+  }
+  if (runDateFrom.value) {
+    const from = new Date(runDateFrom.value).getTime();
+    list = list.filter((run) => new Date(run.startedAt).getTime() >= from);
+  }
+  if (runDateTo.value) {
+    const to = new Date(runDateTo.value);
+    to.setHours(23, 59, 59, 999);
+    list = list.filter((run) => new Date(run.startedAt).getTime() <= to.getTime());
+  }
+  return list;
+});
+
 function statusLabel(status: string): string {
   return statusLabels[status] ?? status;
-}
-
-function triggerLabel(automation: AutomationDto): string {
-  return triggerLabels[String(automation.trigger?.type)] ?? '自定义触发';
 }
 
 function stepLabel(type: string): string {
@@ -64,39 +114,77 @@ function formatTime(value: string | null | undefined): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
 }
 
-function firstRecordId(run: AutomationRunDto): string {
-  const ids = run.steps?.[0]?.output?.recordIds;
-  return Array.isArray(ids) && typeof ids[0] === 'string' ? ids[0] : '—';
+function formatDuration(ms: number | null | undefined): string {
+  const value = ms ?? 0;
+  return `${(value / 1000).toFixed(1)} 秒`;
 }
 
-function flowSummary(automation: AutomationDto): string {
-  const trigger = triggerLabel(automation);
-  const steps = automation.steps
-    .slice(0, 3)
-    .map((step) =>
-      stepLabel(String((step as { type?: unknown }).type ?? '')),
-    );
-  if (steps.length === 0) return `当${trigger}`;
-  return `当${trigger}，就${steps.join('，然后')}${
-    automation.steps.length > 3 ? '…' : ''
-  }`;
+function sheetName(sheetId: unknown): string {
+  if (typeof sheetId !== 'string' || !sheetId) return '工作表';
+  return sheets.value.find((sheet) => sheet.id === sheetId)?.name ?? '工作表';
+}
+
+type SummaryPart =
+  | { kind: 'text'; value: string }
+  | { kind: 'pill'; value: string };
+
+function flowParts(automation: AutomationDto): SummaryPart[] {
+  const trigger = automation.trigger as Record<string, unknown>;
+  const type = String(trigger.type ?? 'recordCreated');
+  const parts: SummaryPart[] = [{ kind: 'text', value: '当' }];
+  if (type === 'schedule') {
+    parts.push({ kind: 'pill', value: '定时触发' });
+  } else {
+    parts.push({ kind: 'pill', value: sheetName(trigger.sheetId) });
+    parts.push({ kind: 'text', value: '里' });
+    parts.push({
+      kind: 'pill',
+      value: triggerLabels[type] ?? '触发时',
+    });
+  }
+  const steps = automation.steps as Array<Record<string, unknown>>;
+  steps.slice(0, 3).forEach((step, index) => {
+    const stepType = String(step.type ?? '');
+    parts.push({
+      kind: 'text',
+      value: index === 0 ? '，就在' : '，然后在',
+    });
+    if (stepType === 'findRecords' || stepType === 'createRecord') {
+      parts.push({ kind: 'pill', value: sheetName(step.sheetId) });
+      parts.push({ kind: 'text', value: '里' });
+      parts.push({ kind: 'pill', value: stepLabel(stepType) });
+    } else if (stepType === 'modifyRecords') {
+      parts.push({ kind: 'pill', value: sheetName(step.sheetId) });
+      parts.push({ kind: 'text', value: '里' });
+      parts.push({ kind: 'pill', value: '修改记录' });
+    } else if (stepType === 'sendMessage') {
+      parts.push({ kind: 'pill', value: '发送消息' });
+    } else {
+      parts.push({ kind: 'pill', value: stepLabel(stepType) });
+    }
+  });
+  if (steps.length > 3) parts.push({ kind: 'text', value: '…' });
+  return parts;
 }
 
 function openCreate(): void {
   editing.value = null;
   runsViewAutomation.value = null;
+  menuOpenId.value = '';
   editorOpen.value = true;
 }
 
 function openEdit(automation: AutomationDto): void {
   editing.value = automation;
   runsViewAutomation.value = null;
+  menuOpenId.value = '';
   editorOpen.value = true;
 }
 
 async function openRuns(automation: AutomationDto): Promise<void> {
   runsViewAutomation.value = automation;
   editorOpen.value = false;
+  menuOpenId.value = '';
   expandedRunId.value = '';
   runsLoading.value = true;
   try {
@@ -114,21 +202,26 @@ function closeRuns(): void {
   expandedRunId.value = '';
 }
 
-const activeRuns = computed(() => {
-  const automation = runsViewAutomation.value;
-  if (!automation) return [] as AutomationRunDto[];
-  return runs.value[automation.id] ?? [];
-});
+function toggleMenu(id: string): void {
+  menuOpenId.value = menuOpenId.value === id ? '' : id;
+}
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    automations.value = await endpoints.listAutomations(props.baseId);
+    const [list, sheetList, base] = await Promise.all([
+      endpoints.listAutomations(props.baseId),
+      endpoints.listSheets(props.baseId),
+      endpoints.getBase(props.baseId),
+    ]);
+    automations.value = list;
+    sheets.value = sheetList;
+    quota.value = await endpoints.getQuota(base.workspaceId).catch(() => null);
     const entries = await Promise.all(
       automations.value.map(async (automation) => {
-        const list = await endpoints.listAutomationRuns(automation.id, 10);
-        return [automation.id, list] as const;
+        const runList = await endpoints.listAutomationRuns(automation.id, 10);
+        return [automation.id, runList] as const;
       }),
     );
     runs.value = Object.fromEntries(entries);
@@ -171,6 +264,7 @@ async function runNow(automation: AutomationDto): Promise<void> {
 }
 
 async function remove(automation: AutomationDto): Promise<void> {
+  menuOpenId.value = '';
   const ok = await confirmDialog(
     `删除自动化「${automation.name}」？历史运行记录也会删除。`,
     { title: '删除自动化', confirmLabel: '删除' },
@@ -198,17 +292,24 @@ async function onSaved(): Promise<void> {
   toast('自动化已保存');
 }
 
+function onEditorOpenRuns(): void {
+  const target = editing.value;
+  editorOpen.value = false;
+  if (target) void openRuns(target);
+}
+
 onMounted(load);
 </script>
 
 <template>
-  <div class="automation-panel" data-testid="automation-panel">
-    <header class="panel-header">
+  <div class="automation-panel" data-testid="automation-panel" @click="menuOpenId = ''">
+    <header v-if="!editorOpen" class="panel-header">
       <div class="panel-title-block">
-        <h3>自动化</h3>
-        <p class="quota-line">
-          用触发条件串起查找、修改与消息，让表格自己干活。
+        <h3>{{ runsViewAutomation ? '运行详情' : '自动化' }}</h3>
+        <p v-if="!runsViewAutomation" class="quota-line">
+          本月还可运行 {{ remainingRuns }} 次自动化流程，上限可增加至{{ quotaLimit }}次。
         </p>
+        <p v-else class="quota-line">{{ runsViewAutomation.name }}</p>
       </div>
       <button class="icon-btn close-btn" aria-label="关闭" @click="emit('close')">
         ×
@@ -221,81 +322,109 @@ onMounted(load);
       :automation="editing"
       @close="editorOpen = false"
       @saved="onSaved"
+      @open-runs="onEditorOpenRuns"
     />
 
     <template v-else-if="runsViewAutomation">
       <div class="runs-view" data-testid="automation-runs-panel">
         <div class="runs-view-head">
-          <button class="btn ghost small" type="button" data-testid="automation-runs-back" @click="closeRuns">
+          <button
+            class="btn ghost small"
+            type="button"
+            data-testid="automation-runs-back"
+            @click="closeRuns"
+          >
             ← 返回
           </button>
-          <div class="runs-view-title">
-            <h4>运行日志</h4>
-            <p>{{ runsViewAutomation.name }}</p>
-          </div>
-          <div class="toolbar-actions">
+          <div class="runs-filters">
+            <input v-model="runDateFrom" type="date" class="filter-input" />
+            <span class="muted">—</span>
+            <input v-model="runDateTo" type="date" class="filter-input" />
+            <select v-model="runStatusFilter" class="filter-input" data-testid="runs-status-filter">
+              <option value="all">全部状态</option>
+              <option value="success">运行成功</option>
+              <option value="failed">运行失败</option>
+            </select>
             <button
               class="btn ghost small"
               type="button"
-              :disabled="runningId === runsViewAutomation.id"
               data-testid="automation-run"
+              :disabled="runningId === runsViewAutomation.id"
               @click="runNow(runsViewAutomation)"
             >
               {{ runningId === runsViewAutomation.id ? '运行中…' : '立即运行' }}
             </button>
-            <button class="btn ghost small" type="button" @click="openRuns(runsViewAutomation)">
-              刷新
+            <button
+              class="icon-btn"
+              type="button"
+              title="刷新"
+              @click="openRuns(runsViewAutomation)"
+            >
+              ↻
             </button>
           </div>
         </div>
 
         <p v-if="runsLoading" class="muted runs-empty">加载运行记录…</p>
-        <p v-else-if="activeRuns.length === 0" class="muted runs-empty">还没有运行记录</p>
+        <p v-else-if="filteredRuns.length === 0" class="muted runs-empty">还没有运行记录</p>
 
-        <div v-else class="runs-list">
-          <article
-            v-for="run in activeRuns"
-            :key="run.id"
-            class="run-card"
-            :class="{ open: expandedRunId === run.id }"
-            data-testid="automation-run-row"
-            :data-status="run.status"
-          >
-            <button class="run-card-head" type="button" @click="toggleRun(run)">
-              <span class="run-status" :class="run.status">{{ statusLabel(run.status) }}</span>
-              <span class="run-time">{{ formatTime(run.startedAt) }}</span>
-              <span class="muted">{{ run.durationMs ?? 0 }} ms</span>
-              <span class="mono">记录 {{ firstRecordId(run) }}</span>
-              <span class="expand-cell">{{ expandedRunId === run.id ? '收起' : '详情' }}</span>
-            </button>
-            <p v-if="run.error" class="run-error-line">{{ run.error }}</p>
-            <div v-if="expandedRunId === run.id" class="run-steps">
-              <div
-                v-for="step in run.steps"
-                :key="`${run.id}-${step.stepIndex}`"
-                class="run-step"
-              >
-                <span class="run-step-index">{{ step.stepIndex + 1 }}</span>
-                <span>{{ stepLabel(step.type) }}</span>
-                <span class="run-status" :class="step.status">{{ statusLabel(step.status) }}</span>
-                <span class="muted">{{ step.durationMs ?? 0 }} ms</span>
-                <span v-if="step.error" class="run-error">{{ step.error }}</span>
-                <pre>{{ JSON.stringify(step.output, null, 2) }}</pre>
-              </div>
-              <p v-if="run.steps.length === 0" class="muted">没有步骤明细。</p>
-              <button
-                v-if="run.status === 'failed' && runsViewAutomation"
-                class="btn ghost small"
-                type="button"
-                data-testid="automation-run-retry"
-                :disabled="runningId === runsViewAutomation.id"
-                @click="runNow(runsViewAutomation)"
-              >
-                重试
-              </button>
-            </div>
-          </article>
-        </div>
+        <table v-else class="runs-table">
+          <thead>
+            <tr>
+              <th>日志产生时间</th>
+              <th>运行状态</th>
+              <th>运行耗时</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="run in filteredRuns" :key="run.id">
+              <tr data-testid="automation-run-row" :data-status="run.status">
+                <td>{{ formatTime(run.startedAt) }}</td>
+                <td>
+                  <span class="run-status" :class="run.status">
+                    {{ statusLabel(run.status) }}
+                  </span>
+                  <button
+                    v-if="run.status === 'failed'"
+                    class="link-btn"
+                    type="button"
+                    data-testid="automation-run-retry"
+                    :disabled="runningId === runsViewAutomation.id"
+                    @click="runNow(runsViewAutomation)"
+                  >
+                    重试
+                  </button>
+                </td>
+                <td>{{ formatDuration(run.durationMs) }}</td>
+                <td>
+                  <button class="link-btn" type="button" @click="toggleRun(run)">
+                    {{ expandedRunId === run.id ? '收起' : '详情' }}
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="expandedRunId === run.id" class="run-detail-row">
+                <td colspan="4">
+                  <div v-if="run.error" class="run-error-line">{{ run.error }}</div>
+                  <div
+                    v-for="step in run.steps"
+                    :key="`${run.id}-${step.stepIndex}`"
+                    class="run-step"
+                  >
+                    <span class="run-step-index">{{ step.stepIndex + 1 }}</span>
+                    <span>{{ stepLabel(step.type) }}</span>
+                    <span class="run-status" :class="step.status">
+                      {{ statusLabel(step.status) }}
+                    </span>
+                    <span class="muted">{{ formatDuration(step.durationMs) }}</span>
+                    <span v-if="step.error" class="run-error">{{ step.error }}</span>
+                  </div>
+                  <p v-if="run.steps.length === 0" class="muted">没有步骤明细。</p>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
     </template>
 
@@ -304,23 +433,16 @@ onMounted(load);
         <span class="list-count">
           <template v-if="loading">加载中…</template>
           <template v-else>
-            {{ automations.length }} 条自动化流程
-            <span v-if="enabledCount" class="count-sep">·</span>
-            <span v-if="enabledCount">{{ enabledCount }} 条启用中</span>
+            {{ automations.length }} 条自动化流程，{{ enabledCount }} 条运行中
           </template>
         </span>
-        <div class="toolbar-actions">
-          <button class="btn ghost" data-testid="automation-refresh" @click="load">
-            刷新
-          </button>
-          <button
-            class="btn btn-primary"
-            data-testid="automation-create"
-            @click="openCreate"
-          >
-            新建流程
-          </button>
-        </div>
+        <button
+          class="btn btn-primary"
+          data-testid="automation-create"
+          @click="openCreate"
+        >
+          新建流程
+        </button>
       </div>
 
       <p v-if="error" class="form-error">{{ error }}</p>
@@ -349,14 +471,12 @@ onMounted(load);
         :key="automation.id"
         class="automation-card"
         data-testid="automation-card"
+        @click="openEdit(automation)"
       >
-        <header class="automation-card-head">
-          <div class="automation-title">
-            <strong>{{ automation.name }}</strong>
-            <span class="badge" :class="{ off: !automation.enabled }">
-              {{ automation.enabled ? '启用' : '停用' }}
-            </span>
-          </div>
+        <header class="automation-card-head" @click.stop>
+          <strong class="card-name" @click="openEdit(automation)">
+            {{ automation.name }}
+          </strong>
           <div class="card-actions">
             <label
               class="switch"
@@ -371,51 +491,62 @@ onMounted(load);
               />
               <span></span>
             </label>
-            <button
-              class="btn ghost small"
-              data-testid="automation-edit"
-              @click="openEdit(automation)"
-            >
-              编辑
-            </button>
-            <button
-              class="btn ghost small"
-              data-testid="automation-runs-open"
-              @click="openRuns(automation)"
-            >
-              运行日志
-            </button>
-            <button
-              class="btn ghost small"
-              data-testid="automation-run"
-              :disabled="runningId === automation.id"
-              @click="runNow(automation)"
-            >
-              {{ runningId === automation.id ? '运行中…' : '立即运行' }}
-            </button>
-            <button
-              class="icon-btn danger"
-              title="删除自动化"
-              data-testid="automation-delete"
-              @click="remove(automation)"
-            >
-              ×
-            </button>
+            <div class="more-wrap">
+              <button
+                class="icon-btn"
+                type="button"
+                title="更多"
+                data-testid="automation-more"
+                @click="toggleMenu(automation.id)"
+              >
+                ···
+              </button>
+              <div
+                v-if="menuOpenId === automation.id"
+                class="more-menu"
+                @click.stop
+              >
+                <button
+                  type="button"
+                  data-testid="automation-edit"
+                  @click="openEdit(automation)"
+                >
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  data-testid="automation-runs-open"
+                  @click="openRuns(automation)"
+                >
+                  运行日志
+                </button>
+                <button
+                  type="button"
+                  data-testid="automation-run"
+                  :disabled="runningId === automation.id"
+                  @click="runNow(automation)"
+                >
+                  {{ runningId === automation.id ? '运行中…' : '立即运行' }}
+                </button>
+                <button
+                  type="button"
+                  class="danger"
+                  data-testid="automation-delete"
+                  @click="remove(automation)"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
           </div>
         </header>
 
-        <p class="flow-summary">{{ flowSummary(automation) }}</p>
-
-        <div class="automation-meta">
-          <span>月额度 {{ automation.monthlyQuota ?? '不限' }}</span>
-          <span>本月已运行 {{ automation.monthlyRunCount ?? 0 }}</span>
-          <span v-if="automation.nextRunAt">下次 {{ formatTime(automation.nextRunAt) }}</span>
-          <span v-if="automation.lastRunAt">上次 {{ formatTime(automation.lastRunAt) }}</span>
-          <span>{{ automation.steps.length }} 个步骤</span>
-          <button class="meta-link" type="button" @click="openRuns(automation)">
-            查看 {{ (runs[automation.id] ?? []).length }} 条近期运行 →
-          </button>
-        </div>
+        <p class="flow-summary">
+          <template v-for="(part, index) in flowParts(automation)" :key="index">
+            <span v-if="part.kind === 'text'">{{ part.value }}</span>
+            <span v-else class="flow-pill">{{ part.value }}</span>
+          </template>
+        </p>
       </article>
     </template>
   </div>
@@ -471,28 +602,6 @@ onMounted(load);
   font-size: 13px;
   color: #646a73;
 }
-.count-sep {
-  margin: 0 4px;
-  color: #c0c4cc;
-}
-.toolbar-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.btn.ghost {
-  background: #fff;
-  border: 1px solid #dee0e3;
-  color: #1f2329;
-}
-.btn.ghost:hover {
-  background: #f5f6f7;
-}
-.btn.ghost.small {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-}
 .empty-state {
   flex: 1;
   display: flex;
@@ -510,7 +619,6 @@ onMounted(load);
 .empty-visual {
   display: flex;
   align-items: center;
-  gap: 0;
   margin-bottom: 10px;
 }
 .empty-node {
@@ -553,6 +661,7 @@ onMounted(load);
   padding: 14px 16px;
   margin: 0 4px 12px;
   background: #fff;
+  cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .automation-card:hover {
@@ -564,16 +673,11 @@ onMounted(load);
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  flex-wrap: wrap;
 }
-.automation-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.automation-title strong {
+.card-name {
   font-size: 15px;
   color: #1f2329;
+  cursor: pointer;
 }
 .card-actions {
   display: flex;
@@ -581,42 +685,55 @@ onMounted(load);
   gap: 6px;
 }
 .flow-summary {
-  margin: 10px 0 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #f7f8fa;
+  margin: 10px 0 0;
   color: #4e5969;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.7;
 }
-.automation-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin: 0;
-  color: #8f959e;
-  font-size: 12px;
+.flow-pill {
+  display: inline-flex;
   align-items: center;
-}
-.meta-link {
-  margin-left: auto;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: #1d6fdc;
+  margin: 0 2px;
+  padding: 1px 8px;
+  border: 1px solid #e5e6eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2329;
   font-size: 12px;
+  vertical-align: baseline;
+}
+.more-wrap {
+  position: relative;
+}
+.more-menu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.more-menu button {
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
   cursor: pointer;
 }
-.badge {
-  font-size: 11px;
-  color: #067647;
-  background: #ecfdf3;
-  border-radius: 999px;
-  padding: 2px 8px;
+.more-menu button:hover {
+  background: #f5f8ff;
 }
-.badge.off {
-  color: #667085;
-  background: #f2f4f7;
+.more-menu button.danger {
+  color: #d4380d;
 }
 .switch {
   position: relative;
@@ -662,81 +779,71 @@ onMounted(load);
 }
 .runs-view-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
-.runs-view-title {
+.runs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   flex: 1;
-  min-width: 0;
 }
-.runs-view-title h4 {
-  margin: 0;
-  font-size: 16px;
-  color: #1f2329;
-}
-.runs-view-title p {
-  margin: 2px 0 0;
+.filter-input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
   font-size: 12px;
-  color: #8f959e;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: #fff;
 }
 .runs-empty {
   padding: 32px;
   text-align: center;
 }
-.runs-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.run-card {
-  border: 1px solid #e5e6eb;
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
-}
-.run-card.open {
-  border-color: #c7d7f5;
-}
-.run-card-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
+.runs-table {
   width: 100%;
-  padding: 12px 14px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  color: #4e5969;
-}
-.run-card-head:hover {
-  background: #f7f8fa;
-}
-.run-time {
-  color: #1f2329;
+  border-collapse: collapse;
   font-size: 13px;
 }
-.expand-cell {
-  margin-left: auto;
-  color: #2d8cf0;
-  white-space: nowrap;
-  font-size: 12px;
+.runs-table th,
+.runs-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #eef0f3;
+  text-align: left;
+  vertical-align: middle;
+}
+.runs-table th {
+  color: #8f959e;
+  font-weight: 500;
+}
+.run-detail-row td {
+  background: #fafbfc;
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+.link-btn {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1d6fdc;
+  font-size: 13px;
+  cursor: pointer;
 }
 .run-error-line {
-  margin: 0;
-  padding: 0 14px 10px;
+  margin: 0 0 8px;
   color: #b42318;
   font-size: 12px;
 }
 .run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: 12px;
   background: #f2f4f7;
 }
 .run-status.success {
@@ -755,21 +862,13 @@ onMounted(load);
   margin-left: 6px;
   color: #b42318;
 }
-.run-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 0 14px 14px;
-  border-top: 1px solid #f2f4f7;
-  background: #fafbfc;
-}
 .run-step {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  padding-top: 10px;
+  font-size: 12px;
+  padding: 6px 0;
 }
 .run-step-index {
   width: 18px;
@@ -781,28 +880,15 @@ onMounted(load);
   background: #e8f3ff;
   color: #1d6fdc;
 }
-.run-step pre {
-  flex-basis: 100%;
-  max-height: 180px;
-  overflow: auto;
-  margin: 2px 0 0;
-  padding: 8px;
-  border-radius: 6px;
-  background: #1f2329;
-  color: #d1e9ff;
-  font-size: 10px;
+.btn.ghost {
+  background: #fff;
+  border: 1px solid #dee0e3;
+  color: #1f2329;
 }
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  color: #667085;
-}
-.icon-btn.danger {
-  color: #8f959e;
-}
-.icon-btn.danger:hover {
-  color: #d4380d;
-  background: #fff1f0;
+.btn.ghost.small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .muted {
   color: #8f959e;

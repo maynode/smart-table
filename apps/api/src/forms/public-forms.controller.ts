@@ -9,13 +9,18 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { FormsService } from './forms.service';
 import { SubmitFormDto } from './dto/form-config.dto';
+import type { JwtPayload } from '../auth/jwt-auth.guard';
 
 @Controller('public/forms')
 export class PublicFormsController {
-  constructor(private readonly formsService: FormsService) {}
+  constructor(
+    private readonly formsService: FormsService,
+    private readonly jwt: JwtService,
+  ) {}
 
   @Get(':token')
   get(@Param('token') token: string) {
@@ -30,7 +35,15 @@ export class PublicFormsController {
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const result = await this.formsService.submit(token, dto.cells, request.ip);
+    // Optional Bearer — WeCom sends 填写者 from the logged-in filler;
+    // anonymous public fill still works and falls back to workspace admins.
+    const submitterUserId = await this.optionalUserId(request);
+    const result = await this.formsService.submit(
+      token,
+      dto.cells,
+      request.ip,
+      submitterUserId,
+    );
     if (result.status === 'queued') {
       reply.code(HttpStatus.ACCEPTED);
     }
@@ -43,5 +56,20 @@ export class PublicFormsController {
     @Param('submissionId') submissionId: string,
   ) {
     return this.formsService.getSubmissionStatus(token, submissionId);
+  }
+
+  private async optionalUserId(
+    request: FastifyRequest,
+  ): Promise<string | undefined> {
+    const header = request.headers.authorization;
+    if (!header?.startsWith('Bearer ')) return undefined;
+    try {
+      const payload = await this.jwt.verifyAsync<JwtPayload>(
+        header.slice('Bearer '.length),
+      );
+      return payload.sub;
+    } catch {
+      return undefined;
+    }
   }
 }

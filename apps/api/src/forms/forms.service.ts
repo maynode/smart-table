@@ -318,10 +318,16 @@ export class FormsService implements OnModuleDestroy {
     shareToken: string,
     cells: Record<string, unknown>,
     ip: string,
+    submitterUserId?: string,
   ) {
     await this.acquireSubmitSlot();
     try {
-      return await this.submitWithSlot(shareToken, cells, ip);
+      return await this.submitWithSlot(
+        shareToken,
+        cells,
+        ip,
+        submitterUserId,
+      );
     } finally {
       this.releaseSubmitSlot();
     }
@@ -348,6 +354,7 @@ export class FormsService implements OnModuleDestroy {
     shareToken: string,
     cells: Record<string, unknown>,
     ip: string,
+    submitterUserId?: string,
   ) {
     this.assertRateLimit(shareToken, ip);
 
@@ -452,7 +459,13 @@ export class FormsService implements OnModuleDestroy {
     }
 
     try {
-      const outcome = await this.runClaim(form, sanitized, submissionId, false);
+      const outcome = await this.runClaim(
+        form,
+        sanitized,
+        submissionId,
+        false,
+        submitterUserId,
+      );
       const html = this.successHtml(form, sanitized, outcome.stepOutputs);
       await this.prisma.formSubmission.update({
         where: { id: submissionId },
@@ -555,6 +568,7 @@ export class FormsService implements OnModuleDestroy {
     sanitized: Record<string, unknown>,
     submissionId: string,
     queued: boolean,
+    submitterUserId?: string,
   ): Promise<{ recordId: string; stepOutputs: Record<string, string> }> {
     // Claim, form record, and submission commit or roll back together: a
     // submission either gets a serial and a record, or writes nothing at all.
@@ -627,6 +641,7 @@ export class FormsService implements OnModuleDestroy {
           record.id,
           tx,
           `submission:${submissionId}`,
+          submitterUserId,
         );
 
         const blocked = runs.find(

@@ -36,12 +36,11 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
       data: { name: 'W4 UI Base' },
     })
   ).json();
-  const sheet = await (
-    await api.post(`/bases/${base.id}/sheets`, {
-      headers,
-      data: { name: '商机' },
-    })
+  // Use the base seed sheet so dashboard defaults to it (no sheet switch race).
+  const sheetList = await (
+    await api.get(`/bases/${base.id}/sheets`, { headers })
   ).json();
+  const sheet = sheetList[0] as { id: string; name: string };
   const status = await (
     await api.post(`/sheets/${sheet.id}/fields`, {
       headers,
@@ -112,8 +111,8 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
       )?.role;
     })
     .toBe('viewer');
-  page.once('dialog', (dialog) => dialog.accept());
   await guestRow.getByTitle('移出工作区').click();
+  await page.getByTestId('app-dialog-confirm').click();
   await expect
     .poll(async () => {
       const members = await (
@@ -133,24 +132,60 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
   await page.getByTestId('dashboard-create').click();
   await expect(page.getByTestId('dashboard-row').first()).toBeVisible();
 
-  async function addWidget(type: string, title: string, metric: boolean) {
+  async function addWidget(
+    type: string,
+    title: string,
+    opts: { metric?: boolean; expectCount: number; text?: string } = {
+      expectCount: 1,
+    },
+  ) {
     await page.getByTestId('dashboard-widget-type').selectOption(type);
     await page.getByTestId('dashboard-widget-title').fill(title);
-    await page.getByTestId('dashboard-widget-sheet').selectOption(sheet.id);
-    await page
-      .getByTestId('dashboard-widget-dimension')
-      .selectOption(status.id);
-    if (metric) {
-      await page.getByTestId('dashboard-widget-metric').selectOption(amount.id);
-      await page.getByTestId('dashboard-widget-aggregation').selectOption('sum');
+    if (type === 'text') {
+      await page.getByTestId('dashboard-widget-text').fill(opts.text ?? title);
+    } else {
+      await expect
+        .poll(async () =>
+          page
+            .getByTestId('dashboard-widget-dimension')
+            .locator(`option[value="${status.id}"]`)
+            .count(),
+        )
+        .toBe(1);
+      await page
+        .getByTestId('dashboard-widget-dimension')
+        .selectOption(status.id);
+      if (opts.metric) {
+        await page
+          .getByTestId('dashboard-widget-metric')
+          .selectOption(amount.id);
+        await page
+          .getByTestId('dashboard-widget-aggregation')
+          .selectOption('sum');
+      }
     }
     await page.getByTestId('dashboard-widget-add').click();
     await expect(page.getByTestId('dashboard-widget-card')).toHaveCount(
-      type === 'pie' ? 1 : 2,
+      opts.expectCount,
     );
   }
-  await addWidget('pie', '阶段分布', false);
-  await addWidget('bar', '阶段金额', true);
+  await addWidget('pie', '阶段分布', { expectCount: 1 });
+  await addWidget('horizontalBar', '阶段条形', { expectCount: 2 });
+  await addWidget('text', '说明文字', {
+    expectCount: 3,
+    text: '仪表盘备注',
+  });
+  await expect(page.getByTestId('dashboard-text-widget').first()).toContainText(
+    '仪表盘备注',
+  );
+  // Keep two charts for resize/delete assertions.
+  await page
+    .getByTestId('dashboard-widget-card')
+    .nth(2)
+    .getByTitle('删除图表')
+    .click();
+  await page.getByTestId('app-dialog-confirm').click();
+  await expect(page.getByTestId('dashboard-widget-card')).toHaveCount(2);
 
   const dashboardFromApi = async () => {
     const list = await (
@@ -185,12 +220,12 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
     'success',
   );
 
-  page.once('dialog', (dialog) => dialog.accept());
   await page
     .getByTestId('dashboard-widget-card')
     .nth(1)
     .getByTitle('删除图表')
     .click();
+  await page.getByTestId('app-dialog-confirm').click();
   await expect(page.getByTestId('dashboard-widget-card')).toHaveCount(1);
   await expect
     .poll(async () => (await dashboardFromApi()).widgets.length)

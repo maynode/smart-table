@@ -96,13 +96,21 @@ export class SheetsService {
     return this.requireSheet(sheetId, userId, minimum);
   }
 
-  async createSheet(baseId: string, userId: string, name: string) {
+  async createSheet(
+    baseId: string,
+    userId: string,
+    name: string,
+    options?: { seed?: boolean },
+  ) {
     await this.requireBase(baseId, userId, 'editor');
+    const seed = options?.seed !== false;
     return this.prisma.$transaction(async (tx) => {
       const sheet = await tx.sheet.create({
         data: { baseId, name: name.trim() },
       });
-      await seedBlankSheetStructure(tx, sheet.id, userId);
+      if (seed) {
+        await seedBlankSheetStructure(tx, sheet.id, userId);
+      }
       const fields = await tx.field.findMany({
         where: { sheetId: sheet.id },
         orderBy: { order: 'asc' },

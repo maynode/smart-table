@@ -200,11 +200,16 @@ export async function seedSerialClaim(
             ],
           },
         } as Prisma.InputJsonValue,
+        // Mirrors WeCom「联动修改」from automation/list:
+        // LOOKUP_RECORD(type=1) → UPDATE_RECORD(type=3, selector=fromStep)
+        // → SEND_MESSAGE(type=4, users=填写者, content=序列号).
         steps: [
           {
             id: 'find-code',
             type: 'findRecords',
             sheetId: codeSheet.id,
+            limit: 1,
+            onEmpty: 'stop',
             filters: {
               conjunction: 'and',
               conditions: [
@@ -224,8 +229,22 @@ export async function seedSerialClaim(
               },
               [claimedAt.id]: {
                 kind: 'variable',
-                variable: { source: 'naturalTime', naturalTime: 'today' },
+                // Wall-clock stamp (WeCom update step only writes 状态+手机号;
+                // our 领取时间 is an extension — use now, not date-only today).
+                variable: { source: 'naturalTime', naturalTime: 'now' },
               },
+            },
+          },
+          {
+            id: 'notify-claimer',
+            type: 'sendMessage',
+            // WeCom: title blocks text「你的序列号为」+ content ref update.序列号
+            name: '你的序列号为',
+            channel: 'doc',
+            recipients: [{ source: 'trigger', field: '填写者' }],
+            content: {
+              text: '{{第3步.序列号}}',
+              buttons: [],
             },
           },
         ] as Prisma.InputJsonValue,

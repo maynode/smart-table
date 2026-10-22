@@ -30,7 +30,7 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   const sheet = await (
     await api.post(`/bases/${base.id}/sheets`, {
       headers,
-      data: { name: '活动报名' },
+      data: { name: '活动报名', seed: false },
     })
   ).json();
   async function createField(data: Record<string, unknown>) {
@@ -158,7 +158,7 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   );
 
   // Switch back to anyone so the public fill flow can run unauthenticated.
-  await page.getByRole('button', { name: '设计' }).click();
+  await page.getByTestId('form-tab-edit').click();
   await page.getByTestId('form-audience').selectOption('anyone');
   await page.getByTestId('form-builder-save').click();
   await expect

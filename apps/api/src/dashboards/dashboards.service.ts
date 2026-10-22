@@ -13,11 +13,39 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import type { AggregateMode } from '../analytics/analytics.types';
 
+const WIDGET_TYPES = [
+  'bar',
+  'horizontalBar',
+  'line',
+  'pie',
+  'combo',
+  'wordcloud',
+  'metric',
+  'table',
+  'text',
+] as const;
+
 export interface WidgetConfig {
   dimensionFieldId?: string;
   metricFieldId?: string;
   aggregation?: AggregateMode;
   limit?: number;
+  sortBy?: 'value' | 'label';
+  sortOrder?: 'asc' | 'desc';
+  themeColor?: string;
+  showLegend?: boolean;
+  showLabel?: boolean;
+  legendPosition?: string;
+  stackMode?: 'none' | 'stack' | 'percent';
+  showXAxis?: boolean;
+  showYAxis?: boolean;
+  showGrid?: boolean;
+  xAxisTitle?: string;
+  yAxisTitle?: string;
+  yMin?: number | null;
+  yMax?: number | null;
+  logScale?: boolean;
+  textContent?: string;
 }
 
 @Injectable()
@@ -75,8 +103,11 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     },
   ) {
     const dashboard = await this.requireDashboard(dashboardId, userId, 'editor');
-    if (!['bar', 'line', 'pie', 'metric', 'table'].includes(dto.type)) {
+    if (!(WIDGET_TYPES as readonly string[]).includes(dto.type)) {
       throw new BadRequestException('图表类型无效');
+    }
+    if (dto.type !== 'text' && !dto.sheetId) {
+      throw new BadRequestException('请选择工作表');
     }
     if (dto.sheetId) {
       await this.assertSheetInBase(dto.sheetId, dashboard.baseId);
@@ -116,6 +147,12 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     });
     if (!widget || widget.dashboardId !== dashboard.id) {
       throw new NotFoundException('图表不存在');
+    }
+    if (
+      dto.type !== undefined &&
+      !(WIDGET_TYPES as readonly string[]).includes(dto.type)
+    ) {
+      throw new BadRequestException('图表类型无效');
     }
     if (dto.sheetId) await this.assertSheetInBase(dto.sheetId, dashboard.baseId);
     return this.prisma.dashboardWidget.update({
@@ -301,7 +338,11 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
   ) {
     const config = (widget.config ?? {}) as WidgetConfig;
-    if (!widget.sheetId || !config.dimensionFieldId) {
+    if (
+      widget.type === 'text' ||
+      !widget.sheetId ||
+      !config.dimensionFieldId
+    ) {
       return {
         id: widget.id,
         type: widget.type,
@@ -325,6 +366,8 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       metricFieldId: config.metricFieldId,
       aggregation: config.aggregation ?? 'count',
       limit: config.limit,
+      sortBy: config.sortBy,
+      sortOrder: config.sortOrder,
     });
     return {
       id: widget.id,

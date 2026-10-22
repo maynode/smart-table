@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { toast } from '../ui/toast';
@@ -14,6 +14,8 @@ const emit = defineEmits<{
 const templates = ref<TemplateDto[]>([]);
 const loading = ref(false);
 const busyKey = ref('');
+const search = ref('');
+const expanded = ref<Record<string, boolean>>({});
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : String(error);
@@ -45,6 +47,39 @@ async function useTemplate(template: TemplateDto): Promise<void> {
   }
 }
 
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return templates.value;
+  return templates.value.filter(
+    (item) =>
+      item.name.toLowerCase().includes(q) ||
+      item.description.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q),
+  );
+});
+
+const sections = computed(() => {
+  const map = new Map<string, TemplateDto[]>();
+  for (const item of filtered.value) {
+    const key = item.category || '其他';
+    const list = map.get(key) ?? [];
+    list.push(item);
+    map.set(key, list);
+  }
+  return [...map.entries()].map(([title, items]) => ({
+    title,
+    items,
+    limit: expanded.value[title] ? items.length : Math.min(6, items.length),
+  }));
+});
+
+function toggleSection(title: string): void {
+  expanded.value = {
+    ...expanded.value,
+    [title]: !expanded.value[title],
+  };
+}
+
 onMounted(load);
 </script>
 
@@ -53,37 +88,75 @@ onMounted(load);
     <header class="panel-header">
       <div>
         <strong>模板库</strong>
-        <p class="panel-subtitle">一键生成 Base、工作表、字段、示例数据与自动化。</p>
+        <p class="panel-subtitle">从模板快速新建表格、表单与仪表盘。</p>
       </div>
       <button class="icon-btn" data-testid="template-close" @click="emit('close')">
         ×
       </button>
     </header>
-    <div class="template-grid">
-      <article
-        v-for="template in templates"
-        :key="template.key"
-        class="template-card"
-        data-testid="template-card"
-        :data-key="template.key"
-      >
-        <div class="template-icon">{{ template.icon }}</div>
-        <strong>{{ template.name }}</strong>
-        <span class="template-category">{{ template.category }}</span>
-        <p>{{ template.description }}</p>
-        <small>
-          {{ template.sheets.map((sheet) => `${sheet.name}（${sheet.fields} 字段）`).join(' · ') }}
-        </small>
-        <button
-          class="btn btn-primary"
-          data-testid="template-use"
-          :disabled="busyKey === template.key"
-          @click="useTemplate(template)"
-        >
-          {{ busyKey === template.key ? '创建中…' : '使用模板' }}
+
+    <div class="toolbar">
+      <input
+        v-model="search"
+        class="search-input"
+        data-testid="template-search"
+        placeholder="搜索模板"
+      />
+      <div class="quick-actions">
+        <button class="quick-btn" type="button" disabled title="即将支持">
+          导入 Excel 文件
         </button>
-      </article>
-      <p v-if="!templates.length && !loading" class="empty-hint">暂无模板。</p>
+        <button class="quick-btn" type="button" disabled title="即将支持">
+          我的模板
+        </button>
+      </div>
+    </div>
+
+    <div class="template-body">
+      <section v-for="section in sections" :key="section.title" class="template-section">
+        <header class="section-head">
+          <h4>{{ section.title }}</h4>
+          <button
+            v-if="section.items.length > 6"
+            class="expand-btn"
+            type="button"
+            @click="toggleSection(section.title)"
+          >
+            {{ expanded[section.title] ? '收起' : '展开更多' }}
+          </button>
+        </header>
+        <div class="template-grid">
+          <article
+            v-for="template in section.items.slice(0, section.limit)"
+            :key="template.key"
+            class="template-card"
+            data-testid="template-card"
+            :data-key="template.key"
+            @click="useTemplate(template)"
+          >
+            <div class="template-icon">{{ template.icon }}</div>
+            <strong>{{ template.name }}</strong>
+            <span class="template-category">{{ template.category }}</span>
+            <p>{{ template.description }}</p>
+            <small>
+              {{
+                template.sheets
+                  .map((sheet) => `${sheet.name}（${sheet.fields} 字段）`)
+                  .join(' · ')
+              }}
+            </small>
+            <button
+              class="btn btn-primary"
+              data-testid="template-use"
+              :disabled="busyKey === template.key"
+              @click.stop="useTemplate(template)"
+            >
+              {{ busyKey === template.key ? '创建中…' : '使用模板' }}
+            </button>
+          </article>
+        </div>
+      </section>
+      <p v-if="!filtered.length && !loading" class="empty-hint">暂无模板。</p>
     </div>
   </section>
 </template>
@@ -92,8 +165,8 @@ onMounted(load);
 .template-panel {
   display: flex;
   flex-direction: column;
-  width: min(900px, 94vw);
-  height: min(640px, 86vh);
+  width: min(960px, 94vw);
+  height: min(720px, 88vh);
   background: #fff;
   border-radius: 12px;
   overflow: hidden;
@@ -110,12 +183,67 @@ onMounted(load);
   color: #8a9099;
   font-size: 12px;
 }
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid #eef0f3;
+}
+.search-input {
+  flex: 1;
+  min-width: 180px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.quick-actions {
+  display: flex;
+  gap: 8px;
+}
+.quick-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+  color: #667085;
+  font-size: 12px;
+  cursor: not-allowed;
+}
+.template-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 20px 20px;
+}
+.template-section + .template-section {
+  margin-top: 18px;
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.section-head h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #1f2329;
+}
+.expand-btn {
+  border: none;
+  background: transparent;
+  color: #1d6fdc;
+  font-size: 12px;
+  cursor: pointer;
+}
 .template-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  padding: 18px;
-  overflow: auto;
 }
 .template-card {
   display: flex;
@@ -125,6 +253,12 @@ onMounted(load);
   border: 1px solid #e5e6eb;
   border-radius: 10px;
   background: #fafbfc;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.template-card:hover {
+  border-color: #c7d7f5;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
 }
 .template-card p {
   flex: 1;
@@ -150,5 +284,10 @@ onMounted(load);
 .empty-hint {
   color: #8a9099;
   font-size: 12px;
+}
+@media (max-width: 800px) {
+  .template-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

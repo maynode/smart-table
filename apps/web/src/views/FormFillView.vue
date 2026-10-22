@@ -129,8 +129,8 @@ onMounted(load);
           :data-field-name="field.name"
         >
           <label :for="`field-${field.fieldId}`">
-            {{ field.name }}
             <span v-if="field.required" class="required-mark">*</span>
+            {{ field.name }}
           </label>
 
           <select
@@ -186,7 +186,9 @@ onMounted(load);
             :id="`field-${field.fieldId}`"
             v-model="answers[field.fieldId]"
             :type="inputType(field.type)"
-            :placeholder="`请输入${field.name}`"
+            :placeholder="
+              field.type === 'phone' ? '请输入电话号码' : `请输入${field.name}`
+            "
             :required="field.required"
             :data-testid="field.type === 'phone' ? 'form-phone' : 'form-field'"
           />
@@ -206,10 +208,11 @@ onMounted(load);
       </form>
 
       <section v-else class="fill-success" data-testid="form-success">
-        <h2>提交成功</h2>
+        <div class="success-check" aria-hidden="true">✓</div>
+        <h2>已提交</h2>
         <div class="fill-success-body" v-html="successHtml"></div>
         <button class="btn fill-again" @click="successHtml = ''">
-          再填一份
+          再填一次
         </button>
       </section>
 
@@ -299,6 +302,22 @@ onMounted(load);
   font-size: 13px;
   margin: 0;
 }
+.fill-success {
+  text-align: center;
+}
+.success-check {
+  width: 48px;
+  height: 48px;
+  margin: 8px auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #ecfdf3;
+  color: #12b76a;
+  font-size: 24px;
+  font-weight: 700;
+}
 .fill-success h2 {
   margin: 0 0 12px;
   font-size: 18px;
@@ -306,9 +325,14 @@ onMounted(load);
 .fill-success-body {
   font-size: 15px;
   line-height: 1.7;
+  text-align: left;
 }
 .fill-again {
   margin-top: 18px;
+}
+.required-mark {
+  margin-right: 2px;
+  margin-left: 0;
 }
 .fill-footnote {
   text-align: center;

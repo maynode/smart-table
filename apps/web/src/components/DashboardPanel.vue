@@ -28,16 +28,68 @@ const data = ref<DashboardDataDto | null>(null);
 const schedules = ref<DashboardScheduleDto[]>([]);
 const loading = ref(false);
 
-const widgetType = ref<'bar' | 'line' | 'pie' | 'metric' | 'table'>('bar');
+type WidgetType =
+  | 'bar'
+  | 'horizontalBar'
+  | 'line'
+  | 'pie'
+  | 'combo'
+  | 'wordcloud'
+  | 'metric'
+  | 'table'
+  | 'text';
+
+const configTab = ref<'basic' | 'more'>('basic');
+const widgetType = ref<WidgetType>('bar');
+const stackMode = ref<'none' | 'stack' | 'percent'>('none');
 const widgetTitle = ref('按区域统计');
+const widgetText = ref('');
 const widgetSheetId = ref('');
 const dimensionField = ref('');
 const metricField = ref('');
 const aggregation = ref<'sum' | 'count' | 'avg' | 'min' | 'max'>('count');
+const sortBy = ref<'value' | 'label'>('value');
+const sortOrder = ref<'asc' | 'desc'>('desc');
 const themeColor = ref('#2d8cf0');
+
+const chartTypeOptions: Array<{ value: WidgetType; label: string; icon: string }> = [
+  { value: 'bar', label: '柱状图', icon: '▮▮' },
+  { value: 'line', label: '折线图', icon: '╱╲' },
+  { value: 'pie', label: '饼图', icon: '◐' },
+  { value: 'horizontalBar', label: '条形图', icon: '☰' },
+  { value: 'combo', label: '组合图', icon: '▮╱' },
+  { value: 'table', label: '表格', icon: '▦' },
+  { value: 'wordcloud', label: '词云', icon: '云' },
+  { value: 'metric', label: '指标卡', icon: '12' },
+  { value: 'text', label: '文本', icon: 'T' },
+];
+
+const themeSwatches = [
+  '#2d8cf0',
+  '#36cfc9',
+  '#73d13d',
+  '#ffc53d',
+  '#ff7a45',
+  '#9254de',
+  '#eb2f96',
+  '#13c2c2',
+];
+
+const previewLabels = computed(() => ['未领', '已领', '其他']);
+const previewValues = computed(() => [3, 2, 1]);
 const showLegend = ref(true);
 const showLabel = ref(false);
-const legendPosition = ref<'top' | 'bottom'>('top');
+const legendPosition = ref<'top' | 'bottom' | 'left' | 'right' | 'topRight'>(
+  'top',
+);
+const showXAxis = ref(true);
+const showYAxis = ref(true);
+const showGrid = ref(true);
+const xAxisTitle = ref('');
+const yAxisTitle = ref('');
+const yMin = ref<number | null>(null);
+const yMax = ref<number | null>(null);
+const logScale = ref(false);
 const sheetFields = ref<FieldDto[]>([]);
 const cron = ref('0 9 * * *');
 const channel = ref('notification');
@@ -197,32 +249,41 @@ async function selectDashboard(dashboard: DashboardDto): Promise<void> {
   }
 }
 
+let fieldsLoadSeq = 0;
+
 async function loadFields(sheetId: string): Promise<void> {
+  if (!sheetId) {
+    sheetFields.value = [];
+    return;
+  }
+  const seq = ++fieldsLoadSeq;
+  sheetFields.value = [];
+  dimensionField.value = '';
+  metricField.value = '';
   try {
     const sheet = await endpoints.getSheet(sheetId);
+    if (seq !== fieldsLoadSeq || widgetSheetId.value !== sheetId) return;
     sheetFields.value = sheet.fields ?? [];
-    if (!dimensionField.value && sheetFields.value[0]) {
-      dimensionField.value = sheetFields.value[0].id;
-    }
+    dimensionField.value = sheetFields.value[0]?.id ?? '';
     const metricCandidate = sheetFields.value.find(
       (field) => field.type === 'number' || field.type === 'currency',
     );
-    if (!metricField.value && metricCandidate) {
-      metricField.value = metricCandidate.id;
-    }
+    metricField.value = metricCandidate?.id ?? '';
   } catch (error) {
+    if (seq !== fieldsLoadSeq) return;
     sheetFields.value = [];
     toast(messageOf(error));
   }
 }
 
-watch(widgetSheetId, (sheetId) => {
-  if (sheetId) void loadFields(sheetId);
+watch(widgetSheetId, (sheetId, previous) => {
+  if (!sheetId || sheetId === previous) return;
+  void loadFields(sheetId);
 });
 
 async function addWidget(): Promise<void> {
   if (!active.value) return;
-  if (!widgetSheetId.value || !dimensionField.value) {
+  if (widgetType.value !== 'text' && (!widgetSheetId.value || !dimensionField.value)) {
     toast('请选择工作表和维度字段');
     return;
   }
@@ -230,15 +291,29 @@ async function addWidget(): Promise<void> {
     await endpoints.addDashboardWidget(active.value.id, {
       type: widgetType.value,
       title: widgetTitle.value,
-      sheetId: widgetSheetId.value,
+      ...(widgetType.value === 'text'
+        ? {}
+        : { sheetId: widgetSheetId.value }),
       config: {
-        dimensionFieldId: dimensionField.value,
+        dimensionFieldId: dimensionField.value || undefined,
         metricFieldId: metricField.value || undefined,
         aggregation: aggregation.value,
+        sortBy: sortBy.value,
+        sortOrder: sortOrder.value,
         themeColor: themeColor.value,
         showLegend: showLegend.value,
         showLabel: showLabel.value,
         legendPosition: legendPosition.value,
+        stackMode: stackMode.value,
+        showXAxis: showXAxis.value,
+        showYAxis: showYAxis.value,
+        showGrid: showGrid.value,
+        xAxisTitle: xAxisTitle.value || undefined,
+        yAxisTitle: yAxisTitle.value || undefined,
+        yMin: yMin.value,
+        yMax: yMax.value,
+        logScale: logScale.value,
+        textContent: widgetText.value || undefined,
       },
       layout: { w: 6, h: 3 },
     });
@@ -313,66 +388,157 @@ onMounted(loadDashboards);
       </aside>
 
       <div v-if="active" class="dashboard-main">
-        <section class="widget-builder">
+        <section class="widget-builder chart-config">
+          <div class="chart-config-main">
           <h4>添加图表</h4>
-          <div class="builder-grid">
-            <label>
-              类型
-              <select v-model="widgetType" data-testid="dashboard-widget-type">
-                <option value="bar">柱状图</option>
-                <option value="line">折线图</option>
-                <option value="pie">饼图</option>
-                <option value="metric">指标卡</option>
-                <option value="table">表格</option>
+          <div class="config-tabs">
+            <button
+              type="button"
+              class="tab"
+              :class="{ active: configTab === 'basic' }"
+              data-testid="dashboard-config-basic"
+              @click="configTab = 'basic'"
+            >
+              基础配置
+            </button>
+            <button
+              type="button"
+              class="tab"
+              :class="{ active: configTab === 'more' }"
+              data-testid="dashboard-config-more"
+              @click="configTab = 'more'"
+            >
+              更多配置
+            </button>
+          </div>
+          <div v-if="configTab === 'basic'" class="builder-grid">
+            <div class="type-block">
+              <span class="field-label">图表类型</span>
+              <div class="type-grid" data-testid="dashboard-widget-type-grid">
+                <button
+                  v-for="item in chartTypeOptions"
+                  :key="item.value"
+                  type="button"
+                  class="type-card"
+                  :class="{ active: widgetType === item.value }"
+                  :data-testid="`dashboard-type-${item.value}`"
+                  @click="widgetType = item.value"
+                >
+                  <span class="type-icon">{{ item.icon }}</span>
+                  <span>{{ item.label }}</span>
+                </button>
+              </div>
+              <select
+                v-model="widgetType"
+                class="sr-only-select"
+                data-testid="dashboard-widget-type"
+              >
+                <option
+                  v-for="item in chartTypeOptions"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
+            <label v-if="widgetType === 'bar' || widgetType === 'horizontalBar'">
+              柱状子类
+              <select v-model="stackMode" data-testid="dashboard-stack-mode">
+                <option value="none">普通</option>
+                <option value="stack">堆积</option>
+                <option value="percent">百分比堆积</option>
               </select>
             </label>
+            <div class="type-block">
+              <span class="field-label">主题色</span>
+              <div class="swatch-row">
+                <button
+                  v-for="color in themeSwatches"
+                  :key="color"
+                  type="button"
+                  class="swatch"
+                  :class="{ active: themeColor === color }"
+                  :style="{ background: color }"
+                  :data-testid="`dashboard-theme-${color}`"
+                  @click="themeColor = color"
+                />
+                <input
+                  v-model="themeColor"
+                  type="color"
+                  class="swatch-custom"
+                  data-testid="dashboard-theme-color"
+                />
+              </div>
+            </div>
             <label>
               标题
               <input v-model="widgetTitle" data-testid="dashboard-widget-title" />
             </label>
-            <label>
-              工作表
-              <select v-model="widgetSheetId" data-testid="dashboard-widget-sheet">
-                <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
-                  {{ sheet.name }}
-                </option>
-              </select>
+            <label v-if="widgetType === 'text'">
+              文本内容
+              <input v-model="widgetText" data-testid="dashboard-widget-text" />
             </label>
-            <label>
-              分组字段
-              <select v-model="dimensionField" data-testid="dashboard-widget-dimension">
-                <option v-for="field in sheetFields" :key="field.id" :value="field.id">
-                  {{ field.name }}
-                </option>
-              </select>
-            </label>
-            <label>
-              数值字段
-              <select v-model="metricField" data-testid="dashboard-widget-metric">
-                <option value="">无</option>
-                <option v-for="field in sheetFields" :key="field.id" :value="field.id">
-                  {{ field.name }}
-                </option>
-              </select>
-            </label>
-            <label>
-              聚合
-              <select v-model="aggregation" data-testid="dashboard-widget-aggregation">
-                <option value="count">计数</option>
-                <option value="sum">求和</option>
-                <option value="avg">平均</option>
-                <option value="min">最小</option>
-                <option value="max">最大</option>
-              </select>
-            </label>
-            <label>
-              主题色
-              <input
-                v-model="themeColor"
-                type="color"
-                data-testid="dashboard-widget-color"
-              />
-            </label>
+            <template v-if="widgetType !== 'text'">
+              <label>
+                工作表
+                <select v-model="widgetSheetId" data-testid="dashboard-widget-sheet">
+                  <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
+                    {{ sheet.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                横轴（类别）字段
+                <select v-model="dimensionField" data-testid="dashboard-widget-dimension">
+                  <option v-for="field in sheetFields" :key="field.id" :value="field.id">
+                    {{ field.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                纵轴数值字段
+                <select v-model="metricField" data-testid="dashboard-widget-metric">
+                  <option value="">无（记录行数）</option>
+                  <option v-for="field in sheetFields" :key="field.id" :value="field.id">
+                    {{ field.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                聚合
+                <select v-model="aggregation" data-testid="dashboard-widget-aggregation">
+                  <option value="count">记录行数</option>
+                  <option value="sum">求和</option>
+                  <option value="avg">平均</option>
+                  <option value="min">最小</option>
+                  <option value="max">最大</option>
+                </select>
+              </label>
+              <label>
+                排序依据
+                <select v-model="sortBy" data-testid="dashboard-widget-sort-by">
+                  <option value="value">聚合值</option>
+                  <option value="label">横轴值</option>
+                </select>
+              </label>
+              <label>
+                排序方向
+                <select v-model="sortOrder" data-testid="dashboard-widget-sort-order">
+                  <option value="desc">降序</option>
+                  <option value="asc">选项正序</option>
+                </select>
+              </label>
+            </template>
+            <button
+              class="btn btn-primary"
+              data-testid="dashboard-widget-add"
+              @click="addWidget"
+            >
+              添加
+            </button>
+          </div>
+          <div v-else class="builder-grid">
             <label class="inline-check">
               <span>图例</span>
               <span>
@@ -381,9 +547,12 @@ onMounted(loadDashboards);
             </label>
             <label>
               图例位置
-              <select v-model="legendPosition">
-                <option value="top">顶部</option>
-                <option value="bottom">底部</option>
+              <select v-model="legendPosition" data-testid="dashboard-legend-position">
+                <option value="top">靠上</option>
+                <option value="bottom">靠下</option>
+                <option value="left">靠左</option>
+                <option value="right">靠右</option>
+                <option value="topRight">右上</option>
               </select>
             </label>
             <label class="inline-check">
@@ -392,14 +561,74 @@ onMounted(loadDashboards);
                 <input v-model="showLabel" type="checkbox" /> 显示
               </span>
             </label>
-            <button
-              class="btn btn-primary"
-              data-testid="dashboard-widget-add"
-              @click="addWidget"
-            >
-              添加图表
-            </button>
+            <label class="inline-check">
+              <span>横坐标轴</span>
+              <span>
+                <input v-model="showXAxis" type="checkbox" /> 显示
+              </span>
+            </label>
+            <label>
+              横轴标题
+              <input v-model="xAxisTitle" data-testid="dashboard-xaxis-title" />
+            </label>
+            <label class="inline-check">
+              <span>纵坐标轴</span>
+              <span>
+                <input v-model="showYAxis" type="checkbox" /> 显示
+              </span>
+            </label>
+            <label>
+              纵轴标题
+              <input v-model="yAxisTitle" data-testid="dashboard-yaxis-title" />
+            </label>
+            <label>
+              纵轴最小
+              <input v-model.number="yMin" type="number" data-testid="dashboard-ymin" />
+            </label>
+            <label>
+              纵轴最大
+              <input v-model.number="yMax" type="number" data-testid="dashboard-ymax" />
+            </label>
+            <label class="inline-check">
+              <span>对数刻度</span>
+              <span>
+                <input v-model="logScale" type="checkbox" data-testid="dashboard-log-scale" /> 开启
+              </span>
+            </label>
+            <label class="inline-check">
+              <span>网格线</span>
+              <span>
+                <input v-model="showGrid" type="checkbox" data-testid="dashboard-grid" /> 显示
+              </span>
+            </label>
           </div>
+          </div>
+
+          <aside class="chart-preview" data-testid="dashboard-chart-preview">
+            <header class="preview-head">
+              <strong>图表</strong>
+            </header>
+            <DashboardChart
+              :type="widgetType"
+              :title="widgetTitle || '预览'"
+              :labels="previewLabels"
+              :values="previewValues"
+              :theme-color="themeColor"
+              :show-legend="showLegend"
+              :show-label="showLabel"
+              :legend-position="legendPosition"
+              :stack-mode="stackMode"
+              :show-x-axis="showXAxis"
+              :show-y-axis="showYAxis"
+              :show-grid="showGrid"
+              :x-axis-title="xAxisTitle"
+              :y-axis-title="yAxisTitle"
+              :y-min="yMin"
+              :y-max="yMax"
+              :log-scale="logScale"
+              :text-content="widgetText || '文本预览'"
+            />
+          </aside>
         </section>
 
         <section class="chart-grid" data-testid="dashboard-canvas">
@@ -466,6 +695,16 @@ onMounted(loadDashboards);
               :show-legend="widget.config?.showLegend"
               :show-label="widget.config?.showLabel"
               :legend-position="widget.config?.legendPosition"
+              :stack-mode="widget.config?.stackMode"
+              :show-x-axis="widget.config?.showXAxis"
+              :show-y-axis="widget.config?.showYAxis"
+              :show-grid="widget.config?.showGrid"
+              :x-axis-title="widget.config?.xAxisTitle"
+              :y-axis-title="widget.config?.yAxisTitle"
+              :y-min="widget.config?.yMin"
+              :y-max="widget.config?.yMax"
+              :log-scale="widget.config?.logScale"
+              :text-content="widget.config?.textContent"
             />
           </article>
           <p v-if="!data?.widgets?.length" class="empty-hint">
@@ -588,15 +827,137 @@ onMounted(loadDashboards);
   border: 1px solid #e5e6eb;
   border-radius: 10px;
 }
+.chart-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+.chart-config-main {
+  min-width: 0;
+}
+.chart-preview {
+  min-height: 280px;
+  border: 1px solid #eef0f3;
+  border-radius: 10px;
+  background: #fafbfc;
+  padding: 10px;
+  position: sticky;
+  top: 0;
+}
+.preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
 .widget-builder h4,
 .schedule-block h4 {
   margin: 0 0 10px;
+}
+.config-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.config-tabs .tab {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dee0e3;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.config-tabs .tab.active {
+  border-color: #2d8cf0;
+  background: #e8f3ff;
+  color: #1d6fdc;
+}
+.type-block {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.field-label {
+  font-size: 12px;
+  color: #646a73;
+}
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 8px 4px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+  color: #4e5969;
+  cursor: pointer;
+}
+.type-card.active {
+  border-color: #2d8cf0;
+  background: #e8f3ff;
+  color: #1d6fdc;
+}
+.type-icon {
+  font-size: 16px;
+  line-height: 1.2;
+}
+.swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch.active {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2d8cf0;
+}
+.swatch-custom {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.sr-only-select {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 .builder-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
+  position: relative;
+}
+@media (max-width: 1100px) {
+  .chart-config {
+    grid-template-columns: 1fr;
+  }
+  .type-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 .inline-check > span:last-child {
   display: flex;

@@ -335,7 +335,22 @@ export interface DashboardWidgetData {
     themeColor?: string;
     showLegend?: boolean;
     showLabel?: boolean;
-    legendPosition?: 'top' | 'bottom';
+    legendPosition?: 'top' | 'bottom' | 'left' | 'right' | 'topRight';
+    stackMode?: 'none' | 'stack' | 'percent';
+    showXAxis?: boolean;
+    showYAxis?: boolean;
+    showGrid?: boolean;
+    xAxisTitle?: string;
+    yAxisTitle?: string;
+    yMin?: number | null;
+    yMax?: number | null;
+    logScale?: boolean;
+    textContent?: string;
+    dimensionFieldId?: string;
+    metricFieldId?: string;
+    aggregation?: string;
+    sortBy?: 'value' | 'label';
+    sortOrder?: 'asc' | 'desc';
   };
   driver: string;
 }

@@ -37,6 +37,21 @@ const successPreviewHtml = ref('');
 const previewValues = ref<Record<string, unknown>>({});
 const coverInput = ref<HTMLInputElement | null>(null);
 const showConditionsFor = ref<Record<string, boolean>>({});
+const description = ref('');
+const shareDialogOpen = ref(false);
+const shareDialogOpen = ref(false);
+const description = ref('');
+const conditionDialogOpen = ref(false);
+
+function openConditionDialog(fieldId: string): void {
+  selectedFieldId.value = fieldId;
+  conditionDialogOpen.value = true;
+}
+
+function removeAllFields(): void {
+  items.value = [];
+  selectedFieldId.value = '';
+}
 
 const sheetFields = computed(() => props.sheet?.fields ?? []);
 const fieldById = computed(
@@ -114,7 +129,7 @@ async function load(): Promise<void> {
     coverUrl.value = form.value?.coverUrl ?? '';
     template.value =
       form.value?.successPage.templateHtml ??
-      '<h2>提交成功！</h2><p>你的序列号是 <strong>{{序列号}}</strong></p>';
+      '<div class="success-shell"><div class="success-check">✓</div><h2>已提交</h2><p>你的序列号是 <strong>{{序列号}}</strong></p></div>';
     rejectDuplicatePhone.value = form.value?.rejectDuplicatePhone ?? true;
     shareEnabled.value = form.value?.share.enabled ?? true;
     audience.value = form.value?.share.audience ?? 'anyone';
@@ -195,6 +210,21 @@ function removeItem(index: number): void {
   if (removed?.fieldId === selectedFieldId.value) {
     selectedFieldId.value = items.value[0]?.fieldId ?? '';
   }
+}
+
+function removeAllFields(): void {
+  items.value = [];
+  selectedFieldId.value = '';
+}
+
+function addAvailableField(fieldId: string): void {
+  addFieldId.value = fieldId;
+  addField();
+}
+
+async function openShareDialog(): Promise<void> {
+  if (!form.value) await save(false);
+  shareDialogOpen.value = true;
 }
 
 function addField(): void {
@@ -318,19 +348,33 @@ onMounted(load);
     <header class="panel-header">
       <div>
         <h3>收集表单</h3>
-        <p class="muted">
-          字段来自「{{ sheet?.name }}」，提交后自动触发该表的自动化并展示成功页。
-        </p>
+        <p class="muted">字段来自「{{ sheet?.name }}」</p>
       </div>
       <div class="header-actions">
         <div class="tabs">
-          <button :class="{ active: previewTab === 'design' }" @click="previewTab = 'design'">
-            设计
+          <button
+            :class="{ active: previewTab === 'design' }"
+            data-testid="form-tab-edit"
+            @click="previewTab = 'design'"
+          >
+            编辑表单
           </button>
-          <button :class="{ active: previewTab === 'preview' }" @click="previewTab = 'preview'">
-            预览
+          <button
+            :class="{ active: previewTab === 'preview' }"
+            data-testid="form-tab-fill"
+            @click="previewTab = 'preview'"
+          >
+            填写表单
           </button>
         </div>
+        <button
+          class="btn btn-primary small"
+          type="button"
+          data-testid="form-share-open"
+          @click="openShareDialog"
+        >
+          分享表单
+        </button>
         <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
       </div>
     </header>
@@ -340,87 +384,85 @@ onMounted(load);
       <p v-if="error" class="form-error" data-testid="form-builder-error">{{ error }}</p>
 
       <div v-if="previewTab === 'design'" class="builder-layout">
-        <div class="builder-settings">
-          <label class="builder-field">
-            <span>表单名称</span>
-            <input v-model="name" data-testid="form-name-input" maxlength="100" />
-          </label>
-
-          <div class="builder-field">
-            <span>封面图</span>
-            <div class="cover-editor">
-              <img v-if="coverUrl" :src="coverUrl" alt="表单封面" class="cover-preview" />
-              <div v-else class="cover-empty">未设置封面</div>
-              <div class="cover-actions">
-                <button class="btn small" :disabled="uploadingCover" @click="coverInput?.click()">
-                  {{ uploadingCover ? '上传中…' : coverUrl ? '更换封面' : '上传封面' }}
-                </button>
-                <button v-if="coverUrl" class="btn small" @click="coverUrl = ''">移除</button>
-              </div>
-            </div>
+        <aside class="available-pane">
+          <div class="field-heading">
+            <span>可添加字段</span>
+            <button
+              v-if="items.length"
+              class="nl-link"
+              type="button"
+              @click="removeAllFields"
+            >
+              全部移出
+            </button>
+          </div>
+          <div v-if="availableFields.length === 0" class="available-empty">
+            所有字段都已添加至表单
+          </div>
+          <button
+            v-for="field in availableFields"
+            :key="field.id"
+            type="button"
+            class="available-row"
+            @click="addAvailableField(field.id)"
+          >
+            <span class="field-icon">{{ fieldTypeIcon(field.type) }}</span>
+            {{ field.name }}
+          </button>
+          <div class="add-field-row">
+            <select v-model="addFieldId" data-testid="form-add-field-select">
+              <option value="">选择要添加的字段</option>
+              <option v-for="field in availableFields" :key="field.id" :value="field.id">
+                {{ field.name }}
+              </option>
+            </select>
+            <button class="btn" data-testid="form-add-field" @click="addField">
+              + 添加新字段到表单
+            </button>
           </div>
 
-          <div class="builder-field">
-            <div class="field-heading">
-              <span>表单字段</span>
-              <small>拖动排序用箭头按钮，隐藏字段不会出现在填写页</small>
-            </div>
-            <div class="builder-fields" data-testid="form-fields">
-              <div
-                v-for="(item, index) in items"
-                :key="item.fieldId"
-                class="field-row"
-                :class="{ selected: selectedFieldId === item.fieldId }"
-                :data-testid="`form-field-${item.fieldId}`"
-                @click="selectedFieldId = item.fieldId"
+          <div class="builder-fields" data-testid="form-fields">
+            <div
+              v-for="(item, index) in items"
+              :key="item.fieldId"
+              class="field-row"
+              :class="{ selected: selectedFieldId === item.fieldId }"
+              :data-testid="`form-field-${item.fieldId}`"
+              @click="selectedFieldId = item.fieldId"
+            >
+              <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
+              <span class="field-name">{{ fieldName(item.fieldId) }}</span>
+              <label class="inline-check" @click.stop>
+                <input
+                  v-model="item.required"
+                  type="checkbox"
+                  :data-testid="`form-required-${item.fieldId}`"
+                />
+                必填
+              </label>
+              <button class="icon-btn" title="上移" :disabled="index === 0" @click.stop="move(index, -1)">↑</button>
+              <button
+                class="icon-btn"
+                title="下移"
+                :disabled="index === items.length - 1"
+                @click.stop="move(index, 1)"
               >
-                <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
-                <span class="field-name">{{ fieldName(item.fieldId) }}</span>
-                <label class="inline-check" @click.stop>
-                  <input
-                    v-model="item.required"
-                    type="checkbox"
-                    :data-testid="`form-required-${item.fieldId}`"
-                  />
-                  必填
-                </label>
-                <span v-if="item.displayConditions?.length" class="condition-count">
-                  {{ item.displayConditions.length }} 条件
-                </span>
-                <button class="icon-btn" title="上移" :disabled="index === 0" @click.stop="move(index, -1)">↑</button>
-                <button
-                  class="icon-btn"
-                  title="下移"
-                  :disabled="index === items.length - 1"
-                  @click.stop="move(index, 1)"
-                >
-                  ↓
-                </button>
-                <button
-                  class="icon-btn danger"
-                  title="从表单移除"
-                  :data-testid="`form-remove-${item.fieldId}`"
-                  @click.stop="removeItem(index)"
-                >
-                  ×
-                </button>
-              </div>
-              <p v-if="items.length === 0" class="muted empty-tip">尚未添加字段。</p>
-            </div>
-            <div v-if="availableFields.length" class="add-field-row">
-              <select v-model="addFieldId" data-testid="form-add-field-select">
-                <option value="">选择要添加的字段</option>
-                <option v-for="field in availableFields" :key="field.id" :value="field.id">
-                  {{ field.name }}
-                </option>
-              </select>
-              <button class="btn" data-testid="form-add-field" @click="addField">+ 添加字段</button>
+                ↓
+              </button>
+              <button
+                class="icon-btn danger"
+                title="从表单移除"
+                :data-testid="`form-remove-${item.fieldId}`"
+                @click.stop="removeItem(index)"
+              >
+                ×
+              </button>
             </div>
           </div>
 
           <section v-if="selectedConfig" class="field-settings" data-testid="form-field-settings">
             <header>
-              <strong>{{ selectedSheetField?.name }} · 显示条件</strong>
+              <strong>显示条件</strong>
               <button
                 class="btn small"
                 data-testid="form-add-condition"
@@ -429,9 +471,6 @@ onMounted(load);
                 + 添加条件
               </button>
             </header>
-            <p class="muted tiny">
-              全部条件满足时才显示该字段（例如：仅当「是否到访」等于「是」时显示「到访时间」）。
-            </p>
             <div
               v-for="(condition, index) in selectedConfig.displayConditions ?? []"
               :key="index"
@@ -461,32 +500,16 @@ onMounted(load);
               />
               <button class="icon-btn danger" @click="removeCondition(selectedConfig, index)">×</button>
             </div>
-            <p v-if="!(selectedConfig.displayConditions ?? []).length" class="muted tiny">
-              无条件，始终显示。
-            </p>
           </section>
 
           <label class="builder-field">
-            <span>成功页模板（支持 <code v-pre>{{序列号}}</code> 等变量和 HTML）</span>
-            <textarea v-model="template" data-testid="form-template-input" rows="5"></textarea>
-            <div class="variable-actions">
-              <span class="muted tiny">插入变量：</span>
-              <button
-                v-for="candidate in items.slice(0, 5)"
-                :key="candidate.fieldId"
-                class="var-chip"
-                @click="insertVariable(fieldName(candidate.fieldId))"
-              >
-                {{ fieldName(candidate.fieldId) }}
-              </button>
-              <button class="var-chip" @click="insertVariable('序列号')">序列号（自动化）</button>
-            </div>
+            <span>成功页模板</span>
+            <textarea v-model="template" data-testid="form-template-input" rows="4"></textarea>
           </label>
-
           <div class="share-settings">
             <label class="inline-check">
               <input v-model="shareEnabled" type="checkbox" data-testid="form-share-enabled" />
-              开启公开分享
+              启用表单链接
             </label>
             <label class="inline-check">
               <input
@@ -497,9 +520,9 @@ onMounted(load);
               同手机号不可重复提交
             </label>
             <label class="builder-inline">
-              可见范围
+              谁可以填写
               <select v-model="audience" data-testid="form-audience">
-                <option value="anyone">任何人（持有链接）</option>
+                <option value="anyone">企业内、外所有成员</option>
                 <option value="workspace">仅工作区成员</option>
               </select>
             </label>
@@ -508,7 +531,6 @@ onMounted(load);
               <input v-model="expiresAtInput" type="date" data-testid="form-expires-at" />
             </label>
           </div>
-
           <div class="builder-actions">
             <button class="btn" @click="previewSuccess" :disabled="saving">预览成功页</button>
             <button
@@ -520,59 +542,120 @@ onMounted(load);
               {{ saving ? '保存中…' : '保存表单' }}
             </button>
           </div>
-        </div>
-
-        <aside class="phone-frame">
-          <div class="phone-top"></div>
-          <div class="phone-body">
-            <img v-if="coverUrl" :src="coverUrl" class="phone-cover" alt="封面" />
-            <h2>{{ name || '未命名表单' }}</h2>
-            <p class="muted tiny">共 {{ items.length }} 个字段 · {{ activeConditionCount }} 条显示条件</p>
-            <label
-              v-for="item in previewFields"
-              :key="item.config.fieldId"
-              class="preview-field"
-            >
-              <span>
-                {{ item.field.name }}
-                <em v-if="item.config.required" class="required-star">*</em>
-              </span>
-              <textarea
-                v-if="item.field.type === 'text' || item.field.type === 'longText'"
-                :rows="item.field.type === 'longText' ? 3 : 1"
-                disabled
-                placeholder="填写内容"
-              ></textarea>
-              <select v-else disabled>
-                <option>请选择</option>
-              </select>
-            </label>
-            <button class="preview-submit" disabled>提交</button>
-          </div>
-          <div class="phone-tip">
-            <span v-if="qrDataUrl"><img :src="qrDataUrl" alt="二维码" /></span>
-            <span>移动端填写预览</span>
-          </div>
         </aside>
+
+        <div class="canvas-pane">
+          <div class="form-canvas">
+            <button
+              class="cover-btn"
+              type="button"
+              :disabled="uploadingCover"
+              @click="coverInput?.click()"
+            >
+              <img v-if="coverUrl" :src="coverUrl" alt="封面" class="cover-preview" />
+              <span v-else>{{ uploadingCover ? '上传中…' : '添加封面' }}</span>
+            </button>
+            <input
+              v-model="name"
+              class="canvas-title"
+              data-testid="form-name-input"
+              maxlength="100"
+              placeholder="表单"
+            />
+            <input
+              v-model="description"
+              class="canvas-desc"
+              placeholder="添加描述"
+            />
+            <div
+              v-for="(item, index) in previewFields"
+              :key="item.config.fieldId"
+              class="canvas-field"
+              :class="{ selected: selectedFieldId === item.config.fieldId }"
+              @click="selectedFieldId = item.config.fieldId"
+            >
+              <div class="canvas-field-label">
+                <em v-if="item.config.required" class="required-star">*</em>
+                {{ item.field.name }}
+              </div>
+              <div class="canvas-field-input">待填写人完成</div>
+              <div
+                v-if="selectedFieldId === item.config.fieldId"
+                class="canvas-toolbar"
+              >
+                <span class="toolbar-type">
+                  字段
+                  <span class="type-pill">
+                    {{ fieldTypeIcon(item.field.type) }} {{ item.field.name }}
+                  </span>
+                </span>
+                <label class="inline-check">
+                  <input v-model="item.config.required" type="checkbox" />
+                  必填
+                </label>
+                <button
+                  class="toolbar-link"
+                  type="button"
+                  @click.stop="
+                    selectedFieldId = item.config.fieldId;
+                    if (selectedConfig) addCondition(selectedConfig);
+                  "
+                >
+                  显示条件
+                </button>
+                <button
+                  class="icon-btn danger"
+                  type="button"
+                  title="从表单移除"
+                  @click.stop="removeItem(index)"
+                >
+                  －
+                </button>
+              </div>
+            </div>
+            <button
+              class="canvas-add"
+              type="button"
+              :disabled="!availableFields.length"
+              @click="addFieldId = availableFields[0]?.id ?? ''; addField()"
+            >
+              + 添加新字段
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div v-else class="preview-pane">
-        <section class="live-preview">
-          <h4>表单预览</h4>
+      <div v-else class="fill-preview-pane">
+        <div class="form-canvas fill-mode">
+          <img v-if="coverUrl" :src="coverUrl" class="fill-cover" alt="封面" />
+          <h2>{{ name || '未命名表单' }}</h2>
+          <p v-if="description" class="canvas-desc-static">{{ description }}</p>
           <div v-for="item in previewFields" :key="item.config.fieldId" class="preview-field">
-            <span>{{ item.field.name }}<em v-if="item.config.required" class="required-star">*</em></span>
-            <input v-if="item.field.type === 'phone'" v-model="previewValues[item.config.fieldId]" placeholder="手机号" />
-            <input v-else v-model="previewValues[item.config.fieldId]" placeholder="填写内容" />
+            <span>
+              <em v-if="item.config.required" class="required-star">*</em>
+              {{ item.field.name }}
+            </span>
+            <input
+              v-if="item.field.type === 'phone'"
+              v-model="previewValues[item.config.fieldId]"
+              placeholder="请输入电话号码"
+            />
+            <input
+              v-else
+              v-model="previewValues[item.config.fieldId]"
+              placeholder="请输入"
+            />
           </div>
-        </section>
+          <button class="preview-submit" type="button" disabled>提交</button>
+        </div>
         <section class="success-preview">
           <h4>成功页预览</h4>
           <div
             class="success-html"
             data-testid="form-success-preview"
-            v-html="successPreviewHtml || '<p class=muted>点击「刷新预览」查看插值结果。</p>'"
+            v-html="successPreviewHtml || '<p class=muted>点击「预览成功页」查看插值结果。</p>'"
           ></div>
-          <button class="btn" @click="previewSuccess">刷新预览</button>
+          <button class="btn" @click="previewSuccess">预览成功页</button>
         </section>
       </div>
 
@@ -585,8 +668,8 @@ onMounted(load);
             <a class="btn small" :href="shareUrl" target="_blank" rel="noreferrer">打开填写页</a>
           </div>
           <p class="muted tiny" data-testid="form-share-status">
-            {{ form.share.enabled ? '公开分享已开启' : '公开分享已关闭' }} ·
-            {{ form.share.audience === 'workspace' ? '仅工作区成员' : '任何人可填写' }}
+            {{ form.share.enabled ? '表单链接已启用' : '表单链接已关闭' }} ·
+            {{ form.share.audience === 'workspace' ? '仅工作区成员' : '企业内、外所有成员' }}
             <template v-if="form.share.expiresAt">
               · 截止 {{ new Date(form.share.expiresAt).toLocaleDateString('zh-CN') }}
             </template>
@@ -600,6 +683,51 @@ onMounted(load);
           alt="表单二维码"
         />
       </section>
+
+      <div
+        v-if="shareDialogOpen"
+        class="share-mask"
+        data-testid="form-share-dialog"
+        @click.self="shareDialogOpen = false"
+      >
+        <div class="share-dialog">
+          <header>
+            <h4>分享表单</h4>
+            <button class="icon-btn" type="button" @click="shareDialogOpen = false">×</button>
+          </header>
+          <label class="inline-check">
+            <input v-model="shareEnabled" type="checkbox" />
+            启用表单链接
+          </label>
+          <p class="muted tiny">
+            成员可通过链接直接添加记录，无需加入文档。
+          </p>
+          <label class="builder-inline">
+            谁可以填写
+            <select v-model="audience">
+              <option value="anyone">企业内、外所有成员</option>
+              <option value="workspace">仅工作区成员</option>
+            </select>
+          </label>
+          <div class="share-invite">
+            <button class="btn" type="button" @click="copyShareUrl">复制链接</button>
+            <button
+              class="btn"
+              type="button"
+              :disabled="!qrDataUrl"
+              @click="toast(qrDataUrl ? '请使用右侧二维码' : '请先保存表单')"
+            >
+              二维码
+            </button>
+            <img v-if="qrDataUrl" :src="qrDataUrl" class="share-qr" alt="二维码" />
+          </div>
+          <footer>
+            <button class="btn btn-primary" type="button" @click="save().then(() => (shareDialogOpen = false))">
+              完成
+            </button>
+          </footer>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -651,15 +779,216 @@ onMounted(load);
 }
 .builder-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 20px;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
   min-height: 0;
 }
-.builder-settings {
+.available-pane {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
+  max-height: 70vh;
+  overflow: auto;
+}
+.available-empty {
+  padding: 16px 12px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 8px;
+  color: #8f959e;
+  font-size: 12px;
+  text-align: center;
+}
+.available-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.available-row:hover {
+  border-color: #c7d7f5;
+  background: #f5f8ff;
+}
+.nl-link {
+  border: none;
+  background: transparent;
+  color: #1d6fdc;
+  font-size: 12px;
+  cursor: pointer;
+}
+.canvas-pane {
+  min-width: 0;
+  background: #f2f4f7;
+  border-radius: 12px;
+  padding: 20px;
+  overflow: auto;
+}
+.form-canvas {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 24px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+.cover-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 72px;
+  margin-bottom: 12px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 10px;
+  background: #fafbfc;
+  color: #667085;
+  cursor: pointer;
+  overflow: hidden;
+}
+.canvas-title {
+  width: 100%;
+  border: none;
+  font-size: 22px;
+  font-weight: 600;
+  outline: none;
+  margin-bottom: 4px;
+}
+.canvas-desc,
+.canvas-desc-static {
+  width: 100%;
+  border: none;
+  color: #98a2b3;
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 16px;
+}
+.canvas-field {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.canvas-field.selected {
+  border-color: #1d6fdc;
+  box-shadow: 0 0 0 1px #1d6fdc;
+}
+.canvas-field-label {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.canvas-field-input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f5f6f7;
+  color: #98a2b3;
+  font-size: 13px;
+}
+.canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f5f6f8;
+  font-size: 12px;
+}
+.toolbar-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+}
+.toolbar-link {
+  border: none;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+.canvas-add {
+  width: 100%;
+  height: 40px;
+  margin-top: 8px;
+  border: none;
+  border-radius: 8px;
+  background: #e8f3ff;
+  color: #1d6fdc;
+  cursor: pointer;
+}
+.fill-preview-pane {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.fill-mode {
+  background: #fff;
+}
+.fill-cover {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+.share-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.35);
+}
+.share-dialog {
+  width: min(420px, 92vw);
+  padding: 16px;
+  border-radius: 12px;
+  background: #fff;
+}
+.share-dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.share-dialog h4 {
+  margin: 0;
+}
+.share-invite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+}
+.share-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+}
+.btn.small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .builder-field {
   display: flex;

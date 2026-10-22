@@ -21,6 +21,16 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
     const dimension = request.dimensionFieldId;
     const metric = request.metricFieldId ?? request.dimensionFieldId;
     const limit = Math.min(Math.max(request.limit ?? 20, 1), 100);
+    const sortBy = request.sortBy === 'label' ? 'label' : 'value';
+    const sortAsc = request.sortOrder === 'asc';
+    const orderClause =
+      sortBy === 'label'
+        ? sortAsc
+          ? Prisma.sql`ORDER BY label ASC`
+          : Prisma.sql`ORDER BY label DESC`
+        : sortAsc
+          ? Prisma.sql`ORDER BY value ASC`
+          : Prisma.sql`ORDER BY value DESC`;
 
     const aggregation =
       mode === 'count'
@@ -42,7 +52,7 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
         FROM "records"
         WHERE "sheet_id" = ${request.sheetId}::uuid
         GROUP BY 1
-        ORDER BY value DESC
+        ${orderClause}
         LIMIT ${limit}
       `,
     );

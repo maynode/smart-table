@@ -35,9 +35,9 @@ test('share link claims a serial and the admin sees the automation run', async (
   share.host = '127.0.0.1:5173';
 
   await page.goto(share.toString());
-  await expect(
-    page.getByRole('heading', { name: '序列号领取' }),
-  ).toBeVisible();
+  await expect(page.locator('.fill-title')).toHaveText('序列号领取', {
+    timeout: 20_000,
+  });
 
   // Unique phone per run so the duplicate guard does not reject reruns.
   const phone = `137${String(Date.now()).slice(-8)}`;
@@ -60,11 +60,15 @@ test('share link claims a serial and the admin sees the automation run', async (
     `/workspaces/${seed.workspaceId}/bases/${seed.baseId}`,
   );
   await admin.getByTestId('automation-open').click();
+  await expect(admin.getByTestId('automation-panel')).toBeVisible();
+  await admin.getByTestId('automation-more').first().click();
+  await admin.getByTestId('automation-runs-open').click();
+  await expect(admin.getByTestId('automation-runs-panel')).toBeVisible();
 
   const successRun = admin.locator(
     '[data-testid="automation-run-row"][data-status="success"]',
   );
-  await expect(successRun.first()).toBeVisible({ timeout: 20_000 });
+  await expect(successRun.first()).toBeVisible({ timeout: 30_000 });
 
   await adminContext.close();
 });

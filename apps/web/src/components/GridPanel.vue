@@ -889,11 +889,13 @@ defineExpose({
             {{ field.name }}
           </button>
           <button
-            class="icon-btn"
+            class="icon-btn eye-btn"
+            :class="{ off: field.hidden }"
             :title="field.hidden ? '显示字段' : '隐藏字段'"
+            :data-testid="`toggle-field-visibility-${field.name}`"
             @click="toggleField(field)"
           >
-            {{ field.hidden ? '隐藏' : '显' }}
+            {{ field.hidden ? '👁‍🗨' : '👁' }}
           </button>
           <div class="field-more-wrap">
             <button
@@ -1505,6 +1507,13 @@ defineExpose({
 }
 .icon-btn.danger {
   color: #d4380d;
+}
+.eye-btn {
+  font-size: 14px;
+  opacity: 1;
+}
+.eye-btn.off {
+  opacity: 0.35;
 }
 .settings-add-field {
   width: 100%;

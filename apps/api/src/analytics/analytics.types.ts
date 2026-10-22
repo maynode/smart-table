@@ -6,6 +6,10 @@ export interface AnalyticsQuery {
   metricFieldId?: string;
   aggregation: AggregateMode;
   limit?: number;
+  /** 默认按聚合值 */
+  sortBy?: 'value' | 'label';
+  /** 默认 desc（值大在前） */
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface AnalyticsRow {
