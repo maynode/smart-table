@@ -6,13 +6,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
-import { resolveRecordPageLimit } from 'shared';
+import {
+  isSystemFieldType,
+  resolveRecordPageLimit,
+  type FieldType,
+} from 'shared';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { AuditService } from '../audit/audit.service';
+import { QuotasService } from '../quotas/quotas.service';
+import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
@@ -30,6 +36,8 @@ export class SheetsService {
     private readonly sharing: SharingService,
     private readonly webhooks: WebhooksService,
     private readonly audit: AuditService,
+    private readonly storage: StorageService,
+    private readonly quotas: QuotasService,
   ) {}
 
   private async requireBase(
@@ -124,6 +132,74 @@ export class SheetsService {
       createdAt: sheet.createdAt,
       updatedAt: sheet.updatedAt,
       fields: this.permissions.filterVisibleFields(decision, fields),
+    };
+  }
+
+  async renameSheet(sheetId: string, userId: string, name: string) {
+    await this.requireSheet(sheetId, userId, 'editor');
+    return this.prisma.sheet.update({
+      where: { id: sheetId },
+      data: { name: name.trim() },
+    });
+  }
+
+  async deleteSheet(sheetId: string, userId: string) {
+    await this.requireSheet(sheetId, userId, 'editor');
+    await this.prisma.sheet.delete({ where: { id: sheetId } });
+    void this.audit.recordSheet(sheetId, userId, 'sheet.deleted', sheetId, {});
+    return { id: sheetId, deleted: true };
+  }
+
+  async deleteField(fieldId: string, userId: string) {
+    const field = await this.prisma.field.findUnique({
+      where: { id: fieldId },
+      include: { sheet: { include: { base: true } } },
+    });
+    if (!field) {
+      throw new NotFoundException('字段不存在');
+    }
+    await this.requireSheet(field.sheetId, userId, 'editor');
+    if (isSystemFieldType(field.type as FieldType)) {
+      throw new BadRequestException('系统字段不能删除');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.field.delete({ where: { id: fieldId } });
+      // Remove the deleted field from every record so exports stay clean.
+      await tx.$executeRaw`
+        UPDATE "records"
+        SET "cells" = "cells" - ${fieldId}::text,
+            "version" = "version" + 1
+        WHERE "sheet_id" = ${field.sheetId}::uuid
+          AND "cells" ? ${fieldId}::text
+      `;
+    });
+    return { id: fieldId, deleted: true };
+  }
+
+  async uploadAttachment(
+    sheetId: string,
+    userId: string,
+    buffer: Buffer,
+    mimetype: string,
+    originalName: string,
+  ) {
+    const sheet = await this.requireSheet(sheetId, userId, 'editor');
+    await this.quotas.assertStorage(sheet.base.workspaceId, buffer.byteLength);
+    const saved = await this.storage.saveUpload(
+      buffer,
+      mimetype,
+      originalName,
+    );
+    await this.quotas.recordStorage(
+      sheet.base.workspaceId,
+      saved.key,
+      saved.size,
+    );
+    return {
+      url: saved.url,
+      name: saved.name,
+      mimetype: saved.mimetype,
+      size: saved.size,
     };
   }
 
@@ -343,6 +419,16 @@ export class SheetsService {
       recordId,
       { changes: cells, version: updatedRecord.version },
     );
+
+    try {
+      await this.automationRunner.triggerRecordUpdated(recordId);
+    } catch (error) {
+      this.logger.error(
+        `automation update trigger failed for record ${recordId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     return updatedRecord;
   }

@@ -4,7 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
-import type { AutomationStep } from 'shared';
+import {
+  InvalidCronError,
+  nextCronDate,
+  type AutomationStep,
+} from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -51,6 +55,7 @@ export class AutomationsService {
         steps: dto.steps as unknown as Prisma.InputJsonValue,
         onFindEmpty: dto.onFindEmpty ?? 'continue',
         monthlyQuota: dto.monthlyQuota ?? null,
+        nextRunAt: this.nextRunFor(dto.trigger),
       },
     });
 
@@ -105,15 +110,28 @@ export class AutomationsService {
       'editor',
     );
 
-    const trigger = dto.trigger ?? (automation.trigger as unknown as object);
+    const trigger =
+      dto.trigger ??
+      (automation.trigger as unknown as Record<string, unknown>);
     const steps =
       dto.steps ??
       (automation.steps as unknown as Array<Record<string, unknown>>);
-    await this.validateDefinition(
-      automation.baseId,
-      trigger as Record<string, unknown>,
-      steps,
-    );
+    await this.validateDefinition(automation.baseId, trigger, steps);
+
+    const nextEnabled = dto.enabled ?? automation.enabled;
+    let nextRunAt: Date | null | undefined;
+    if (dto.trigger !== undefined) {
+      nextRunAt = this.nextRunFor(dto.trigger);
+    } else if (dto.enabled === false) {
+      nextRunAt = null;
+    } else if (
+      dto.enabled === true &&
+      !automation.nextRunAt &&
+      String(trigger?.type) === 'schedule'
+    ) {
+      nextRunAt = this.nextRunFor(trigger);
+    }
+    if (!nextEnabled) nextRunAt = null;
 
     return this.prisma.automation.update({
       where: { id: automationId },
@@ -134,6 +152,7 @@ export class AutomationsService {
         ...(dto.monthlyQuota === undefined
           ? {}
           : { monthlyQuota: dto.monthlyQuota }),
+        ...(nextRunAt === undefined ? {} : { nextRunAt }),
       },
     });
   }
@@ -244,6 +263,19 @@ export class AutomationsService {
     if (triggerType === 'schedule') {
       if (typeof trigger.cron !== 'string' || !trigger.cron.trim()) {
         throw new BadRequestException('定时触发器缺少 cron 表达式');
+      }
+      try {
+        nextCronDate(trigger.cron, {
+          timezone:
+            typeof trigger.timezone === 'string'
+              ? trigger.timezone
+              : undefined,
+        });
+      } catch (error) {
+        if (error instanceof InvalidCronError) {
+          throw new BadRequestException(error.message);
+        }
+        throw new BadRequestException('cron 表达式或时区不合法');
       }
     } else {
       await this.assertSheetInBase(baseId, String(trigger.sheetId ?? ''));
@@ -359,6 +391,20 @@ export class AutomationsService {
       if (!condition.fieldId || !condition.operator) {
         throw new BadRequestException('筛选条件缺少字段或运算符');
       }
+    }
+  }
+
+  private nextRunFor(trigger: Record<string, unknown>): Date | null {
+    if (String(trigger?.type) !== 'schedule') return null;
+    const cron = typeof trigger.cron === 'string' ? trigger.cron : '';
+    if (!cron) return null;
+    try {
+      return nextCronDate(cron, {
+        timezone:
+          typeof trigger.timezone === 'string' ? trigger.timezone : undefined,
+      });
+    } catch {
+      return null;
     }
   }
 

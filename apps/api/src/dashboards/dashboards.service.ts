@@ -296,6 +296,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       title: string;
       sheetId: string | null;
       config: unknown;
+      layout: unknown;
     },
     userId: string,
   ) {
@@ -308,6 +309,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         labels: [],
         values: [],
         config,
+        layout: widget.layout ?? {},
         driver: this.analytics.driver,
       };
     }
@@ -332,6 +334,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       values: rows.map((row) => row.value),
       rows,
       config,
+      layout: widget.layout ?? {},
       driver: this.analytics.driver,
     };
   }

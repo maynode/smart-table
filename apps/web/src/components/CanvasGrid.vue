@@ -27,6 +27,13 @@ const props = withDefaults(
     showAddColumn?: boolean;
     rowHeight?: number;
     rowColors?: Record<string, string>;
+    personNames?: Record<string, string>;
+    uploadAttachment?: (file: File) => Promise<{
+      url: string;
+      name: string;
+      mimetype?: string;
+      size?: number;
+    }>;
   }>(),
   {
     records: () => [],
@@ -36,20 +43,29 @@ const props = withDefaults(
     showAddColumn: true,
     rowHeight: 36,
     rowColors: () => ({}),
+    personNames: () => ({}),
+    uploadAttachment: undefined,
   },
 );
 
 const emit = defineEmits<{
-  commit: [payload: { record: RecordDto; field: FieldDto; value: string }];
+  commit: [payload: { record: RecordDto; field: FieldDto; value: unknown }];
   viewport: [stats: GridStats];
   addColumn: [anchor: { top: number; left: number }];
   headerClick: [
     payload: { field: FieldDto; anchor: { top: number; left: number } },
   ];
+  resizeField: [payload: { field: FieldDto; width: number }];
+  rowsSelected: [recordIds: string[]];
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
 const editorInput = ref<HTMLInputElement | HTMLSelectElement | null>(null);
+const uploadInput = ref<HTMLInputElement | null>(null);
+const pendingUpload = ref<{ record: RecordDto; field: FieldDto } | null>(null);
+const uploading = ref(false);
+const selectedRows = ref<number[]>([]);
+let rowAnchor: number | null = null;
 const editing = ref<{
   recordId: string;
   row: number;
@@ -75,7 +91,7 @@ const columns = computed<GridColumn[]>(() => {
     icon: fieldTypeIcon(field.type),
   }));
   if (props.showAddColumn && props.editable) {
-    cols.push({ id: ADD_FIELD_COLUMN_ID, name: '+', width: 44 });
+    cols.push({ id: ADD_FIELD_COLUMN_ID, name: '+', width: 44, icon: '' });
   }
   return cols;
 });
@@ -85,6 +101,7 @@ const editorKind = computed(() => {
   if (!type) return 'text';
   if (type === 'select') return 'select';
   if (type === 'multiSelect') return 'multiSelect';
+  if (type === 'person') return 'person';
   if (type === 'checkbox') return 'checkbox';
   if (type === 'date') return 'date';
   if (
@@ -166,8 +183,56 @@ function textOf(value: unknown): string {
   return String(value);
 }
 
+function attachmentOf(value: unknown): {
+  url: string;
+  name?: string;
+} | null {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    if (value.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(value) as { url?: string; name?: string };
+        return parsed.url ? { url: parsed.url, name: parsed.name } : null;
+      } catch {
+        return null;
+      }
+    }
+    if (value.startsWith('/') || value.startsWith('http')) return { url: value };
+    return null;
+  }
+  if (typeof value === 'object') {
+    const parsed = value as { url?: unknown; name?: unknown };
+    if (typeof parsed.url === 'string') {
+      return {
+        url: parsed.url,
+        name: typeof parsed.name === 'string' ? parsed.name : undefined,
+      };
+    }
+  }
+  return null;
+}
+
 function formatCell(field: FieldDto, value: unknown): CellRender | null {
   if (value === null || value === undefined || value === '') return null;
+
+  if (field.type === 'person') {
+    const ids = Array.isArray(value) ? value.map(String) : [String(value)];
+    const names = ids.map((id) => props.personNames[id] ?? id).filter(Boolean);
+    if (names.length === 0) return null;
+    return { text: names.join('、'), pill: true, bg: '#eef4ff', color: '#1d6fdc' };
+  }
+
+  if (field.type === 'image') {
+    const attachment = attachmentOf(value);
+    if (!attachment) return null;
+    return { text: '', image: attachment.url };
+  }
+
+  if (field.type === 'file') {
+    const attachment = attachmentOf(value);
+    if (!attachment) return null;
+    return { text: `📎 ${attachment.name ?? '附件'}` };
+  }
 
   if (field.type === 'select') {
     const choice = field.options?.choices?.find(
@@ -236,6 +301,36 @@ function beginEdit(row: number, col: number): void {
     field.type === 'lastEditedAt' ||
     field.type === 'autoNumber'
   ) {
+    return;
+  }
+
+  if (field.type === 'image' || field.type === 'file') {
+    pendingUpload.value = { record, field };
+    uploadInput.value?.click();
+    return;
+  }
+
+  if (field.type === 'person') {
+    const current = record.cells[field.id];
+    const value = Array.isArray(current)
+      ? String(current[0] ?? '')
+      : String(current ?? '');
+    engine.ensureCellVisible(row, col);
+    const personRect = engine.cellRect(row, col);
+    editing.value = {
+      recordId: record.id,
+      row,
+      col,
+      field,
+      value,
+      style: {
+        left: `${personRect.x}px`,
+        top: `${personRect.y}px`,
+        width: `${Math.max(personRect.width, 140)}px`,
+        height: `${personRect.height}px`,
+      },
+    };
+    nextTick(() => editorInput.value?.focus());
     return;
   }
 
@@ -324,6 +419,55 @@ function commitEdit(save: boolean): void {
   emit('commit', { record, field: current.field, value: nextValue });
 }
 
+async function onUploadFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  const target = pendingUpload.value;
+  pendingUpload.value = null;
+  if (!file || !target || !props.uploadAttachment || uploading.value) return;
+  uploading.value = true;
+  try {
+    const uploaded = await props.uploadAttachment(file);
+    emit('commit', { record: target.record, field: target.field, value: uploaded });
+  } finally {
+    uploading.value = false;
+  }
+}
+
+function selectRow(row: number, modifiers: { shift: boolean; meta: boolean }): void {
+  if (modifiers.shift && rowAnchor !== null) {
+    const start = Math.min(rowAnchor, row);
+    const end = Math.max(rowAnchor, row);
+    selectedRows.value = Array.from(
+      { length: end - start + 1 },
+      (_, index) => start + index,
+    );
+  } else if (modifiers.meta) {
+    selectedRows.value = selectedRows.value.includes(row)
+      ? selectedRows.value.filter((item) => item !== row)
+      : [...selectedRows.value, row];
+    rowAnchor = row;
+  } else {
+    selectedRows.value = [row];
+    rowAnchor = row;
+  }
+  engine?.setSelectedRows(selectedRows.value);
+  emit(
+    'rowsSelected',
+    selectedRows.value
+      .map((index) => props.records[index]?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
+}
+
+function clearRowSelection(): void {
+  selectedRows.value = [];
+  rowAnchor = null;
+  engine?.setSelectedRows([]);
+  emit('rowsSelected', []);
+}
+
 function toggleMultiChoice(choiceId: string): void {
   if (!editing.value) return;
   const set = new Set(multiSelected.value);
@@ -356,8 +500,11 @@ function createEngine(): void {
     onCellDoubleClick: (selection) => beginEdit(selection.row, selection.col),
     onColumnResize: (columnIndex, width) => {
       const field = visibleFields.value[columnIndex];
-      if (field) resizedWidths.set(field.id, width);
+      if (!field) return;
+      resizedWidths.set(field.id, width);
+      emit('resizeField', { field, width });
     },
+    onRowNumberClick: selectRow,
     onAddColumnClick: (anchor) => emit('addColumn', anchor),
     onHeaderClick: (columnIndex, anchor) => {
       const field = visibleFields.value[columnIndex];
@@ -403,15 +550,50 @@ onBeforeUnmount(() => {
 
 defineExpose({
   getEngine: () => engine,
+  clearRowSelection,
 });
 </script>
 
 <template>
   <div class="canvas-grid-wrap">
     <div ref="host" class="canvas-grid-host" data-testid="canvas-grid"></div>
+    <input
+      ref="uploadInput"
+      type="file"
+      class="hidden-upload"
+      :accept="
+        editing?.field.type === 'image' || pendingUpload?.field.type === 'image'
+          ? 'image/*'
+          : undefined
+      "
+      data-testid="cell-upload-input"
+      @change="onUploadFile"
+    />
+    <div v-if="uploading" class="upload-hint">上传中…</div>
 
     <select
-      v-if="editing && editorKind === 'select'"
+      v-if="editing && editorKind === 'person'"
+      ref="editorInput"
+      v-model="editing.value"
+      class="cell-editor"
+      :style="editing.style"
+      data-testid="cell-editor"
+      @change="commitEdit(true)"
+      @blur="commitEdit(true)"
+      @keydown.esc.prevent="commitEdit(false)"
+    >
+      <option value="">未指定成员</option>
+      <option
+        v-for="(memberName, memberId) in personNames"
+        :key="memberId"
+        :value="memberId"
+      >
+        {{ memberName }}
+      </option>
+    </select>
+
+    <select
+      v-else-if="editing && editorKind === 'select'"
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
@@ -497,6 +679,20 @@ defineExpose({
 </template>
 
 <style scoped>
+.hidden-upload {
+  display: none;
+}
+.upload-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(31, 35, 41, 0.82);
+  color: #fff;
+  font-size: 12px;
+  pointer-events: none;
+}
 .multi-editor {
   display: flex;
   flex-direction: column;

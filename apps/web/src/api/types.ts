@@ -51,6 +51,22 @@ export interface FieldDto {
   hidden: boolean;
 }
 
+export interface SavedViewDto {
+  id: string;
+  sheetId: string;
+  name: string;
+  query: import('shared').ViewQuery;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AttachmentValue {
+  url: string;
+  name: string;
+  mimetype?: string;
+  size?: number;
+}
+
 export interface RecordDto {
   id: string;
   sheetId: string;
@@ -161,6 +177,10 @@ export interface AutomationDto {
   onFindEmpty: string;
   monthlyQuota: number | null;
   monthlyRunCount?: number;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AutomationRunStepDto {
@@ -310,6 +330,7 @@ export interface DashboardWidgetData {
   labels: string[];
   values: number[];
   rows?: Array<{ label: string; value: number }>;
+  layout?: { w?: number; h?: number; x?: number; y?: number };
   config?: {
     themeColor?: string;
     showLegend?: boolean;

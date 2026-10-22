@@ -11,7 +11,7 @@ export async function configureApp(
   await (app as NestFastifyApplication).register(
     multipart as unknown as never,
     {
-      limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+      limits: { fileSize: 20 * 1024 * 1024, files: 1 },
     },
   );
   app.useGlobalPipes(

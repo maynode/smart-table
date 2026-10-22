@@ -35,6 +35,7 @@ import type {
   QuotaSnapshot,
   DataSyncDto,
   DataSyncRunDto,
+  SavedViewDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -101,6 +102,31 @@ export const endpoints = {
   listMembers: (workspaceId: string) =>
     api<MemberDto[]>(`/workspaces/${workspaceId}/members`),
 
+  inviteMember: (
+    workspaceId: string,
+    email: string,
+    role: 'owner' | 'admin' | 'editor' | 'viewer',
+  ) =>
+    api<MemberDto>(`/workspaces/${workspaceId}/members`, {
+      method: 'POST',
+      body: { email, role },
+    }),
+
+  updateMemberRole: (
+    workspaceId: string,
+    userId: string,
+    role: 'owner' | 'admin' | 'editor' | 'viewer',
+  ) =>
+    api<MemberDto>(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'PATCH',
+      body: { role },
+    }),
+
+  removeMember: (workspaceId: string, userId: string) =>
+    api<void>(`/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'DELETE',
+    }),
+
   listBases: (workspaceId: string) =>
     api<BaseDto[]>(`/workspaces/${workspaceId}/bases`),
 
@@ -116,6 +142,74 @@ export const endpoints = {
     api<SheetDto>(`/bases/${baseId}/sheets`, { body: { name } }),
 
   getSheet: (sheetId: string) => api<SheetDto>(`/sheets/${sheetId}`),
+
+  updateSheet: (sheetId: string, name: string) =>
+    api<SheetDto>(`/sheets/${sheetId}`, {
+      method: 'PATCH',
+      body: { name },
+    }),
+
+  deleteSheet: (sheetId: string) =>
+    api<{ id: string; deleted: boolean }>(`/sheets/${sheetId}`, {
+      method: 'DELETE',
+    }),
+
+  deleteField: (fieldId: string) =>
+    api<{ id: string; deleted: boolean }>(`/fields/${fieldId}`, {
+      method: 'DELETE',
+    }),
+
+  deleteRecord: (recordId: string) =>
+    api<{ id: string; deleted: boolean }>(`/records/${recordId}`, {
+      method: 'DELETE',
+    }),
+
+  uploadAttachment: async (sheetId: string, file: File) => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const response = await fetch(`${base}/sheets/${sheetId}/attachments`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as {
+      url: string;
+      name: string;
+      mimetype: string;
+      size: number;
+    };
+  },
+
+  listSavedViews: (sheetId: string) =>
+    api<SavedViewDto[]>(`/sheets/${sheetId}/saved-views`),
+
+  createSavedView: (
+    sheetId: string,
+    body: { name: string; query: ViewQuery },
+  ) =>
+    api<SavedViewDto>(`/sheets/${sheetId}/saved-views`, {
+      method: 'POST',
+      body,
+    }),
+
+  updateSavedView: (
+    viewId: string,
+    body: { name?: string; query?: ViewQuery },
+  ) =>
+    api<SavedViewDto>(`/saved-views/${viewId}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  deleteSavedView: (viewId: string) =>
+    api<{ deleted: boolean }>(`/saved-views/${viewId}`, {
+      method: 'DELETE',
+    }),
 
   listRecords: (sheetId: string, cursor?: string | null, limit = 100) => {
     const params = new URLSearchParams();
@@ -179,6 +273,34 @@ export const endpoints = {
   upsertForm: (formId: string, body: UpsertFormPayload) =>
     api<FormDto>(`/forms/${formId}`, { body }),
 
+  uploadFormCover: async (formId: string, file: File) => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const response = await fetch(`${base}/forms/${formId}/cover`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as { coverUrl: string };
+  },
+
+  previewFormSuccess: (
+    formId: string,
+    body: {
+      formCells?: Record<string, unknown>;
+      stepOutputs?: Record<string, unknown>;
+    },
+  ) =>
+    api<{ html: string }>(`/forms/${formId}/success-preview`, {
+      method: 'POST',
+      body,
+    }),
+
   getPublicForm: (token: string) =>
     api<PublicFormDto>(`/public/forms/${encodeURIComponent(token)}`, {
       token: null,
@@ -192,6 +314,55 @@ export const endpoints = {
 
   listAutomations: (baseId: string) =>
     api<AutomationDto[]>(`/automations?baseId=${encodeURIComponent(baseId)}`),
+
+  getAutomation: (automationId: string) =>
+    api<AutomationDto>(`/automations/${automationId}`),
+
+  createAutomation: (body: {
+    baseId: string;
+    name: string;
+    enabled?: boolean;
+    trigger: Record<string, unknown>;
+    steps: Array<Record<string, unknown>>;
+    onFindEmpty?: 'continue' | 'stop';
+    monthlyQuota?: number | null;
+  }) =>
+    api<AutomationDto>('/automations', {
+      method: 'POST',
+      body,
+    }),
+
+  updateAutomation: (
+    automationId: string,
+    body: {
+      name?: string;
+      enabled?: boolean;
+      trigger?: Record<string, unknown>;
+      steps?: Array<Record<string, unknown>>;
+      onFindEmpty?: 'continue' | 'stop';
+      monthlyQuota?: number | null;
+    },
+  ) =>
+    api<AutomationDto>(`/automations/${automationId}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  deleteAutomation: (automationId: string) =>
+    api<{ deleted: boolean }>(`/automations/${automationId}`, {
+      method: 'DELETE',
+    }),
+
+  runAutomation: (automationId: string) =>
+    api<{
+      runId: string;
+      status: string;
+      outputs?: unknown[];
+      stepOutputs?: Record<string, string>;
+    }>(`/automations/${automationId}/run`, {
+      method: 'POST',
+      body: {},
+    }),
 
   listAutomationRuns: (automationId: string, limit = 20) =>
     api<AutomationRunDto[]>(
@@ -262,6 +433,22 @@ export const endpoints = {
       method: 'POST',
       body,
     }),
+
+  updateDashboardWidget: (
+    dashboardId: string,
+    widgetId: string,
+    body: Record<string, unknown>,
+  ) =>
+    api<DashboardWidgetDto>(`/dashboards/${dashboardId}/widgets/${widgetId}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  deleteDashboardWidget: (dashboardId: string, widgetId: string) =>
+    api<{ id: string; deleted: boolean }>(
+      `/dashboards/${dashboardId}/widgets/${widgetId}`,
+      { method: 'DELETE' },
+    ),
 
   listDashboardSchedules: (dashboardId: string) =>
     api<DashboardScheduleDto[]>(`/dashboards/${dashboardId}/schedules`),

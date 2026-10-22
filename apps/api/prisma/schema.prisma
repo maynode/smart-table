@@ -119,9 +119,26 @@ model Sheet {
   forms   Form[]
   publicViews PublicView[]
   dataSyncs DataSync[]
+  savedViews SavedView[]
 
   @@index([baseId])
   @@map("sheets")
+}
+
+model SavedView {
+  id        String   @id @default(uuid()) @db.Uuid
+  sheetId   String   @map("sheet_id") @db.Uuid
+  name      String
+  query     Json     @default("{}")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@unique([sheetId, name])
+  @@index([sheetId])
+  @@map("saved_views")
 }
 
 model Field {
@@ -224,6 +241,8 @@ model Automation {
   steps        Json     @default("[]")
   onFindEmpty  String   @default("continue") @map("on_find_empty")
   monthlyQuota Int?     @map("monthly_quota")
+  lastRunAt    DateTime? @map("last_run_at") @db.Timestamptz(6)
+  nextRunAt    DateTime? @map("next_run_at") @db.Timestamptz(6)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -290,6 +309,7 @@ model GroupChat {
   baseId    String   @map("base_id") @db.Uuid
   name      String
   memberIds Json     @default("[]") @map("member_ids")
+  wecomChatId String? @unique @map("wecom_chat_id")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([baseId])

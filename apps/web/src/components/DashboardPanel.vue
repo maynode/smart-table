@@ -8,6 +8,7 @@ import type {
   DashboardDataDto,
   DashboardDto,
   DashboardScheduleDto,
+  DashboardWidgetData,
   FieldDto,
   SheetDto,
 } from '../api/types';
@@ -39,6 +40,90 @@ const legendPosition = ref<'top' | 'bottom'>('top');
 const sheetFields = ref<FieldDto[]>([]);
 const cron = ref('0 9 * * *');
 const channel = ref('notification');
+const dragWidgetId = ref('');
+const dropWidgetId = ref('');
+const busyWidgetId = ref('');
+
+function layoutOf(widget: DashboardWidgetData): {
+  w: number;
+  h: number;
+} {
+  const raw = widget.layout ?? {};
+  return {
+    w: Math.min(12, Math.max(3, Number(raw.w ?? 6))),
+    h: Math.min(6, Math.max(2, Number(raw.h ?? 3))),
+  };
+}
+
+async function resizeWidget(
+  widget: DashboardWidgetData,
+  deltaWidth: number,
+  deltaHeight: number,
+): Promise<void> {
+  if (!active.value || busyWidgetId.value) return;
+  const layout = layoutOf(widget);
+  busyWidgetId.value = widget.id;
+  try {
+    await endpoints.updateDashboardWidget(active.value.id, widget.id, {
+      layout: {
+        ...(widget.layout ?? {}),
+        w: Math.min(12, Math.max(3, layout.w + deltaWidth)),
+        h: Math.min(6, Math.max(2, layout.h + deltaHeight)),
+      },
+    });
+    data.value = await endpoints.getDashboardData(active.value.id);
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    busyWidgetId.value = '';
+  }
+}
+
+async function deleteWidget(widget: DashboardWidgetData): Promise<void> {
+  if (!active.value || !window.confirm(`删除图表「${widget.title}」？`)) return;
+  try {
+    await endpoints.deleteDashboardWidget(active.value.id, widget.id);
+    data.value = await endpoints.getDashboardData(active.value.id);
+    toast('图表已删除');
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+function onDragStart(widget: DashboardWidgetData): void {
+  dragWidgetId.value = widget.id;
+}
+
+function onDragOver(widget: DashboardWidgetData): void {
+  if (dragWidgetId.value && dragWidgetId.value !== widget.id) {
+    dropWidgetId.value = widget.id;
+  }
+}
+
+async function onDrop(widget: DashboardWidgetData): Promise<void> {
+  if (!active.value || !dragWidgetId.value) return;
+  const list = [...(data.value?.widgets ?? [])];
+  const from = list.findIndex((item) => item.id === dragWidgetId.value);
+  const to = list.findIndex((item) => item.id === widget.id);
+  dragWidgetId.value = '';
+  dropWidgetId.value = '';
+  if (from < 0 || to < 0 || from === to) return;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  try {
+    await Promise.all(
+      list.map((item, index) =>
+        endpoints.updateDashboardWidget(active.value!.id, item.id, {
+          order: index,
+        }),
+      ),
+    );
+    data.value = await endpoints.getDashboardData(active.value.id);
+    toast('图表顺序已保存');
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
 
 const title = computed(() =>
   props.kind === 'report' ? '分析报告' : '仪表盘',
@@ -149,7 +234,7 @@ async function addWidget(): Promise<void> {
         showLabel: showLabel.value,
         legendPosition: legendPosition.value,
       },
-      layout: { w: 6, h: 4 },
+      layout: { w: 6, h: 3 },
     });
     await selectDashboard(active.value);
     toast('图表已添加');
@@ -311,12 +396,61 @@ onMounted(loadDashboards);
           </div>
         </section>
 
-        <section class="chart-grid">
+        <section class="chart-grid" data-testid="dashboard-canvas">
           <article
             v-for="widget in data?.widgets ?? []"
             :key="widget.id"
             class="chart-card"
+            :class="{ dragging: dragWidgetId === widget.id, 'drop-target': dropWidgetId === widget.id }"
+            :style="{
+              gridColumn: `span ${layoutOf(widget).w}`,
+              minHeight: `${layoutOf(widget).h * 76}px`,
+            }"
+            draggable="true"
+            data-testid="dashboard-widget-card"
+            @dragstart="onDragStart(widget)"
+            @dragover.prevent="onDragOver(widget)"
+            @drop.prevent="onDrop(widget)"
+            @dragend="dragWidgetId = ''; dropWidgetId = ''"
           >
+            <div class="chart-card-tools">
+              <span class="drag-grip" title="拖动排序">⠿</span>
+              <button
+                class="icon-btn"
+                title="加宽"
+                :disabled="busyWidgetId === widget.id"
+                @click="resizeWidget(widget, 2, 0)"
+              >
+                ↔
+              </button>
+              <button
+                class="icon-btn"
+                title="变窄"
+                :disabled="busyWidgetId === widget.id"
+                @click="resizeWidget(widget, -2, 0)"
+              >
+                ⇤
+              </button>
+              <button
+                class="icon-btn"
+                title="增高"
+                :disabled="busyWidgetId === widget.id"
+                @click="resizeWidget(widget, 0, 1)"
+              >
+                ↕
+              </button>
+              <button
+                class="icon-btn"
+                title="降低"
+                :disabled="busyWidgetId === widget.id"
+                @click="resizeWidget(widget, 0, -1)"
+              >
+                ⇥
+              </button>
+              <button class="icon-btn danger" title="删除图表" @click="deleteWidget(widget)">
+                ×
+              </button>
+            </div>
             <DashboardChart
               :type="widget.type"
               :title="widget.title"
@@ -329,7 +463,7 @@ onMounted(loadDashboards);
             />
           </article>
           <p v-if="!data?.widgets?.length" class="empty-hint">
-            暂无图表，添加一个后即可在画布上查看。
+            暂无图表，添加一个后即可在画布上查看；拖动卡片可排序，↔/↕ 调整大小。
           </p>
         </section>
 
@@ -484,14 +618,65 @@ onMounted(loadDashboards);
 }
 .chart-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-flow: row dense;
   gap: 14px;
   margin-top: 16px;
 }
 .chart-card {
+  position: relative;
+  min-width: 0;
   border: 1px solid #eef0f3;
   border-radius: 10px;
   background: #fff;
+  padding: 6px;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+.chart-card:hover {
+  border-color: #d6e4ff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+.chart-card.dragging {
+  opacity: 0.45;
+}
+.chart-card.drop-target {
+  border-color: #2d8cf0;
+  box-shadow: 0 0 0 2px #d6e4ff;
+}
+.chart-card-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chart-card:hover .chart-card-tools {
+  opacity: 1;
+}
+.chart-card-tools .icon-btn {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.drag-grip {
+  padding: 0 4px;
+  color: #98a2b3;
+  cursor: grab;
+  font-size: 13px;
+}
+.icon-btn.danger {
+  color: #d4380d;
 }
 .schedule-block {
   margin-top: 16px;

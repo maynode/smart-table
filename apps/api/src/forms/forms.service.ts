@@ -274,13 +274,14 @@ export class FormsService implements OnModuleDestroy {
     this.assertShareOpen(form);
 
     const configured = form.fields as unknown as FormFieldConfig[];
-    const values: Record<string, unknown> = {};
     const fieldById = new Map(
       form.sheet.fields.map((field) => [field.id, field]),
     );
 
+    // Return every configured field: the public client re-evaluates display
+    // conditions as the respondent fills the form. Filtering here against empty
+    // values would permanently hide conditional fields.
     const fields = configured
-      .filter((config) => isFormFieldVisible(config, values))
       .flatMap((config) => {
         const field = fieldById.get(config.fieldId);
         if (!field) return [];

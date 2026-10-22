@@ -20,6 +20,8 @@ export interface CellRender {
   bold?: boolean;
   /** Draw as a rounded status pill (select/status fields). */
   pill?: boolean;
+  /** Thumbnail URL for image fields (drawn from a local cache). */
+  image?: string;
 }
 
 export interface Selection {
@@ -51,6 +53,11 @@ export interface CanvasGridOptions {
   onHeaderClick?: (
     columnIndex: number,
     anchor: { top: number; left: number },
+  ) => void;
+  /** Row-number click; modifiers allow WeCom-style shift/ctrl multi-select. */
+  onRowNumberClick?: (
+    row: number,
+    modifiers: { shift: boolean; meta: boolean },
   ) => void;
   /** Fired when the trailing "+" header (id `__add_field__`) is clicked. */
   onAddColumnClick?: (anchor: { top: number; left: number }) => void;
@@ -107,6 +114,11 @@ export class CanvasGridEngine {
   private getCell: (row: number, col: number) => CellRender | null;
   private getRowColor: (row: number) => string | null;
   private selection: Selection | null = null;
+  private selectedRows = new Set<number>();
+  private readonly imageCache = new Map<
+    string,
+    { status: 'loading' | 'loaded' | 'error'; image?: HTMLImageElement }
+  >();
   private scrollX = 0;
   private scrollY = 0;
   private dpr = 1;
@@ -230,6 +242,11 @@ export class CanvasGridEngine {
 
   setSelection(selection: Selection | null): void {
     this.selection = selection;
+    this.invalidate();
+  }
+
+  setSelectedRows(rows: number[]): void {
+    this.selectedRows = new Set(rows);
     this.invalidate();
   }
 
@@ -389,6 +406,17 @@ export class CanvasGridEngine {
     }
 
     if (point.x < this.rowGutterWidth) {
+      if (point.y >= this.headerHeight) {
+        const row = this.rowAxis.indexAt(
+          point.y - this.headerHeight + this.scrollY,
+        );
+        if (row >= 0 && row < this.rowAxis.count) {
+          this.options.onRowNumberClick?.(row, {
+            shift: event.shiftKey,
+            meta: event.metaKey || event.ctrlKey,
+          });
+        }
+      }
       return;
     }
 
@@ -673,6 +701,15 @@ export class CanvasGridEngine {
         this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
       const rowHeight = this.rowAxis.size(row);
       if (y + rowHeight < this.headerHeight || y > height) continue;
+      if (this.selectedRows.has(row)) {
+        context.fillStyle = '#e8f3ff';
+        context.fillRect(1, y, gutter - 1, rowHeight);
+        context.fillStyle = COLORS.selectionBorder;
+        context.font = `600 12px ${FONT_STACK}`;
+      } else {
+        context.fillStyle = COLORS.emptyText;
+        context.font = `12px ${FONT_STACK}`;
+      }
       context.fillText(String(row + 1), gutter / 2, y + rowHeight / 2);
       context.beginPath();
       context.moveTo(0, y + rowHeight - 0.5);
@@ -728,6 +765,10 @@ export class CanvasGridEngine {
       const rowHeight = this.rowAxis.size(row);
       if (y + rowHeight < this.headerHeight || y > height) continue;
 
+      if (this.selectedRows.has(row)) {
+        target.fillStyle = COLORS.selectionFill;
+        target.fillRect(gutter, y, Math.max(0, width - gutter), rowHeight);
+      }
       const rowColor = this.getRowColor(row);
       if (rowColor) {
         target.fillStyle = rowColor;
@@ -736,7 +777,7 @@ export class CanvasGridEngine {
 
       for (let col = columns.start; col < columns.end; col += 1) {
         const cell = this.getCell(row, col);
-        if (!cell || cell.text === '') continue;
+        if (!cell || (!cell.text && !cell.image)) continue;
 
         const x = this.columnScreenX(col);
         const columnWidth = this.columnAxis.size(col);
@@ -747,7 +788,24 @@ export class CanvasGridEngine {
         target.rect(x + 1, y, columnWidth - 2, rowHeight);
         target.clip();
 
-        if (cell.pill) {
+        if (cell.image) {
+          const image = this.imageFor(cell.image);
+          const size = Math.max(16, rowHeight - 8);
+          if (image) {
+            target.drawImage(image, x + 6, y + 4, size, size);
+          } else {
+            target.fillStyle = '#f2f3f5';
+            target.fillRect(x + 6, y + 4, size, size);
+            target.fillStyle = COLORS.emptyText;
+            target.font = `11px ${FONT_STACK}`;
+            target.fillText('图片', x + 9, y + rowHeight / 2);
+          }
+          if (cell.text) {
+            target.fillStyle = cell.color ?? COLORS.cellText;
+            target.font = `12px ${FONT_STACK}`;
+            target.fillText(cell.text, x + size + 12, y + rowHeight / 2);
+          }
+        } else if (cell.pill) {
           const textWidth = target.measureText(cell.text).width;
           const pillWidth = Math.min(columnWidth - 16, textWidth + 20);
           const pillHeight = 22;
@@ -780,6 +838,24 @@ export class CanvasGridEngine {
       content.clearRect(0, 0, width * this.dpr, height * this.dpr);
       content.drawImage(this.offscreen!, 0, 0, width, height);
     }
+  }
+
+  private imageFor(url: string): HTMLImageElement | null {
+    const cached = this.imageCache.get(url);
+    if (cached) return cached.status === 'loaded' ? cached.image ?? null : null;
+    this.imageCache.set(url, { status: 'loading' });
+    if (typeof Image === 'undefined') {
+      this.imageCache.set(url, { status: 'error' });
+      return null;
+    }
+    const image = new Image();
+    image.onload = () => {
+      this.imageCache.set(url, { status: 'loaded', image });
+      this.invalidate();
+    };
+    image.onerror = () => this.imageCache.set(url, { status: 'error' });
+    image.src = url;
+    return null;
   }
 
   private drawSelection(width: number, height: number): void {

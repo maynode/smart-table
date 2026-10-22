@@ -6,6 +6,7 @@ import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { QuotasModule } from '../quotas/quotas.module';
 import { AutomationQueueService } from './automation-queue.service';
 import { AutomationRunnerService } from './automation-runner.service';
+import { AutomationSchedulerService } from './automation-scheduler.service';
 import { AutomationsController } from './automations.controller';
 import { AutomationsService } from './automations.service';
 import {
@@ -21,6 +22,7 @@ import { NotificationsController } from './notifications.controller';
     AutomationsService,
     AutomationRunnerService,
     AutomationQueueService,
+    AutomationSchedulerService,
     LocalNotifyAdapter,
     {
       provide: NOTIFY_ADAPTER,
@@ -34,6 +36,11 @@ import { NotificationsController } from './notifications.controller';
       },
     },
   ],
-  exports: [AutomationRunnerService, AutomationsService, AutomationQueueService],
+  exports: [
+    AutomationRunnerService,
+    AutomationsService,
+    AutomationQueueService,
+    AutomationSchedulerService,
+  ],
 })
 export class AutomationsModule {}

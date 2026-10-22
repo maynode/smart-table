@@ -23,7 +23,17 @@ const MIME_BY_EXT: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.zip': 'application/zip',
+  '.bin': 'application/octet-stream',
 };
+
+const SAFE_EXTENSIONS = new Set(Object.keys(MIME_BY_EXT));
 
 @Injectable()
 export class StorageService {
@@ -87,6 +97,77 @@ export class StorageService {
     }
 
     return `/files/${key}`;
+  }
+
+  async saveUpload(
+    buffer: Buffer,
+    mimetype: string,
+    originalName: string,
+  ): Promise<{
+    key: string;
+    url: string;
+    name: string;
+    mimetype: string;
+    size: number;
+  }> {
+    const originalExt = extname(originalName).toLowerCase();
+    const extension = SAFE_EXTENSIONS.has(originalExt)
+      ? originalExt
+      : Object.entries(MIME_BY_EXT).find(([, value]) => value === mimetype)?.[0] ??
+        '.bin';
+    const storedName = `${randomUUID()}${extension}`;
+    const key = `uploads/${storedName}`;
+
+    if (this.driver === 'minio' && this.s3) {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: mimetype || MIME_BY_EXT[extension],
+        }),
+      );
+    } else {
+      mkdirSync(join(this.localDir, 'uploads'), { recursive: true });
+      writeFileSync(join(this.localDir, key), buffer);
+    }
+
+    return {
+      key,
+      url: `/files/uploads/${storedName}`,
+      name: originalName || storedName,
+      mimetype:
+        mimetype || MIME_BY_EXT[extension] || 'application/octet-stream',
+      size: buffer.byteLength,
+    };
+  }
+
+  resolveUpload(name: string): {
+    path?: string;
+    contentType?: string;
+    redirectUrl?: string;
+    downloadName: string;
+  } {
+    if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9]+)?$/.test(name)) {
+      throw new NotFoundException('文件不存在');
+    }
+    const key = `uploads/${name}`;
+    if (this.driver === 'minio' && this.s3) {
+      return {
+        redirectUrl: `${this.publicBase}/${key}`,
+        downloadName: name,
+      };
+    }
+    const path = join(this.localDir, 'uploads', name);
+    if (!existsSync(path)) {
+      throw new NotFoundException('文件不存在');
+    }
+    return {
+      path,
+      contentType:
+        MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream',
+      downloadName: name,
+    };
   }
 
   resolveCover(name: string): {

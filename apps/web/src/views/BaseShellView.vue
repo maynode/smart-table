@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
+import MembersPanel from '../components/MembersPanel.vue';
 import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
@@ -23,6 +24,7 @@ import type {
   FieldDto,
   MemberDto,
   RecordDto,
+  SavedViewDto,
   SheetDto,
   WorkspaceDto,
 } from '../api/types';
@@ -45,6 +47,15 @@ const rowHeightPx = ref(36);
 const viewGroups = ref<
   Array<{ fieldId: string; key: string; label: string; count: number }>
 >([]);
+const gridRef = ref<InstanceType<typeof GridPanel> | null>(null);
+const savedViews = ref<SavedViewDto[]>([]);
+const savedViewName = ref('');
+const currentViewId = ref('');
+const currentQuery = ref<ViewQuery>({});
+const savingView = ref(false);
+const applyingSavedView = ref(false);
+const sheetMenuId = ref<string | null>(null);
+const moreOpen = ref(false);
 
 const commentsOpen = ref(false);
 const comments = ref<CommentDto[]>([]);
@@ -87,14 +98,16 @@ function messageOf(error: unknown): string {
 async function bootstrap(): Promise<void> {
   bootError.value = '';
   try {
-    const [ws, baseDetail, sheetList] = await Promise.all([
+    const [ws, baseDetail, sheetList, memberList] = await Promise.all([
       endpoints.getWorkspace(workspaceId.value),
       endpoints.getBase(baseId.value),
       endpoints.listSheets(baseId.value),
+      endpoints.listMembers(workspaceId.value).catch(() => [] as MemberDto[]),
     ]);
     workspace.value = ws;
     base.value = baseDetail;
     sheets.value = sheetList;
+    members.value = memberList;
 
     const requested =
       typeof route.query.sheet === 'string' ? route.query.sheet : null;
@@ -113,8 +126,17 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
   }
   loading.value = true;
   try {
-    const detail = await endpoints.getSheet(sheetId);
+    const [detail, views] = await Promise.all([
+      endpoints.getSheet(sheetId),
+      endpoints.listSavedViews(sheetId).catch(() => [] as SavedViewDto[]),
+    ]);
     activeSheet.value = detail;
+    savedViews.value = views;
+    currentViewId.value = '';
+    currentQuery.value = {};
+    savedViewName.value = '';
+    rowColors.value = {};
+    viewGroups.value = [];
     const page = await endpoints.listRecords(sheetId, null, 100);
     records.value = page.records;
     nextCursor.value = page.nextCursor;
@@ -177,12 +199,16 @@ function coerceCellValue(field: FieldDto, value: string): unknown {
 async function commitCell(payload: {
   record: RecordDto;
   field: FieldDto;
-  value: string;
+  value: unknown;
 }): Promise<void> {
   try {
+    const coerced =
+      typeof payload.value === 'string'
+        ? coerceCellValue(payload.field, payload.value)
+        : payload.value;
     const updated = await endpoints.updateRecord(
       payload.record.id,
-      { [payload.field.id]: coerceCellValue(payload.field, payload.value) },
+      { [payload.field.id]: coerced },
       payload.record.version,
     );
     records.value = records.value.map((record) =>
@@ -286,6 +312,178 @@ async function updateFieldMeta(payload: {
   }
 }
 
+async function deleteField(field: FieldDto): Promise<void> {
+  try {
+    await endpoints.deleteField(field.id);
+    if (activeSheet.value) {
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).filter(
+          (item) => item.id !== field.id,
+        ),
+      };
+      records.value = records.value.map((record) => {
+        const cells = { ...record.cells };
+        delete cells[field.id];
+        return { ...record, cells };
+      });
+    }
+    toast(`已删除字段「${field.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function deleteRecords(recordIds: string[]): Promise<void> {
+  if (!activeSheet.value || recordIds.length === 0) return;
+  try {
+    await Promise.all(recordIds.map((recordId) => endpoints.deleteRecord(recordId)));
+    records.value = records.value.filter(
+      (record) => !recordIds.includes(record.id),
+    );
+    toast(`已删除 ${recordIds.length} 条记录`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function uploadToSheet(file: File) {
+  if (!activeSheet.value) throw new Error('no active sheet');
+  return endpoints.uploadAttachment(activeSheet.value.id, file);
+}
+
+async function renameSheet(sheet: SheetDto): Promise<void> {
+  sheetMenuId.value = null;
+  const name = window.prompt('重命名工作表', sheet.name)?.trim();
+  if (!name || name === sheet.name) return;
+  try {
+    const updated = await endpoints.updateSheet(sheet.id, name);
+    if (activeSheet.value?.id === sheet.id) {
+      activeSheet.value = { ...activeSheet.value, ...updated };
+    }
+    sheets.value = sheets.value.map((item) =>
+      item.id === updated.id ? { ...item, ...updated } : item,
+    );
+    toast(`已重命名为「${updated.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function deleteSheet(sheet: SheetDto): Promise<void> {
+  sheetMenuId.value = null;
+  if (!window.confirm(`删除工作表「${sheet.name}」及其全部记录？此操作不可撤销。`)) {
+    return;
+  }
+  try {
+    await endpoints.deleteSheet(sheet.id);
+    const wasActive = activeSheet.value?.id === sheet.id;
+    sheets.value = sheets.value.filter((item) => item.id !== sheet.id);
+    toast(`已删除工作表「${sheet.name}」`);
+    if (!wasActive) return;
+    activeSheet.value = null;
+    records.value = [];
+    nextCursor.value = null;
+    savedViews.value = [];
+    const next = sheets.value[0];
+    if (next) {
+      await selectSheet(next.id);
+    } else {
+      await router.replace({ query: { ...route.query, sheet: undefined } });
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function renameActiveSheet(): Promise<void> {
+  moreOpen.value = false;
+  if (!activeSheet.value) {
+    toast('请先选择一张工作表');
+    return;
+  }
+  await renameSheet(activeSheet.value);
+}
+
+async function deleteActiveSheet(): Promise<void> {
+  moreOpen.value = false;
+  if (!activeSheet.value) {
+    toast('请先选择一张工作表');
+    return;
+  }
+  await deleteSheet(activeSheet.value);
+}
+
+async function saveCurrentView(): Promise<void> {
+  if (!activeSheet.value || savingView.value) return;
+  const name = savedViewName.value.trim();
+  if (!name) {
+    toast('请先输入视图名称');
+    return;
+  }
+  savingView.value = true;
+  try {
+    const created = await endpoints.createSavedView(activeSheet.value.id, {
+      name,
+      query: currentQuery.value,
+    });
+    savedViews.value = [...savedViews.value, created];
+    currentViewId.value = created.id;
+    savedViewName.value = '';
+    toast(`已保存视图「${created.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    savingView.value = false;
+  }
+}
+
+function applySavedView(view: SavedViewDto): void {
+  currentViewId.value = view.id;
+  savedViewName.value = view.name;
+  applyingSavedView.value = true;
+  gridRef.value?.applySavedQuery(view.query);
+  window.setTimeout(() => {
+    applyingSavedView.value = false;
+  }, 0);
+}
+
+async function renameSavedView(view: SavedViewDto): Promise<void> {
+  const name = window.prompt('重命名视图', view.name)?.trim();
+  if (!name || name === view.name) return;
+  try {
+    const updated = await endpoints.updateSavedView(view.id, { name });
+    savedViews.value = savedViews.value.map((item) =>
+      item.id === updated.id ? updated : item,
+    );
+    if (currentViewId.value === updated.id) savedViewName.value = updated.name;
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function deleteSavedView(view: SavedViewDto): Promise<void> {
+  if (!window.confirm(`删除视图「${view.name}」？`)) return;
+  try {
+    await endpoints.deleteSavedView(view.id);
+    savedViews.value = savedViews.value.filter((item) => item.id !== view.id);
+    if (currentViewId.value === view.id) {
+      currentViewId.value = '';
+      savedViewName.value = '';
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+function onQueryChange(query: ViewQuery): void {
+  currentQuery.value = JSON.parse(JSON.stringify(query)) as ViewQuery;
+  if (!applyingSavedView.value) {
+    currentViewId.value = '';
+    savedViewName.value = '';
+  }
+}
+
 async function createSheet(): Promise<void> {
   const name = window.prompt('新工作表名称', '新工作表');
   if (!name) return;
@@ -334,10 +532,6 @@ async function openMembers(): Promise<void> {
   } catch (error) {
     toast(messageOf(error));
   }
-}
-
-function comingSoon(label: string): void {
-  toast(`${label}：该能力将在后续任务开放`);
 }
 
 const importInput = ref<HTMLInputElement | null>(null);
@@ -483,7 +677,13 @@ onMounted(bootstrap);
       </div>
       <div class="topbar-right">
         <button class="topbar-btn" @click="openMembers">成员</button>
-        <button class="topbar-btn" @click="comingSoon('分享')">分享</button>
+        <button
+          class="topbar-btn"
+          data-testid="share-open"
+          @click="shareOpen = true"
+        >
+          分享
+        </button>
         <button
           class="topbar-btn"
           data-testid="comments-toggle"
@@ -497,13 +697,6 @@ onMounted(bootstrap);
           @click="permissionsOpen = true"
         >
           内容权限
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="share-open"
-          @click="shareOpen = true"
-        >
-          共享
         </button>
         <button
           class="topbar-btn"
@@ -549,7 +742,38 @@ onMounted(bootstrap);
         >
           导出
         </button>
-        <button class="topbar-btn" @click="comingSoon('更多')">更多</button>
+        <div class="more-wrap">
+          <button
+            class="topbar-btn"
+            data-testid="more-open"
+            @click="moreOpen = !moreOpen"
+          >
+            更多 ▾
+          </button>
+          <div v-if="moreOpen" class="more-menu" data-testid="more-menu">
+            <button @click="openMembers(); moreOpen = false">成员与邀请</button>
+            <button @click="renameActiveSheet">重命名当前工作表</button>
+            <button
+              data-testid="more-public-view"
+              :disabled="!activeSheet"
+              @click="publicViewOpen = true; moreOpen = false"
+            >
+              公开只读视图
+            </button>
+            <button @click="quotaOpen = true; moreOpen = false">工作区配额</button>
+            <button @click="developerOpen = true; moreOpen = false">开发者 / OpenAPI</button>
+            <button @click="exportActiveSheet(); moreOpen = false">导出 Excel</button>
+            <div class="more-sep"></div>
+            <button
+              class="danger"
+              data-testid="more-delete-sheet"
+              :disabled="!activeSheet"
+              @click="deleteActiveSheet"
+            >
+              删除当前工作表
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -567,15 +791,83 @@ onMounted(bootstrap);
               +
             </button>
           </div>
-          <button
+          <div
             v-for="sheet in sheets"
             :key="sheet.id"
-            class="sidebar-item"
+            class="sheet-row"
             :class="{ active: sheet.id === activeSheet?.id }"
-            @click="selectSheet(sheet.id)"
           >
-            <span class="sheet-icon">▦</span>{{ sheet.name }}
-          </button>
+            <button class="sidebar-item" @click="selectSheet(sheet.id)">
+              <span class="sheet-icon">▦</span>
+              <span class="sheet-label">{{ sheet.name }}</span>
+            </button>
+            <button
+              class="sheet-more"
+              title="工作表操作"
+              :data-testid="`sheet-menu-${sheet.name}`"
+              @click.stop="sheetMenuId = sheetMenuId === sheet.id ? null : sheet.id"
+            >
+              ⋯
+            </button>
+            <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+              <button @click.stop="renameSheet(sheet)">重命名</button>
+              <button class="danger" @click.stop="deleteSheet(sheet)">删除工作表</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="activeSheet" class="sidebar-section views-section">
+          <div class="sidebar-title">
+            <span>视图</span>
+            <button
+              v-if="savedViews.length"
+              class="icon-btn"
+              title="保存当前视图"
+              data-testid="save-view-toggle"
+              @click="saveCurrentView"
+            >
+              +
+            </button>
+          </div>
+          <div class="saved-view-create">
+            <input
+              v-model="savedViewName"
+              placeholder="输入视图名称"
+              data-testid="saved-view-name"
+              @keydown.enter.prevent="saveCurrentView"
+            />
+            <button
+              class="btn btn-primary btn-mini"
+              data-testid="saved-view-save"
+              :disabled="savingView"
+              @click="saveCurrentView"
+            >
+              保存
+            </button>
+          </div>
+          <div
+            v-for="view in savedViews"
+            :key="view.id"
+            class="saved-view-row"
+            :class="{ active: currentViewId === view.id }"
+          >
+            <button
+              class="saved-view-apply"
+              :data-testid="`saved-view-${view.name}`"
+              @click="applySavedView(view)"
+            >
+              <span class="view-icon">▤</span>{{ view.name }}
+            </button>
+            <button class="icon-btn" title="重命名视图" @click="renameSavedView(view)">
+              ✎
+            </button>
+            <button class="icon-btn danger" title="删除视图" @click="deleteSavedView(view)">
+              ×
+            </button>
+          </div>
+          <p v-if="savedViews.length === 0" class="sidebar-hint">
+            设置筛选/排序后输入名称保存为命名视图。
+          </p>
         </div>
 
         <div class="sidebar-section create-section">
@@ -619,6 +911,7 @@ onMounted(bootstrap);
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
         <GridPanel
           v-else-if="activeSheet"
+          ref="gridRef"
           :key="activeSheet.id"
           :sheet-id="activeSheet.id"
           :sheet-name="activeSheet.name"
@@ -629,13 +922,18 @@ onMounted(bootstrap);
           :row-colors="rowColors"
           :row-height="rowHeightPx"
           :groups="viewGroups"
+          :members="members"
+          :upload-attachment="uploadToSheet"
           @add-row="addRow"
           @load-more="loadMore"
           @commit="commitCell"
           @toggle-field="toggleField"
           @create-field="createField"
           @update-field="updateFieldMeta"
+          @delete-field="deleteField"
+          @delete-records="deleteRecords"
           @query="applyViewQuery"
+          @query-change="onQueryChange"
         />
         <div v-else class="empty-state">还没有工作表，点击左侧 + 新建。</div>
       </main>
@@ -679,21 +977,12 @@ onMounted(bootstrap);
       v-if="membersOpen"
       class="modal-mask"
       @click.self="membersOpen = false"
-    >      <div class="modal">
-        <header class="drawer-header">
-          <h3>工作区成员</h3>
-          <button class="icon-btn" @click="membersOpen = false">×</button>
-        </header>
-        <ul class="member-list">
-          <li v-for="member in members" :key="member.userId">
-            <span class="avatar">{{ member.name.slice(0, 1) }}</span>
-            <span class="member-name">{{ member.name }}</span>
-            <span class="member-email">{{ member.email }}</span>
-            <span class="role-badge">{{ roleLabel(member.role) }}</span>
-          </li>
-        </ul>
-        <p v-if="members.length === 0" class="muted">加载中…</p>
-      </div>
+    >
+      <MembersPanel
+        :workspace-id="workspaceId"
+        @close="membersOpen = false"
+        @changed="members = $event"
+      />
     </div>
 
     <div
@@ -832,13 +1121,13 @@ onMounted(bootstrap);
   display: none;
 }
 .automation-modal {
-  width: min(780px, 92vw);
-  max-height: 82vh;
+  width: min(980px, 94vw);
+  max-height: 88vh;
   overflow: auto;
 }
 .form-builder-modal {
-  width: min(640px, 92vw);
-  max-height: 86vh;
+  width: min(1120px, 95vw);
+  max-height: 90vh;
   overflow: auto;
 }
 .create-section {
@@ -895,5 +1184,184 @@ onMounted(bootstrap);
 }
 .create-menu-item:hover {
   background: var(--bg-hover);
+}
+.more-wrap {
+  position: relative;
+}
+.more-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  width: 190px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.18);
+}
+.more-menu button {
+  height: 32px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.more-menu button:hover {
+  background: var(--bg-hover);
+}
+.more-menu button.danger {
+  color: #d4380d;
+}
+.more-menu button:disabled {
+  color: #b8bcc4;
+  cursor: not-allowed;
+}
+.more-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.sheet-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.sheet-row:hover {
+  background: var(--bg-hover);
+}
+.sheet-row.active {
+  background: #e8f3ff;
+}
+.sheet-row .sidebar-item {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+}
+.sheet-row.active .sidebar-item {
+  color: #1d6fdc;
+  font-weight: 600;
+}
+.sheet-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-more {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #8f959e;
+  cursor: pointer;
+  opacity: 0;
+}
+.sheet-row:hover .sheet-more,
+.sheet-row.active .sheet-more {
+  opacity: 1;
+}
+.sheet-menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 130px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+}
+.sheet-menu button {
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sheet-menu button:hover {
+  background: var(--bg-hover);
+}
+.sheet-menu button.danger {
+  color: #d4380d;
+}
+.views-section {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.saved-view-create {
+  display: flex;
+  gap: 5px;
+  padding: 2px 4px 6px;
+}
+.saved-view-create input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid #d0d3d9;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.btn-mini {
+  height: 28px !important;
+  padding: 0 9px !important;
+  font-size: 12px;
+}
+.saved-view-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.saved-view-row:hover {
+  background: var(--bg-hover);
+}
+.saved-view-row.active {
+  background: #e8f3ff;
+}
+.saved-view-apply {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-view-row.active .saved-view-apply {
+  color: #1d6fdc;
+  font-weight: 600;
+}
+.view-icon {
+  color: #8f959e;
+  font-size: 11px;
+}
+.sidebar-hint {
+  margin: 2px 6px 4px;
+  color: #a5a9b2;
+  font-size: 11px;
+  line-height: 1.5;
 }
 </style>

@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, type Field } from '@prisma/client';
 import {
   evaluateFilterGroup,
@@ -12,6 +17,10 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { buildFilterSql, buildSortSql } from '../automations/automation-filter.sql';
+import type {
+  CreateSavedViewDto,
+  UpdateSavedViewDto,
+} from './dto/saved-view.dto';
 
 interface QueryRow {
   id: string;
@@ -115,6 +124,154 @@ export class ViewsService {
       cellColors,
       rowHeight: query.rowHeight ?? 'medium',
     };
+  }
+
+  async listSaved(sheetId: string, userId: string) {
+    await this.requireSavedSheet(sheetId, userId, 'viewer');
+    const views = await this.prisma.savedView.findMany({
+      where: { sheetId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return views.map((view) => ({
+      id: view.id,
+      sheetId: view.sheetId,
+      name: view.name,
+      query: (view.query ?? {}) as ViewQuery,
+      createdAt: view.createdAt,
+      updatedAt: view.updatedAt,
+    }));
+  }
+
+  async createSaved(
+    sheetId: string,
+    userId: string,
+    dto: CreateSavedViewDto,
+  ) {
+    await this.requireSavedSheet(sheetId, userId, 'editor');
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('视图名称不能为空');
+    this.validateSavedQuery(dto.query);
+    try {
+      const view = await this.prisma.savedView.create({
+        data: {
+          sheetId,
+          name,
+          query: dto.query as Prisma.InputJsonValue,
+          createdBy: userId,
+        },
+      });
+      return {
+        id: view.id,
+        sheetId: view.sheetId,
+        name: view.name,
+        query: view.query as ViewQuery,
+        createdAt: view.createdAt,
+        updatedAt: view.updatedAt,
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('已存在同名视图');
+      }
+      throw error;
+    }
+  }
+
+  async updateSaved(
+    viewId: string,
+    userId: string,
+    dto: UpdateSavedViewDto,
+  ) {
+    const existing = await this.prisma.savedView.findUnique({
+      where: { id: viewId },
+    });
+    if (!existing) throw new NotFoundException('视图不存在');
+    await this.requireSavedSheet(existing.sheetId, userId, 'editor');
+    if (dto.query) this.validateSavedQuery(dto.query);
+    try {
+      const view = await this.prisma.savedView.update({
+        where: { id: viewId },
+        data: {
+          ...(dto.name === undefined ? {} : { name: dto.name.trim() }),
+          ...(dto.query === undefined
+            ? {}
+            : { query: dto.query as Prisma.InputJsonValue }),
+        },
+      });
+      return {
+        id: view.id,
+        sheetId: view.sheetId,
+        name: view.name,
+        query: view.query as ViewQuery,
+        createdAt: view.createdAt,
+        updatedAt: view.updatedAt,
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('已存在同名视图');
+      }
+      throw error;
+    }
+  }
+
+  async deleteSaved(viewId: string, userId: string) {
+    const existing = await this.prisma.savedView.findUnique({
+      where: { id: viewId },
+    });
+    if (!existing) throw new NotFoundException('视图不存在');
+    await this.requireSavedSheet(existing.sheetId, userId, 'editor');
+    await this.prisma.savedView.delete({ where: { id: viewId } });
+    return { deleted: true };
+  }
+
+  private async requireSavedSheet(
+    sheetId: string,
+    userId: string,
+    minimum: 'viewer' | 'editor',
+  ) {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      include: { base: true },
+    });
+    if (!sheet) throw new NotFoundException('工作表不存在');
+    try {
+      await this.workspacesService.requireMember(
+        sheet.base.workspaceId,
+        userId,
+        minimum,
+      );
+    } catch (error) {
+      await this.sharing.assertAccess('sheet', sheetId, userId, minimum);
+    }
+    return sheet;
+  }
+
+  private validateSavedQuery(query: Record<string, unknown>): void {
+    if (!query || typeof query !== 'object' || Array.isArray(query)) {
+      throw new BadRequestException('视图配置格式不正确');
+    }
+    const filters = query.filters as
+      | { conjunction?: unknown; conditions?: unknown }
+      | undefined;
+    if (filters) {
+      if (
+        !['and', 'or'].includes(String(filters.conjunction ?? 'and')) ||
+        !Array.isArray(filters.conditions)
+      ) {
+        throw new BadRequestException('筛选配置格式不正确');
+      }
+    }
+    for (const key of ['sorts', 'groups', 'colorRules']) {
+      const value = query[key];
+      if (value !== undefined && !Array.isArray(value)) {
+        throw new BadRequestException(`视图 ${key} 格式不正确`);
+      }
+    }
   }
 
   private matchesColorRule(

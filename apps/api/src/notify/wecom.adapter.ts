@@ -95,16 +95,148 @@ export class WecomNotifyAdapter implements NotifyAdapter {
     return { delivered: recipients.length };
   }
 
-  startGroupChat(
+  async startGroupChat(
     input: StartGroupChatInput,
   ): Promise<{ groupChatId: string }> {
-    return this.local.startGroupChat(input);
+    const created = await this.local.startGroupChat(input);
+    const userList = await this.wecomUserIds(input.memberIds);
+    if (!userList.length) {
+      this.logger.warn('WeCom group chat has no bound members; local only');
+      return created;
+    }
+
+    const owner =
+      this.config.get<string>('WECOM_GROUP_OWNER') ?? userList[0];
+    const mockUrl = (
+      this.config.get<string>('WECOM_MOCK_NOTIFY_URL') ?? ''
+    ).replace(/\/$/, '');
+    let chatId: string;
+    if (mockUrl) {
+      const response = await fetch(`${mockUrl}/appchat/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: input.name,
+          owner,
+          userlist: userList,
+        }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      const body = (await response.json()) as { chatid?: string; errcode?: number };
+      if (!response.ok || !body.chatid) {
+        throw new Error(`WeCom mock appchat/create failed: ${response.status}`);
+      }
+      chatId = body.chatid;
+    } else {
+      const token = await this.realAccessToken();
+      const response = await fetch(
+        `https://qyapi.weixin.qq.com/cgi-bin/appchat/create?access_token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: input.name,
+            owner,
+            userlist: userList,
+          }),
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      const body = (await response.json()) as {
+        chatid?: string;
+        errcode?: number;
+        errmsg?: string;
+      };
+      if (body.errcode || !body.chatid) {
+        throw new Error(
+          `WeCom appchat/create failed: ${body.errmsg ?? body.errcode}`,
+        );
+      }
+      chatId = body.chatid;
+    }
+
+    await this.prisma.groupChat.update({
+      where: { id: created.groupChatId },
+      data: { wecomChatId: chatId },
+    });
+    return created;
   }
 
-  addGroupMembers(
+  async addGroupMembers(
     input: AddGroupMembersInput,
   ): Promise<{ groupChatId: string; memberIds: string[] }> {
+    const chat = await this.prisma.groupChat.findUnique({
+      where: { id: input.groupChatId },
+    });
+    if (!chat) throw new Error('群聊不存在');
+
+    const userList = await this.wecomUserIds(input.memberIds);
+    if (chat.wecomChatId && userList.length > 0) {
+      const mockUrl = (
+        this.config.get<string>('WECOM_MOCK_NOTIFY_URL') ?? ''
+      ).replace(/\/$/, '');
+      if (mockUrl) {
+        const response = await fetch(`${mockUrl}/appchat/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatid: chat.wecomChatId,
+            add_user_list: userList,
+            del_user_list: [],
+          }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) {
+          throw new Error(`WeCom mock appchat/update failed: ${response.status}`);
+        }
+      } else {
+        const token = await this.realAccessToken();
+        const response = await fetch(
+          `https://qyapi.weixin.qq.com/cgi-bin/appchat/update?access_token=${encodeURIComponent(token)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chatid: chat.wecomChatId,
+              add_user_list: userList,
+              del_user_list: [],
+            }),
+            signal: AbortSignal.timeout(8_000),
+          },
+        );
+        const body = (await response.json()) as {
+          errcode?: number;
+          errmsg?: string;
+        };
+        if (body.errcode) {
+          throw new Error(
+            `WeCom appchat/update failed: ${body.errmsg ?? body.errcode}`,
+          );
+        }
+      }
+    }
+
     return this.local.addGroupMembers(input);
+  }
+
+  private async wecomUserIds(userIds: string[]): Promise<string[]> {
+    if (!userIds.length) return [];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds }, wecomUserId: { not: null } },
+      select: { wecomUserId: true },
+    });
+    return users
+      .map((user) => user.wecomUserId)
+      .filter((id): id is string => Boolean(id));
+  }
+
+  private async realAccessToken(): Promise<string> {
+    const corpId = this.config.get<string>('WECOM_CORP_ID') ?? '';
+    const secret = this.config.get<string>('WECOM_SECRET') ?? '';
+    if (!corpId || !secret) {
+      throw new Error('WeCom corpId/secret 未配置，无法创建真实群聊');
+    }
+    return this.accessToken(corpId, secret);
   }
 
   private async accessToken(corpId: string, secret: string): Promise<string> {
