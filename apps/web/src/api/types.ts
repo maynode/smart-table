@@ -160,6 +160,10 @@ export interface PublicFormDto {
   coverUrl: string | null;
   qrUrl: string;
   fields: PublicFormFieldDto[];
+  /** Present when the form has person / groupChat fields. */
+  members?: Array<{ userId: string; name: string }>;
+  /** Relation fieldId → target-sheet record choices. */
+  relationChoices?: Record<string, Array<{ id: string; label: string }>>;
 }
 
 export interface FormSubmitResult {

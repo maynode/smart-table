@@ -20,6 +20,7 @@ import * as QRCode from 'qrcode';
 import {
   buildSuccessValues,
   isFormFieldVisible,
+  isFormFillableFieldType,
   renderSuccessTemplate,
   type FormFieldConfig,
 } from 'shared';
@@ -160,6 +161,12 @@ export class FormsService implements OnModuleDestroy {
       if (!sheetFieldIds.has(field.fieldId)) {
         throw new BadRequestException(`字段不属于该工作表: ${field.fieldId}`);
       }
+      const sheetField = sheet.fields.find((item) => item.id === field.fieldId);
+      if (sheetField && !isFormFillableFieldType(sheetField.type)) {
+        throw new BadRequestException(
+          `「${sheetField.name}」是${sheetField.type}类型，不能加入收集表单`,
+        );
+      }
       if (seen.has(field.fieldId)) {
         throw new BadRequestException('表单字段重复');
       }
@@ -286,7 +293,10 @@ export class FormsService implements OnModuleDestroy {
   async getPublic(shareToken: string) {
     const form = await this.prisma.form.findUnique({
       where: { shareToken },
-      include: { sheet: { include: { fields: true } } },
+      include: {
+        sheet: { include: { fields: true } },
+        base: true,
+      },
     });
     if (!form) {
       throw new NotFoundException('表单不存在');
@@ -298,24 +308,57 @@ export class FormsService implements OnModuleDestroy {
       form.sheet.fields.map((field) => [field.id, field]),
     );
 
-    // Return every configured field: the public client re-evaluates display
-    // conditions as the respondent fills the form. Filtering here against empty
-    // values would permanently hide conditional fields.
-    const fields = configured
-      .flatMap((config) => {
-        const field = fieldById.get(config.fieldId);
-        if (!field) return [];
-        return [
-          {
-            fieldId: field.id,
-            name: field.name,
-            type: field.type,
-            options: field.options,
-            required: Boolean(config.required),
-            displayConditions: config.displayConditions ?? [],
-          },
-        ];
-      });
+    // Return every configured fillable field: the public client re-evaluates
+    // display conditions as the respondent fills. Computed/system types are
+    // omitted (not user-fillable).
+    const fields = configured.flatMap((config) => {
+      const field = fieldById.get(config.fieldId);
+      if (!field || !isFormFillableFieldType(field.type)) return [];
+      return [
+        {
+          fieldId: field.id,
+          name: field.name,
+          type: field.type,
+          options: field.options,
+          required: Boolean(config.required),
+          displayConditions: config.displayConditions ?? [],
+        },
+      ];
+    });
+
+    const needsMembers = fields.some(
+      (field) => field.type === 'person' || field.type === 'groupChat',
+    );
+    const members = needsMembers
+      ? (
+          await this.prisma.workspaceMember.findMany({
+            where: { workspaceId: form.base.workspaceId },
+            include: { user: { select: { id: true, name: true } } },
+            take: 500,
+          })
+        ).map((item) => ({
+          userId: item.user.id,
+          name: item.user.name,
+        }))
+      : [];
+
+    const relationChoices: Record<
+      string,
+      Array<{ id: string; label: string }>
+    > = {};
+    for (const field of fields) {
+      if (field.type !== 'relation') continue;
+      const targetSheetId = (
+        field.options as { relation?: { targetSheetId?: string } } | null
+      )?.relation?.targetSheetId;
+      if (!targetSheetId) {
+        relationChoices[field.fieldId] = [];
+        continue;
+      }
+      relationChoices[field.fieldId] = await this.listRelationChoices(
+        targetSheetId,
+      );
+    }
 
     return {
       id: form.id,
@@ -323,7 +366,72 @@ export class FormsService implements OnModuleDestroy {
       coverUrl: form.coverUrl,
       qrUrl: `${this.publicBase}/fill/${form.shareToken}`,
       fields,
+      members,
+      relationChoices,
     };
+  }
+
+  /** Public fill: upload image/file for a form field without login. */
+  async uploadPublicAttachment(
+    shareToken: string,
+    buffer: Buffer,
+    mimetype: string,
+    originalName: string,
+  ) {
+    const form = await this.prisma.form.findUnique({
+      where: { shareToken },
+      include: { base: true },
+    });
+    if (!form) {
+      throw new NotFoundException('表单不存在');
+    }
+    this.assertShareOpen(form);
+
+    await this.quotas.assertStorage(form.base.workspaceId, buffer.byteLength);
+    const saved = await this.storage.saveUpload(
+      buffer,
+      mimetype,
+      originalName,
+    );
+    await this.quotas.recordStorage(
+      form.base.workspaceId,
+      saved.key,
+      saved.size,
+    );
+    return {
+      url: saved.url,
+      name: saved.name,
+      mimetype: saved.mimetype,
+      size: saved.size,
+    };
+  }
+
+  private async listRelationChoices(
+    targetSheetId: string,
+  ): Promise<Array<{ id: string; label: string }>> {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: targetSheetId },
+      include: { fields: { orderBy: { order: 'asc' } } },
+    });
+    if (!sheet) return [];
+    const titleField =
+      sheet.fields.find((item) => item.type === 'text' || item.type === 'title') ??
+      sheet.fields[0] ??
+      null;
+    const records = await this.prisma.recordRow.findMany({
+      where: { sheetId: targetSheetId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return records.map((record) => {
+      const cells = (record.cells ?? {}) as Record<string, unknown>;
+      const raw = titleField ? cells[titleField.id] : null;
+      const label =
+        raw === null || raw === undefined || raw === ''
+          ? record.id.slice(0, 8)
+          : String(raw);
+      return { id: record.id, label };
+    });
   }
 
   async submit(

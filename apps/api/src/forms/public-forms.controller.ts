@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,6 +11,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { FormsService } from './forms.service';
 import { SubmitFormDto } from './dto/form-config.dto';
@@ -25,6 +27,27 @@ export class PublicFormsController {
   @Get(':token')
   get(@Param('token') token: string) {
     return this.formsService.getPublic(token);
+  }
+
+  @Post(':token/attachments')
+  @HttpCode(HttpStatus.CREATED)
+  async uploadAttachment(
+    @Param('token') token: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const file = await (
+      request as FastifyRequest & {
+        file(): Promise<MultipartFile | undefined>;
+      }
+    ).file();
+    if (!file) throw new BadRequestException('未选择文件');
+    const buffer = await file.toBuffer();
+    return this.formsService.uploadPublicAttachment(
+      token,
+      buffer,
+      file.mimetype,
+      file.filename,
+    );
   }
 
   @Post(':token/submit')

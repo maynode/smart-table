@@ -284,6 +284,7 @@ export class TemplatesService {
           order: 3,
         },
       });
+      // 对齐企微「序列号领取」收集表单：默认仅手机号（备注可自行在编辑表单里加）
       const phone = await tx.field.create({
         data: {
           sheetId: formSheet.id,
@@ -292,9 +293,6 @@ export class TemplatesService {
           order: 0,
           required: true,
         },
-      });
-      const remark = await tx.field.create({
-        data: { sheetId: formSheet.id, name: '备注', type: 'text', order: 1 },
       });
 
       for (let index = 1; index <= 100; index += 1) {
@@ -319,10 +317,7 @@ export class TemplatesService {
           sheetId: formSheet.id,
           name: '序列号领取',
           shareToken,
-          fields: [
-            { fieldId: phone.id, required: true },
-            { fieldId: remark.id },
-          ] as Prisma.InputJsonValue,
+          fields: [{ fieldId: phone.id, required: true }] as Prisma.InputJsonValue,
           share: {
             enabled: true,
             audience: 'anyone',

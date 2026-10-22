@@ -457,6 +457,16 @@ h3 {
   overflow: hidden;
 }
 
+.base-main > .grid-panel,
+.base-main > .form-builder {
+  flex: 1;
+  min-height: 0;
+}
+
+.base-main > .form-object-tabs {
+  flex: none;
+}
+
 .sidebar {
   width: 220px;
   flex: none;

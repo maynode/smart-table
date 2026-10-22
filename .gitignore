@@ -15,4 +15,5 @@ test-results/
 .perf-env.json
 artifacts/perf/
 .data/
+.superpowers/
 

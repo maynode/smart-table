@@ -313,6 +313,25 @@ export const endpoints = {
       token: null,
     }),
 
+  uploadPublicFormAttachment: async (token: string, file: File) => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+    const body = new FormData();
+    body.append('file', file);
+    const response = await fetch(
+      `${base}/public/forms/${encodeURIComponent(token)}/attachments`,
+      { method: 'POST', body },
+    );
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as {
+      url: string;
+      name: string;
+      mimetype: string;
+      size: number;
+    };
+  },
+
   submitPublicForm: (token: string, cells: Record<string, unknown>) =>
     api<FormSubmitResult>(
       `/public/forms/${encodeURIComponent(token)}/submit`,

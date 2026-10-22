@@ -5,12 +5,13 @@ import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { PublicFormDto, PublicFormFieldDto } from '../api/types';
 import { isFormFieldVisible } from 'shared';
+import FormFieldControl from '../components/FormFieldControl.vue';
 
 const route = useRoute();
 const token = computed(() => String(route.params.token));
 
 const form = ref<PublicFormDto | null>(null);
-const answers = reactive<Record<string, any>>({});
+const answers = reactive<Record<string, unknown>>({});
 const loading = ref(true);
 const submitting = ref(false);
 const error = ref('');
@@ -30,23 +31,10 @@ const visibleFields = computed<PublicFormFieldDto[]>(() => {
   );
 });
 
-function inputType(type: string): string {
-  if (type === 'phone') return 'tel';
-  if (type === 'email') return 'email';
-  if (['number', 'percent', 'currency', 'progress'].includes(type)) {
-    return 'number';
-  }
-  if (type === 'date') return 'date';
-  if (type === 'url') return 'url';
-  return 'text';
-}
+const members = computed(() => form.value?.members ?? []);
 
-function isMultiSelect(field: PublicFormFieldDto): boolean {
-  return field.type === 'multiSelect';
-}
-
-function choicesOf(field: PublicFormFieldDto) {
-  return field.options?.choices ?? [];
+function relationChoicesFor(fieldId: string) {
+  return form.value?.relationChoices?.[fieldId] ?? [];
 }
 
 function isEmptyValue(value: unknown): boolean {
@@ -58,16 +46,22 @@ function isEmptyValue(value: unknown): boolean {
   );
 }
 
+function initialValue(field: PublicFormFieldDto): unknown {
+  if (field.type === 'multiSelect' || field.type === 'groupChat') return [];
+  if (field.type === 'checkbox') return false;
+  if (field.type === 'progress') return 0;
+  return '';
+}
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
     const result = await endpoints.getPublicForm(token.value);
     form.value = result;
+    for (const key of Object.keys(answers)) delete answers[key];
     for (const field of result.fields) {
-      if (field.type === 'multiSelect') answers[field.fieldId] = [];
-      else if (field.type === 'checkbox') answers[field.fieldId] = false;
-      else answers[field.fieldId] = '';
+      answers[field.fieldId] = initialValue(field);
     }
   } catch (caught) {
     error.value =
@@ -77,6 +71,10 @@ async function load(): Promise<void> {
   }
 }
 
+async function uploadFile(file: File) {
+  return endpoints.uploadPublicFormAttachment(token.value, file);
+}
+
 async function submit(): Promise<void> {
   if (submitting.value || !form.value) return;
   error.value = '';
@@ -84,9 +82,18 @@ async function submit(): Promise<void> {
   const cells: Record<string, unknown> = {};
   for (const field of visibleFields.value) {
     const value = answers[field.fieldId];
-    if (field.required && isEmptyValue(value)) {
+    const checkboxMissing =
+      field.type === 'checkbox' &&
+      field.required &&
+      value !== true &&
+      value !== 'true';
+    if (checkboxMissing || (field.required && isEmptyValue(value))) {
       error.value = `请填写「${field.name}」`;
       return;
+    }
+    if (field.type === 'checkbox') {
+      cells[field.fieldId] = value === true || value === 'true';
+      continue;
     }
     if (!isEmptyValue(value)) cells[field.fieldId] = value;
   }
@@ -133,64 +140,16 @@ onMounted(load);
             {{ field.name }}
           </label>
 
-          <select
-            v-if="field.type === 'select'"
-            :id="`field-${field.fieldId}`"
+          <FormFieldControl
             v-model="answers[field.fieldId]"
+            :field-id="field.fieldId"
+            :name="field.name"
+            :type="field.type"
+            :options="field.options"
             :required="field.required"
-            data-testid="form-select"
-          >
-            <option value="">请选择</option>
-            <option
-              v-for="choice in choicesOf(field)"
-              :key="choice.id"
-              :value="choice.id"
-            >
-              {{ choice.name }}
-            </option>
-          </select>
-
-          <div v-else-if="isMultiSelect(field)" class="fill-choices">
-            <label
-              v-for="choice in choicesOf(field)"
-              :key="choice.id"
-              class="fill-choice"
-            >
-              <input
-                v-model="answers[field.fieldId]"
-                type="checkbox"
-                :value="choice.id"
-              />
-              {{ choice.name }}
-            </label>
-          </div>
-
-          <input
-            v-else-if="field.type === 'checkbox'"
-            :id="`field-${field.fieldId}`"
-            v-model="answers[field.fieldId]"
-            type="checkbox"
-          />
-
-          <textarea
-            v-else-if="field.type === 'text' && field.name.includes('备注')"
-            :id="`field-${field.fieldId}`"
-            v-model="answers[field.fieldId]"
-            rows="3"
-            :placeholder="`请输入${field.name}`"
-            :required="field.required"
-          ></textarea>
-
-          <input
-            v-else
-            :id="`field-${field.fieldId}`"
-            v-model="answers[field.fieldId]"
-            :type="inputType(field.type)"
-            :placeholder="
-              field.type === 'phone' ? '请输入电话号码' : `请输入${field.name}`
-            "
-            :required="field.required"
-            :data-testid="field.type === 'phone' ? 'form-phone' : 'form-field'"
+            :members="members"
+            :relation-choices="relationChoicesFor(field.fieldId)"
+            :upload-file="uploadFile"
           />
         </div>
 
@@ -265,32 +224,7 @@ onMounted(load);
 }
 .required-mark {
   color: #d92d20;
-  margin-left: 2px;
-}
-.fill-field input,
-.fill-field select,
-.fill-field textarea {
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 14px;
-  outline: none;
-}
-.fill-field input:focus,
-.fill-field select:focus,
-.fill-field textarea:focus {
-  border-color: #2e6be6;
-}
-.fill-choices {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.fill-choice {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  margin-right: 2px;
 }
 .fill-submit {
   width: 100%;
@@ -330,14 +264,15 @@ onMounted(load);
 .fill-again {
   margin-top: 18px;
 }
-.required-mark {
-  margin-right: 2px;
-  margin-left: 0;
-}
 .fill-footnote {
   text-align: center;
   color: #98a2b3;
   font-size: 12px;
   margin: 20px 0 0;
+}
+.empty-state {
+  padding: 48px 16px;
+  text-align: center;
+  color: #667085;
 }
 </style>

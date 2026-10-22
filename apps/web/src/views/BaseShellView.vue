@@ -50,8 +50,14 @@ const base = ref<BaseDto | null>(null);
 const sheets = ref<SheetDto[]>([]);
 const forms = ref<FormDto[]>([]);
 const activeSheet = ref<SheetDto | null>(null);
-/** 企微：有关联 Form 的工作表打开表单 UI，不是网格 */
-const mainView = ref<'grid' | 'form'>('grid');
+/**
+ * grid：普通工作表网格
+ * form：收集表单（编辑/填写）
+ * form-results：该表单的提交记录（收集结果，底层仍是表记录网格）
+ */
+const mainView = ref<'grid' | 'form' | 'form-results'>('grid');
+/** 从收集结果返回表单时，恢复编辑/填写 Tab */
+const formReturnTab = ref<'design' | 'preview'>('design');
 
 const formSheetIds = computed(
   () => new Set(forms.value.map((item) => item.sheetId)),
@@ -155,6 +161,33 @@ async function bootstrap(): Promise<void> {
   }
 }
 
+function onFormSheetUpdated(sheet: SheetDto): void {
+  activeSheet.value = sheet;
+  sheets.value = sheets.value.map((item) =>
+    item.id === sheet.id ? { ...item, fields: sheet.fields } : item,
+  );
+}
+
+async function openFormResults(): Promise<void> {
+  if (!activeSheet.value) return;
+  mainView.value = 'form-results';
+  loading.value = true;
+  try {
+    const page = await endpoints.listRecords(activeSheet.value.id, null, 100);
+    records.value = page.records;
+    nextCursor.value = page.nextCursor;
+  } catch (error) {
+    toast(messageOf(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+function backToForm(tab: 'design' | 'preview' = 'preview'): void {
+  formReturnTab.value = tab;
+  mainView.value = 'form';
+}
+
 async function selectSheet(sheetId: string, push = true): Promise<void> {
   if (push && route.query.sheet !== sheetId) {
     await router.replace({ query: { ...route.query, sheet: sheetId } });
@@ -169,11 +202,16 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       clearEditHistory();
     }
     activeSheet.value = detail;
-    // 企微：收集表单进表单 UI（编辑/填写），不是表格网格
+    // 企微：收集表单默认进表单 UI；提交数据在「收集结果」里看
     if (isFormSheet(detail)) {
       mainView.value = 'form';
       formBuilderOpen.value = false;
-      savedViews.value = [];
+      savedViews.value = views;
+      currentViewId.value = '';
+      currentQuery.value = {};
+      savedViewName.value = '';
+      rowColors.value = {};
+      viewGroups.value = [];
       records.value = [];
       nextCursor.value = null;
       return;
@@ -1224,13 +1262,76 @@ onBeforeUnmount(() => {
 
       <main class="base-main">
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
-        <FormBuilderPanel
-          v-else-if="activeSheet && mainView === 'form'"
-          :key="`form-${activeSheet.id}`"
-          embedded
-          :base-id="baseId"
-          :sheet="activeSheet"
-        />
+        <template
+          v-else-if="
+            activeSheet &&
+            (mainView === 'form' || mainView === 'form-results') &&
+            isFormSheet(activeSheet)
+          "
+        >
+          <!-- 企微：收集表单 | 表单收集结果 —— 与「编辑/填写」分层 -->
+          <div class="form-object-tabs" data-testid="form-object-tabs">
+            <button
+              type="button"
+              :class="{ active: mainView === 'form' }"
+              data-testid="form-object-form"
+              @click="backToForm(formReturnTab)"
+            >
+              <span class="form-object-icon">📝</span>
+              收集表单
+            </button>
+            <button
+              type="button"
+              :class="{ active: mainView === 'form-results' }"
+              data-testid="form-object-results"
+              @click="openFormResults"
+            >
+              <span class="form-object-icon">▦</span>
+              表单收集结果
+            </button>
+          </div>
+          <FormBuilderPanel
+            v-if="mainView === 'form'"
+            :key="`form-${activeSheet.id}`"
+            embedded
+            :base-id="baseId"
+            :workspace-id="workspaceId"
+            :sheet="activeSheet"
+            :initial-tab="formReturnTab"
+            @sheet-updated="onFormSheetUpdated"
+          />
+          <GridPanel
+            v-else
+            ref="gridRef"
+            :key="`results-${activeSheet.id}`"
+            :sheet-id="activeSheet.id"
+            :sheet-name="activeSheet.name"
+            :fields="activeSheet.fields ?? []"
+            :records="records"
+            :next-cursor="nextCursor"
+            :loading="loading"
+            :row-colors="rowColors"
+            :row-height="rowHeightPx"
+            :groups="viewGroups"
+            :members="members"
+            :sheets="sheets"
+            :upload-attachment="uploadToSheet"
+            @add-row="addRow"
+            @insert-rows="insertRows"
+            @load-more="loadMore"
+            @refresh="refreshSheet"
+            @undo="undoEdit"
+            @redo="redoEdit"
+            @commit="commitCell"
+            @toggle-field="toggleField"
+            @create-field="createField"
+            @update-field="updateFieldMeta"
+            @delete-field="deleteField"
+            @delete-records="deleteRecords"
+            @query="applyViewQuery"
+            @query-change="onQueryChange"
+          />
+        </template>
         <GridPanel
           v-else-if="activeSheet"
           ref="gridRef"
@@ -1361,6 +1462,7 @@ onBeforeUnmount(() => {
           v-if="activeSheet"
           :key="activeSheet.id"
           :base-id="baseId"
+          :workspace-id="workspaceId"
           :sheet="activeSheet"
           @close="formBuilderOpen = false"
         />
@@ -1718,5 +1820,41 @@ onBeforeUnmount(() => {
   color: #a5a9b2;
   font-size: 11px;
   line-height: 1.5;
+}
+.form-object-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 6px 12px 0;
+  background: #fff;
+  border-bottom: 1px solid var(--border, #e5e6eb);
+}
+.form-object-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-secondary, #646a73);
+  font-size: 13px;
+  cursor: pointer;
+}
+.form-object-tabs button:hover {
+  background: var(--bg-hover, #f2f3f5);
+}
+.form-object-tabs button.active {
+  background: #f7f8fa;
+  border-color: var(--border, #e5e6eb);
+  color: var(--text, #1f2329);
+  font-weight: 600;
+}
+.form-object-icon {
+  font-size: 12px;
+  opacity: 0.85;
 }
 </style>

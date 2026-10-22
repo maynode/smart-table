@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   FIELD_TYPE_LABELS,
   SYSTEM_FIELD_TYPES,
+  isFormFillableFieldType,
   type FieldType,
 } from 'shared';
 import { newId } from '../ui/id';
@@ -30,6 +31,8 @@ const props = withDefaults(
     initialType?: FieldType;
     initialOptions?: Record<string, unknown> | null;
     mode?: 'create' | 'edit';
+    /** Hide formula/system/AI etc. when adding fields into a collect form. */
+    fillableOnly?: boolean;
   }>(),
   {
     anchor: null,
@@ -37,6 +40,7 @@ const props = withDefaults(
     initialType: 'text',
     initialOptions: null,
     mode: 'create',
+    fillableOnly: false,
   },
 );
 
@@ -75,7 +79,14 @@ const MENU_GROUPS: FieldType[][] = [
   [...SYSTEM_FIELD_TYPES],
 ];
 
-const flatTypes = computed(() => MENU_GROUPS.flat());
+const menuGroups = computed(() =>
+  MENU_GROUPS.map((group) =>
+    props.fillableOnly
+      ? group.filter((type) => isFormFillableFieldType(type))
+      : group,
+  ).filter((group) => group.length > 0),
+);
+const flatTypes = computed(() => menuGroups.value.flat());
 const isChoiceType = computed(
   () => selected.value === 'select' || selected.value === 'multiSelect',
 );
@@ -401,7 +412,7 @@ function iconFor(type: FieldType): string {
         <template v-if="phase === 'types' || typeMenuOpen">
           <p class="ftp-hint">选择字段类型</p>
           <div
-            v-for="(group, groupIndex) in MENU_GROUPS"
+            v-for="(group, groupIndex) in menuGroups"
             :key="groupIndex"
             class="ftp-group"
             :class="{ 'ftp-group-ai': groupIndex === 0 && group[0] === 'ai' }"

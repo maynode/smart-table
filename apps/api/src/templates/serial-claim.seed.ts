@@ -107,6 +107,7 @@ export async function seedSerialClaim(
       data: { baseId: base.id, name: '码库' },
     });
 
+    // 对齐企微：收集表单默认仅手机号
     const phone = await tx.field.create({
       data: {
         sheetId: formSheet.id,
@@ -115,9 +116,6 @@ export async function seedSerialClaim(
         order: 0,
         required: true,
       },
-    });
-    const remark = await tx.field.create({
-      data: { sheetId: formSheet.id, name: '备注', type: 'text', order: 1 },
     });
 
     const serial = await tx.field.create({
@@ -171,10 +169,7 @@ export async function seedSerialClaim(
         sheetId: formSheet.id,
         name: '序列号领取',
         shareToken,
-        fields: [
-          { fieldId: phone.id, required: true },
-          { fieldId: remark.id },
-        ] as Prisma.InputJsonValue,
+        fields: [{ fieldId: phone.id, required: true }] as Prisma.InputJsonValue,
         share: {
           enabled: true,
           audience: 'anyone',

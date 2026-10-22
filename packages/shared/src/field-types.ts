@@ -109,6 +109,19 @@ export function isChoiceFieldType(type: FieldType): boolean {
   return CHOICE_FIELD_TYPES.includes(type);
 }
 
+/**
+ * Types that must not appear as fillable form questions
+ * (computed / system-maintained). Match grid: users don't type these.
+ */
+export const FORM_NON_FILLABLE_FIELD_TYPES: readonly FieldType[] = [
+  ...SYSTEM_FIELD_TYPES,
+  ...COMPUTED_FIELD_TYPES,
+];
+
+export function isFormFillableFieldType(type: string): boolean {
+  return !(FORM_NON_FILLABLE_FIELD_TYPES as readonly string[]).includes(type);
+}
+
 export interface FieldOption {
   id: string;
   name: string;
