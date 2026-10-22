@@ -185,6 +185,7 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
     'success',
   );
 
+  page.once('dialog', (dialog) => dialog.accept());
   await page
     .getByTestId('dashboard-widget-card')
     .nth(1)
