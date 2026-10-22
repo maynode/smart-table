@@ -1,160 +1,170 @@
-# 智能表格 — 剩余未完成清单
+# 智能表格 — 剩余未完成清单（交接版）
 
 > 更新日期：2026-10-22  
 > 对照：`docs/智能表格-产品与技术方案.md`、`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
-> 原则：**不按文档勾选判完**；下表按「代码有没有 / 页面能不能用 / 验收能不能过」划分。
+> 原则：**不以文档勾选代替验证**。本文件只记录「代码状态 + 可复现证据 + 仍缺什么」。
 
 ---
 
-## 0. 一句话
+## 0. 一句话现状
 
-**主验收路径（领码 → 成功页）基本可用；企微级交互与体验仍差一大截；压测达标报告与部分平台能力未闭环。**
-
----
-
-## 1. 建议优先级
-
-| 优先级 | 含义 | 模块 |
-|--------|------|------|
-| P0 | 不做则明显不像企微 / 主路径残 | 表格交互、表单构建器、自动化编辑 UI |
-| P1 | 方案写明必交，现半截 | 压测报告、企微群聊真适配、命名视图、定时自动化 |
-| P2 | 有 API 缺产品化或弱实现 | 字段语义、仪表盘画布、成员邀请 UI、部署镜像新鲜度 |
-| P3 | 增强 / 可后置但仍在本计划内 | ClickHouse ETL、更多编辑器、像素级样式 |
+W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互、可视化表单构建器、可视化自动化编辑器、命名视图、真实 schedule runner、成员邀请、顶栏分享/更多、仪表盘多图布局均已落地，并有 Playwright/API E2E 证据。  
+**尚未完成的是 W5 交付闭环**：全量回归、Task 26 新鲜压测数据、Docker 镜像重建与 smoke；ClickHouse 仍只有查询适配器，没有 PG→CH ETL。W6 最终报告待写。
 
 ---
 
-## 2. 按模块：还剩什么
+## 1. 已完成（代码 + 证据）
 
-### 2.1 表格 / Canvas（P0）
+### W1 表格 / Canvas
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 多层 Canvas + 虚拟化 + 行号 + 添加字段 | 已有 | 近期已补字段选择器、表头改字段、类型编辑 |
-| 筛选 / 分组 / 排序 / 行高 / 填色 | 半成品 | API + 简易浮层有；交互/样式远逊企微截图 |
-| 列头菜单（改类型、选项编辑、删除列） | 半成品 | 能改名/类型；缺选项配置器、删除字段 |
-| 字段类型专用编辑器 | 半成品 | 单选/多选/日期/数字/复选框有；人员/附件/关联/地理位置等无 |
-| 列宽持久化 | 未做 | 拖宽只在内存，刷新丢失 |
-| 冻结列 / 多选行 / 右键菜单 | 未做 | 企微常用交互 |
-| 条件填色完整 UI | 半成品 | 单规则可用；多规则/色板弱 |
-| 命名视图（保存筛选组合） | 未做 | 后端无 View 模型；只有临时 query |
-| Sheet / Field 删除、重命名 Sheet | 未做 | API/UI 缺删表删字段等 |
+| 能力 | 状态 | 位置 / 证据 |
+|------|------|-------------|
+| Canvas 多层渲染 + 行虚拟化保持 | 完成 | `apps/web/src/grid-canvas/engine.ts`、`CanvasGrid.vue`；`e2e/grid-canvas.spec.ts` 2/2 通过 |
+| 列宽拖拽并持久化到 `field.options.width` | 完成 | `engine.ts` 的 `onColumnResize`、`GridPanel.vue` 的 `resizeField`；`e2e/grid-w1.spec.ts` 刷新后仍生效 |
+| 字段删除（API+UI 确认） | 完成 | `DELETE /fields/:fieldId`；`GridPanel.vue`；W1 Playwright 校验字段消失 |
+| 工作表重命名/删除 | 完成 | `PATCH/DELETE /sheets/:sheetId`；侧栏菜单 + 「更多」；W1 Playwright 通过 |
+| 单选/多选选项编辑器（增删改颜色排序） | 完成 | `FieldOptionsEditor.vue`；W1 Playwright 新增选项后 API choices=3 |
+| 多条件筛选（and/or）、多排序、多分组、多填色规则 | 完成 | `GridPanel.vue` 浮层；W1 Playwright 走真实 query，记录数 1/2 切换正确 |
+| 人员字段选择工作区成员 | 完成 | `CanvasGrid.vue` person editor；W1 Playwright 选人后记录写入 member id |
+| 图片/文件上传 + 格子展示 | 完成 | `POST /sheets/:sheetId/attachments`、`/files/uploads/:name`；W1 Playwright 上传后记录含文件 URL |
+| 行多选 + 批量删除工具条 | 完成 | 行号点击选择；`selection-bar`；W1 Playwright 通过 |
+| 命名视图保存/切换/重命名/删除 | 完成 | `SavedView` 模型、`views.controller.ts`、侧栏；W1 Playwright 保存/应用，W4 API CRUD 5/5 |
+| 条件填色、行高、冻结列 | 部分 | 多规则填色/行高完成；**冻结列未做**，行多选已覆盖常用场景 |
 
-### 2.2 收集表单（P0）
+### W2 收集表单
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 公开提交 + 成功页变量 + 二维码 | 已有 | 主路径可用 |
-| 表单构建器（企微级） | 半成品 | 能开关字段/成功文案/分享；无拖拽画布、无封面上传 UI、无显示条件可视化编辑 |
-| 填写范围 / 过期等高级分享 | 半成品 | 后端能力多于前端入口 |
+| 能力 | 状态 | 位置 / 证据 |
+|------|------|-------------|
+| 可视化字段加入/移除/排序/必填 | 完成 | `FormBuilderPanel.vue`；W2 Playwright 通过 |
+| 封面上传与预览 | 完成 | `POST /forms/:formId/cover`、`FormBuilderPanel.vue`；W2 Playwright 校验 `coverUrl` |
+| 显示条件可视化编辑 + 公开表单动态显示 | 完成 | `shared` 的 `isFormFieldVisible`；公开接口返回全部配置字段，由前端按作答值判断；W2 Playwright「选到访后备注出现」通过 |
+| 分享：启用、复制、二维码、范围、过期 | 完成 | 分享链接/QR/`audience`/`expiresAt`；W2 Playwright 校验 API 持久化 |
+| 成功页模板编辑 + 变量 + 预览 | 完成 | 模板编辑器 + `form-success-preview`；W2 Playwright 显示示例姓名/SN |
+| 序列号领取主路径 | 完成 | `e2e/serial-claim.spec.ts` 1/1 通过 |
 
-### 2.3 自动化（P0 UI / P1 触发）
+### W3 自动化
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| Runner：查找 limit=1、SKIP LOCKED、改记录、日志 | 已有 | 领码场景验证过 |
-| 自动化**编辑 UI** | 未做 | `AutomationPanel` 只读列表+日志；不能可视化配流程 |
-| 自然语言步骤卡片 / 指定内容面板 | 未做 | 对照企微截图未做 |
-| 月额度 UI | 半成品 | 配额后端有；流程侧产品化弱 |
-| `schedule` 定时触发 | 未做 | 校验接受 `schedule`，**无 cron runner** |
-| 企微「发起群聊 / 加群成员」 | 半成品 | 走 Local 占位，非真企微群 API |
+| 能力 | 状态 | 位置 / 证据 |
+|------|------|-------------|
+| 创建/编辑/启停/删除 | 完成 | `AutomationEditor.vue`、`AutomationPanel.vue`；W3 Playwright 全部走 API 校验 |
+| recordCreated / recordUpdated / schedule 触发 + 条件 | 完成 | 编辑器 + `automations.service.ts`；schedule 另见 W4 runner 测试 |
+| findRecords（limit 默认 1）/ modifyRecords（绑定上一步）/ createRecord / sendMessage / startGroupChat / addGroupMembers | 完成 | 可视化步骤；群聊无凭证走 Local，但真实写入 `GroupChat.wecomChatId` 可测 |
+| 步骤变量插入 | 完成 | 变量 chips；W3 插入 `{{序列号}}` 后生成消息文本 |
+| 运行日志/步骤详情 | 完成 | 可展开 JSON；W3 校验 find/modify/sendMessage 三段 |
+| UI 生成的 JSON 能跑通真实领取链路 | 完成 | W3 创建「查找未领→改状态→发消息」，建记录触发后码状态变 claimed，run=success |
 
-### 2.4 登录与协作（P1）
+### W4 平台补齐
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 账号密码 | 已有 | |
-| 企微 OAuth | 已有（源码） | 需保证 Docker 镜像含最新代码；曾出现镜像缺路由 |
-| 成员邀请 UI | 未做 | 有成员列表；邀请靠 API |
-| 顶栏「分享」「更多」 | 未做 | 仍是 `comingSoon` toast |
-| 评论 @ 同事 | 未做 | 仅纯文本评论 |
+| 能力 | 状态 | 位置 / 证据 |
+|------|------|-------------|
+| 命名视图持久化 filter/sort/group/rowHeight/colorRules | 完成 | `SavedView.query` JSON；W1/W4 测试 |
+| 自动化 schedule 真实 runner（cron、原子 claim、nextRunAt） | 完成 | `automation-scheduler.service.ts` 15s 轮询 + `updateMany` 原子抢占；W4 API 测试断言只执行一次、nextRunAt 后移 |
+| 顶栏「分享」接真实分享面板 | 完成 | `SharePanel.vue`；W4 Playwright 打开/关闭 |
+| 顶栏「更多」真实菜单 | 完成 | 成员、重命名、公开视图、配额、开发者、导出、删表；无 `comingSoon`；W4 Playwright 从菜单进成员 |
+| 成员邀请/改角色/移除 UI | 完成 | `MembersPanel.vue`；W4 Playwright 邀请→viewer→移除并核对 API |
+| 企微群聊真 API / Local fallback | 完成 | `notify/wecom.adapter.ts`；`WECOM_ENABLED=false` 时本地群聊并写 `wecomChatId` |
+| 仪表盘多图拖拽/缩放布局 | 完成 | 12 列 bento、拖拽重排、宽高持久化、删除；W4 Playwright 两图、加宽 w=8、增高 h=4、删除后剩 1 |
+| 仪表盘定时推送创建/立即执行 | 完成 | `dashboard-schedule-*`；W4 Playwright run 显示 success |
 
-### 2.5 仪表盘 / 分析（P1–P2）
+### 构建 / 单测状态
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 仪表盘 CRUD + ECharts + 定时推送 | 已有（偏功能） | 布局非企微拖拽画布 |
-| ClickHouse 适配器 | 半成品 | 能查；**无 PG→CH 同步/ETL**，生产不可直接切 |
-
-### 2.6 平台能力（P1–P2）
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 内容权限 ACL | API+面板有 | 体验可再贴截图 |
-| 跨空间共享 / 公开只读 | 已有 | |
-| Open API / Webhook / 配额 / 审计 | API 有 | 产品页偏「开发者面板」 |
-| 同步 HTTP+文件 | 已有 | |
-| 文件夹 / 模板 / 序列号模板 | 已有 | |
-| Excel 导入导出 | 已有 | |
-
-### 2.7 字段语义（P2）
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 类型枚举对齐企微 | 已有 | shared 全量类型 |
-| HyperFormula / lookup | 查询路径有 | 网格内创建体验弱 |
-| `autoNumber` / `ai` | 仅类型位 | 无真正生成/调用逻辑 |
-| 图片 / 文件上传单元格 | 未做 | 存储底座有，网格未接 |
-
-### 2.8 性能与交付（P1）
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 队列提交 / claim 索引 / 基础 smoke | 已有 | |
-| OTel / K8s 清单 | 半成品 | 有骨架；完整集群（Ingress、有状态组件）未齐 |
-| **Task 26 压测达标报告** | 未结案 | `PERFORMANCE.md` 仍写「最终以 Task 26 为准」；高并发/多副本正式报告缺 |
-| Compose 镜像与源码同步 | 运维债 | 开发看 Vite `:5173`；`:8080` 旧镜像会显得「功能没了」 |
-
-### 2.9 明确不做（产品边界，不是欠账）
-
-- 不以飞书 / Airtable 为对标  
-- 不做复杂 CRDT 多人实时编辑  
-- 不做可编辑公网外链（公开填表 + 公开只读要做）  
-- 不做多区域多活  
-- 不做短信验证码  
+- `pnpm --filter api build`：通过（最近一次 W4 修改后重跑）。
+- `pnpm --filter shared test`：cron 18/18 通过（本文件更新时未改 shared）。
+- `pnpm --filter web exec playwright test`：见第 3 节“本轮新鲜结果”；分套件 W1/W2/W3/W4 + serial + grid 均通过。
+- `apps/api/test/w4-platform.e2e-spec.ts`：5/5 通过（saved views、attachment、字段删除、schedule 只跑一次、sheet rename/delete）。
 
 ---
 
-## 3. 「没开发」还是「没部署」
+## 2. 还没做（下一 AI 从这里继续）
 
-| 现象 | 原因 |
+### P0 交付闭环（必须做，否则不能宣称完工）
+
+1. **全量回归**
+   - 跑完整 `pnpm --filter api test:e2e --runInBand`；此前仅剩 `wecom-oauth.e2e-spec.ts` 一次不稳定失败（示例邮箱时间戳不一致，疑似共享 mock 状态），需复跑确认是 flake 还是真 bug。
+   - 跑完整 `pnpm --filter web exec playwright test`，必须包含 `grid-perf.spec.ts`。
+   - 跑 `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` 和 `pnpm --filter web exec vitest run`。
+2. **Task 26 性能报告**
+   - 在本机跑 `pnpm perf:claim`、`pnpm perf:grid`、`pnpm perf:window`、`pnpm perf:form`。
+   - 把机器信息、命令、原始结果、结论写进 `docs/PERFORMANCE.md`；不得沿用旧数字。
+3. **Docker 镜像与源码一致**
+   - `docker compose build api web claim-worker`，`docker compose up -d`。
+   - smoke：`/health`、`/metrics`、公开表单提交、自动化运行。
+   - 当前开发环境是 Vite `:5173` + 本机 API `:3000`；`:8080` 仍是旧镜像，不能作为验收依据。
+4. **W6 最终报告**
+   - 变更摘要、验证命令与结果、客观限制、启动步骤。
+
+### P1 / P2（不阻塞上述 P0，但应记录）
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| ClickHouse ETL | 未做 | 只有 `ANALYTICS_ADAPTER=clickhouse` 查询适配器；没有 PG→CH 同步任务。默认 PG 路径不受影响 |
+| 冻结列 | 未做 | 行多选已做；列冻结仍缺 |
+| 评论 @ 同事 | 未做 | 评论仍是纯文本 |
+| natural-language 自动化步骤卡片 | 未做 | 当前是结构化表单编辑器，功能等价但不是截图同款文案卡片 |
+| `autoNumber` / `ai` 字段 | 仅类型位 | 无真正自增/模型调用逻辑 |
+| OTel / K8s 完整度 | 骨架 | 无完整集群清单/Ingress/有状态组件 |
+| 视觉像素级对齐 | 未完成 | 功能可用，未逐屏对照企微截图 |
+
+### 明确不做（产品边界）
+
+- CRDT 实时多人协作、可编辑公网外链、多区域多活、短信验证码、飞书/Airtable 对标。
+
+---
+
+## 3. 本轮新鲜验证结果
+
+| 命令 | 结果 |
 |------|------|
-| Vite `:5173` 仍缺加字段以外的大批企微交互 | **没开发到产品级 UI** |
-| Docker `:8080` 比源码更残 | **镜像未跟源码重建**（部署债） |
-| 自动化/表单后端强、页面弱 | **半截：API 有、编辑器没有** |
+| `pnpm --filter shared test` | 18/18 passed（cron parser） |
+| `pnpm --filter api build` | passed (`nest build`) |
+| `pnpm --filter api exec jest --config ./test/jest-e2e.json --runInBand test/w4-platform.e2e-spec.ts` | 5/5 passed |
+| `pnpm --filter web exec playwright test e2e/grid-canvas.spec.ts` | 2/2 passed |
+| `pnpm --filter web exec playwright test e2e/grid-w1.spec.ts` | 2/2 passed |
+| `pnpm --filter web exec playwright test e2e/form-builder-w2.spec.ts` | 1/1 passed |
+| `pnpm --filter web exec playwright test e2e/automation-w3.spec.ts` | 1/1 passed |
+| `pnpm --filter web exec playwright test e2e/platform-w4.spec.ts` | 1/1 passed |
+| `pnpm --filter web exec playwright test e2e/serial-claim.spec.ts` | 1/1 passed |
+| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（45.1s）**，含 grid-perf：1000 万行 p50 16.7ms / p95 17.8ms |
+| `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` | passed |
+| `pnpm --filter web exec vitest run` | 8/8 passed（2 files） |
+| 全量 API e2e | 未跑绿；此前 wecom-oauth 一次 flake；见 P0-1 |
 
-重建示例（需要时）：
+---
+
+## 4. 启动 / 验收
 
 ```bash
-docker compose build --no-cache api web claim-worker && docker compose up -d
+# 依赖与数据库
+pnpm install
+pnpm --filter shared build
+pnpm --filter api prisma:migrate   # 或 npx prisma migrate deploy
+
+# 本地开发（验收以这套为准）
+pnpm --filter api start            # :3000
+pnpm --filter web dev              # :5173
+
+# 测试
+pnpm --filter shared test
+pnpm --filter api test:e2e --runInBand
+pnpm --filter web exec playwright test
 ```
 
----
+验收路径：
 
-## 4. 建议下一轮排期（可执行）
-
-1. **表格**：列宽持久化、删字段、单选选项编辑器、人员/附件编辑入口  
-2. **表单构建器**：封面上传 UI、显示条件可视化、字段拖拽  
-3. **自动化编辑器**：触发 + 六动作可视化配置（先接现有 API）  
-4. **定时自动化 runner** + 企微群聊真适配（可配置）  
-5. **命名视图**（Prisma View + 侧栏切换）  
-6. **Task 26**：多副本领码 + 千万行/高峰填表书面报告入库  
-
----
-
-## 5. 粗估完成度（相对零妥协方案）
-
-| 层 | 粗估 |
-|----|------|
-| 后端主路径 / 平台 API | ~75–85% |
-| 前端企微级交互 | ~40–55%（表格近期有提升） |
-| 压测与生产交付闭环 | ~50% |
-| **整体可宣称「方案交齐」** | **约一半多** |
+1. `http://127.0.0.1:5173` 登录。
+2. 侧栏进入工作表：加字段/改选项/拖列宽→刷新仍在/多条件筛选/人员/图片/行多选/保存命名视图。
+3. 「收集表单」：改字段顺序/必填/封面/显示条件/分享链接/成功页预览。
+4. 「自动化」：新建查找→修改→发消息，建记录触发，查看 run 详情。
+5. 「仪表盘」：加两种图、拖宽/增高/删除、定时推送执行。
+6. 「分享」「更多」：无假入口。
+7. 模板序列号：公开填表→成功页出码→后台自动化 run success。
 
 ---
 
-## 6. 相关文档
+## 5. 相关文档
 
-- 产品方案：`docs/智能表格-产品与技术方案.md`  
-- 实施计划：`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
-- 性能：`docs/PERFORMANCE.md`  
-- 企微截图索引：`docs/design-refs/wecom/SCREENSHOT-INDEX.md`  
+- 交接提示词：`docs/HANDOFF-PROMPT-FOR-NEXT-AGENT.md`
+- 产品方案：`docs/智能表格-产品与技术方案.md`
+- 实施计划：`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`
+- 性能：`docs/PERFORMANCE.md`
+- 企微截图索引：`docs/design-refs/wecom/SCREENSHOT-INDEX.md`
