@@ -46,10 +46,15 @@ export class FormFieldDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(10)
+  @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => DisplayConditionDto)
   displayConditions?: DisplayConditionDto[];
+
+  /** Nested AND/OR rule; validated recursively in FormsService. */
+  @IsOptional()
+  @IsObject()
+  displayRule?: Record<string, unknown>;
 }
 
 export class FormShareDto {

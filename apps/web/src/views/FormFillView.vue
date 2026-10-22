@@ -25,6 +25,7 @@ const visibleFields = computed<PublicFormFieldDto[]>(() => {
         fieldId: field.fieldId,
         required: field.required,
         displayConditions: field.displayConditions,
+        displayRule: field.displayRule,
       },
       answers,
     ),

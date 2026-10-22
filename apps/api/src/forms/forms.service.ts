@@ -19,9 +19,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import * as QRCode from 'qrcode';
 import {
   buildSuccessValues,
+  isDisplayConditionRule,
   isFormFieldVisible,
   isFormFillableFieldType,
+  normalizeDisplayRule,
   renderSuccessTemplate,
+  walkDisplayConditionLeaves,
+  type DisplayConditionRule,
   type FormFieldConfig,
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -171,23 +175,14 @@ export class FormsService implements OnModuleDestroy {
         throw new BadRequestException('表单字段重复');
       }
       seen.add(field.fieldId);
-      for (const condition of field.displayConditions ?? []) {
-        if (!sheetFieldIds.has(condition.fieldId)) {
-          throw new BadRequestException('显示条件引用了不存在的字段');
-        }
-        // WeCom: 不支持将公式及查找引用字段设置为条件
-        const triggerField = sheet.fields.find(
-          (item) => item.id === condition.fieldId,
-        );
-        if (
-          triggerField &&
-          (triggerField.type === 'formula' || triggerField.type === 'lookup')
-        ) {
-          throw new BadRequestException(
-            '显示条件不支持公式或查找引用字段',
-          );
-        }
-      }
+      this.assertDisplayTriggers(
+        {
+          displayConditions: field.displayConditions,
+          displayRule: field.displayRule as DisplayConditionRule | undefined,
+        },
+        sheet.fields,
+        sheetFieldIds,
+      );
     }
 
     const share: ShareConfig = {
@@ -322,6 +317,7 @@ export class FormsService implements OnModuleDestroy {
           options: field.options,
           required: Boolean(config.required),
           displayConditions: config.displayConditions ?? [],
+          displayRule: config.displayRule ?? normalizeDisplayRule(config) ?? undefined,
         },
       ];
     });
@@ -906,6 +902,56 @@ export class FormsService implements OnModuleDestroy {
       userId,
       'editor',
     );
+  }
+
+  private assertDisplayTriggers(
+    field: Pick<FormFieldConfig, 'displayConditions' | 'displayRule'>,
+    sheetFields: Array<{ id: string; type: string }>,
+    sheetFieldIds: Set<string>,
+  ): void {
+    if (field.displayRule) {
+      this.assertDisplayRuleShape(field.displayRule, 0);
+    }
+    for (const condition of walkDisplayConditionLeaves(field)) {
+      if (!condition.fieldId) {
+        throw new BadRequestException('显示条件未选择触发字段');
+      }
+      if (!sheetFieldIds.has(condition.fieldId)) {
+        throw new BadRequestException('显示条件引用了不存在的字段');
+      }
+      const triggerField = sheetFields.find(
+        (item) => item.id === condition.fieldId,
+      );
+      if (
+        triggerField &&
+        (triggerField.type === 'formula' || triggerField.type === 'lookup')
+      ) {
+        throw new BadRequestException('显示条件不支持公式或查找引用字段');
+      }
+    }
+  }
+
+  private assertDisplayRuleShape(
+    rule: DisplayConditionRule,
+    depth: number,
+  ): void {
+    if (depth > 3) {
+      throw new BadRequestException('显示条件嵌套过深');
+    }
+    if (rule.conjunction !== 'and' && rule.conjunction !== 'or') {
+      throw new BadRequestException('显示条件组合方式无效');
+    }
+    if (!Array.isArray(rule.conditions)) {
+      throw new BadRequestException('显示条件格式无效');
+    }
+    if (rule.conditions.length > 20) {
+      throw new BadRequestException('显示条件过多');
+    }
+    for (const node of rule.conditions) {
+      if (isDisplayConditionRule(node)) {
+        this.assertDisplayRuleShape(node, depth + 1);
+      }
+    }
   }
 
   private assertShareOpen(form: Form): void {

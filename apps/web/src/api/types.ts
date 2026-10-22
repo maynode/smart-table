@@ -112,16 +112,25 @@ export type DisplayConditionOperator =
   | 'notEmpty'
   | 'isEmpty';
 
+export type DisplayConjunction = 'and' | 'or';
+
 export interface DisplayConditionDto {
   fieldId: string;
   operator: DisplayConditionOperator;
   value?: unknown;
 }
 
+export interface DisplayConditionRuleDto {
+  conjunction: DisplayConjunction;
+  conditions: Array<DisplayConditionDto | DisplayConditionRuleDto>;
+}
+
 export interface FormFieldConfigDto {
   fieldId: string;
   required?: boolean;
+  /** @deprecated flat AND; prefer displayRule */
   displayConditions?: DisplayConditionDto[];
+  displayRule?: DisplayConditionRuleDto;
 }
 
 export interface FormDto {
@@ -152,6 +161,7 @@ export interface PublicFormFieldDto {
   options: FieldOptions | null;
   required: boolean;
   displayConditions?: DisplayConditionDto[];
+  displayRule?: DisplayConditionRuleDto;
 }
 
 export interface PublicFormDto {

@@ -1,9 +1,11 @@
 import {
   dependentsByTrigger,
   evaluateDisplayConditions,
+  evaluateDisplayRule,
   formatInboundDependentsLabel,
   formatOutboundConditionLabel,
   isFormFieldVisible,
+  normalizeDisplayRule,
   relatedDisplayFieldIds,
 } from './form-display';
 
@@ -40,7 +42,7 @@ describe('display conditions', () => {
     ).toBe(true);
   });
 
-  it('requires every condition to pass (AND)', () => {
+  it('requires every condition to pass (AND legacy list)', () => {
     const conditions = [
       { fieldId: phone, operator: 'notEmpty' as const },
       { fieldId: 'city', operator: 'equals' as const, value: '上海' },
@@ -53,6 +55,41 @@ describe('display conditions', () => {
       evaluateDisplayConditions(conditions, { [phone]: '1', city: '北京' }),
     ).toBe(false);
   });
+
+  it('supports nested AND/OR displayRule', () => {
+    const rule = {
+      conjunction: 'or' as const,
+      conditions: [
+        { fieldId: phone, operator: 'equals' as const, value: '1' },
+        {
+          conjunction: 'and' as const,
+          conditions: [
+            { fieldId: 'city', operator: 'equals' as const, value: '上海' },
+            { fieldId: 'ok', operator: 'notEmpty' as const },
+          ],
+        },
+      ],
+    };
+
+    expect(evaluateDisplayRule(rule, { [phone]: '1' })).toBe(true);
+    expect(
+      evaluateDisplayRule(rule, { [phone]: '0', city: '上海', ok: 'x' }),
+    ).toBe(true);
+    expect(
+      evaluateDisplayRule(rule, { [phone]: '0', city: '上海', ok: '' }),
+    ).toBe(false);
+
+    expect(
+      isFormFieldVisible({ fieldId: 'note', displayRule: rule }, { [phone]: '1' }),
+    ).toBe(true);
+
+    // Legacy list still wins only when displayRule empty
+    expect(
+      normalizeDisplayRule({
+        displayConditions: [{ fieldId: phone, operator: 'notEmpty' }],
+      })?.conjunction,
+    ).toBe('and');
+  });
 });
 
 describe('display condition visibility labels', () => {
@@ -61,14 +98,24 @@ describe('display condition visibility labels', () => {
       id
     ] ?? id;
 
-  it('builds reverse index and related highlight set', () => {
+  it('builds reverse index and related highlight set across nested rules', () => {
     const fields = [
       { fieldId: 'purpose' },
       {
         fieldId: 'note',
-        displayConditions: [
-          { fieldId: 'purpose', operator: 'equals' as const, value: '到访' },
-        ],
+        displayRule: {
+          conjunction: 'or' as const,
+          conditions: [
+            { fieldId: 'purpose', operator: 'equals' as const, value: '到访' },
+            {
+              conjunction: 'and' as const,
+              conditions: [
+                { fieldId: 'purpose', operator: 'equals' as const, value: '咨询' },
+                { fieldId: 'phone', operator: 'notEmpty' as const },
+              ],
+            },
+          ],
+        },
       },
       {
         fieldId: 'attach',
@@ -79,11 +126,15 @@ describe('display condition visibility labels', () => {
     ];
 
     expect(dependentsByTrigger(fields).get('purpose')).toEqual(['note', 'attach']);
+    expect(dependentsByTrigger(fields).get('phone')).toEqual(['note']);
     expect([...relatedDisplayFieldIds('purpose', fields)].sort()).toEqual([
       'attach',
       'note',
     ]);
-    expect([...relatedDisplayFieldIds('note', fields)]).toEqual(['purpose']);
+    expect([...relatedDisplayFieldIds('note', fields)].sort()).toEqual([
+      'phone',
+      'purpose',
+    ]);
   });
 
   it('formats outbound and inbound tags', () => {

@@ -4,10 +4,16 @@ import QRCode from 'qrcode';
 import {
   FIELD_TYPE_LABELS,
   dependentsByTrigger,
+  emptyDisplayCondition,
+  emptyDisplayRule,
+  formatDisplayRuleConjunctionLabel,
   formatInboundDependentsLabel,
   formatOutboundConditionLabel,
   isFormFillableFieldType,
+  normalizeDisplayRule,
   relatedDisplayFieldIds,
+  walkDisplayConditionLeaves,
+  type DisplayConditionOperator,
   type FieldType,
 } from 'shared';
 import { ApiError } from '../api/client';
@@ -19,14 +25,14 @@ import { newId } from '../ui/id';
 import { fillShareUrl, rewritePublicUrl } from '../ui/public-url';
 import { toast } from '../ui/toast';
 import type {
-  DisplayConditionDto,
-  DisplayConditionOperator,
+  DisplayConditionRuleDto,
   FieldDto,
   FormDto,
   FormFieldConfigDto,
   MemberDto,
   SheetDto,
 } from '../api/types';
+import DisplayRuleEditor from './DisplayRuleEditor.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FormFieldControl from './FormFieldControl.vue';
 
@@ -271,7 +277,7 @@ const previewFields = computed(() =>
 const activeConditionCount = computed(
   () =>
     items.value.reduce(
-      (total, item) => total + (item.displayConditions?.length ?? 0),
+      (total, item) => total + walkDisplayConditionLeaves(item).length,
       0,
     ),
 );
@@ -304,7 +310,11 @@ const dependencyTagsByField = computed(() => {
   >();
   for (const config of items.value) {
     const tags: Array<{ kind: 'out' | 'in'; text: string; title: string }> = [];
-    for (const condition of config.displayConditions ?? []) {
+    const mode = formatDisplayRuleConjunctionLabel(config);
+    if (mode) {
+      tags.push({ kind: 'out', text: mode, title: mode });
+    }
+    for (const condition of walkDisplayConditionLeaves(config)) {
       if (
         !condition.fieldId &&
         condition.operator === 'equals' &&
@@ -329,6 +339,52 @@ const dependencyTagsByField = computed(() => {
   return map;
 });
 
+const conditionCandidates = computed(() =>
+  conditionFieldCandidates.value.map((item) => ({
+    fieldId: item.fieldId,
+    label: fieldName(item.fieldId),
+  })),
+);
+
+function ensureDisplayRule(config: FormFieldConfigDto): DisplayConditionRuleDto {
+  const normalized = normalizeDisplayRule(config);
+  if (normalized) {
+    config.displayRule = normalized as DisplayConditionRuleDto;
+    return config.displayRule;
+  }
+  config.displayRule = emptyDisplayRule('and') as DisplayConditionRuleDto;
+  return config.displayRule;
+}
+
+function pruneDisplayRule(
+  rule: DisplayConditionRuleDto,
+): DisplayConditionRuleDto {
+  const conditions = rule.conditions
+    .map((node) => {
+      if ('conditions' in node) {
+        const nested = pruneDisplayRule(node as DisplayConditionRuleDto);
+        return nested.conditions.length > 0 ? nested : null;
+      }
+      const leaf = node as { fieldId?: string };
+      return leaf.fieldId ? node : null;
+    })
+    .filter((node): node is NonNullable<typeof node> => node !== null);
+  return { conjunction: rule.conjunction, conditions };
+}
+
+function setDisplayRule(
+  config: FormFieldConfigDto,
+  rule: DisplayConditionRuleDto,
+): void {
+  config.displayRule = rule;
+  const leavesOnly =
+    rule.conjunction === 'and' &&
+    rule.conditions.every((node) => !('conditions' in node));
+  config.displayConditions = leavesOnly
+    ? (rule.conditions as FormFieldConfigDto['displayConditions'])
+    : [];
+}
+
 function errorOf(caught: unknown): string {
   return caught instanceof ApiError ? caught.message : '保存失败，请稍后再试';
 }
@@ -348,9 +404,12 @@ function dependencyTags(fieldId: string): Array<{
 function relationHint(fieldId: string): string {
   if (!selectedFieldId.value || selectedFieldId.value === fieldId) return '';
   if (!relatedFieldIds.value.has(fieldId)) return '';
-  const selectedDependsOn = (items.value.find(
+  const selected = items.value.find(
     (item) => item.fieldId === selectedFieldId.value,
-  )?.displayConditions ?? []).some((c) => c.fieldId === fieldId);
+  );
+  const selectedDependsOn = selected
+    ? walkDisplayConditionLeaves(selected).some((c) => c.fieldId === fieldId)
+    : false;
   if (selectedDependsOn) return '被本字段依赖';
   return '依赖本字段';
 }
@@ -386,22 +445,33 @@ async function load(): Promise<void> {
         const field = fieldById.value.get(item.fieldId);
         return field ? isFormFillableFieldType(field.type) : false;
       })
-      .map((item) => ({
-        ...item,
-        displayConditions: (item.displayConditions ?? []).map((condition) => ({
-          ...condition,
-        })),
-      }));
+      .map((item) => {
+        const next: FormFieldConfigDto = {
+          ...item,
+          displayConditions: (item.displayConditions ?? []).map((condition) => ({
+            ...condition,
+          })),
+          displayRule: item.displayRule
+            ? (JSON.parse(JSON.stringify(item.displayRule)) as DisplayConditionRuleDto)
+            : undefined,
+        };
+        ensureDisplayRule(next);
+        return next;
+      });
     // Form 字段全是孤儿 ID / 尚未配置时，回退到可填工作表列
     items.value =
       existing.length > 0
         ? existing
         : sheetFields.value
             .filter((field) => isFormFillableFieldType(field.type))
-            .map((field) => ({
-              fieldId: field.id,
-              required: field.required,
-            }));
+            .map((field) => {
+              const next: FormFieldConfigDto = {
+                fieldId: field.id,
+                required: field.required,
+                displayRule: emptyDisplayRule('and') as DisplayConditionRuleDto,
+              };
+              return next;
+            });
     if (!selectedFieldId.value || !items.value.some((i) => i.fieldId === selectedFieldId.value)) {
       selectedFieldId.value = items.value[0]?.fieldId ?? '';
     }
@@ -420,11 +490,16 @@ function savePayload() {
     sheetId: props.sheet.id,
     name: name.value.trim() || `${props.sheet.name}收集表`,
     coverUrl: coverUrl.value || undefined,
-    fields: items.value.map((item) => ({
-      fieldId: item.fieldId,
-      required: Boolean(item.required),
-      displayConditions: item.displayConditions ?? [],
-    })),
+    fields: items.value.map((item) => {
+      const rule = pruneDisplayRule(ensureDisplayRule(item));
+      setDisplayRule(item, rule);
+      return {
+        fieldId: item.fieldId,
+        required: Boolean(item.required),
+        displayRule: rule.conditions.length > 0 ? rule : undefined,
+        displayConditions: item.displayConditions ?? [],
+      };
+    }),
     share: {
       enabled: shareEnabled.value,
       audience: audience.value,
@@ -666,26 +741,12 @@ async function deleteFieldFromForm(index: number): Promise<void> {
 }
 
 function addCondition(config: FormFieldConfigDto): void {
-  const condition: DisplayConditionDto = {
-    fieldId: '',
-    operator: 'equals',
-    value: '',
-  };
-  config.displayConditions = [...(config.displayConditions ?? []), condition];
+  const rule = ensureDisplayRule(config);
+  setDisplayRule(config, {
+    ...rule,
+    conditions: [...rule.conditions, emptyDisplayCondition()],
+  });
   showConditionsFor.value[config.fieldId] = true;
-}
-
-function removeCondition(
-  config: FormFieldConfigDto,
-  index: number,
-): void {
-  config.displayConditions = (config.displayConditions ?? []).filter(
-    (_, itemIndex) => itemIndex !== index,
-  );
-}
-
-function isConditionValueVisible(operator: DisplayConditionOperator): boolean {
-  return operator !== 'notEmpty' && operator !== 'isEmpty';
 }
 
 async function uploadCover(event: Event): Promise<void> {
@@ -940,45 +1001,15 @@ onMounted(load);
             <header>
               <div class="field-settings-title">
                 <strong>「{{ fieldName(selectedConfig.fieldId) }}」的显示条件</strong>
-                <p class="setting-hint">仅当下面全部满足时才显示</p>
+                <p class="setting-hint">可组合「且 / 或」，并嵌套条件组</p>
               </div>
-              <button
-                class="btn small"
-                data-testid="form-add-condition"
-                @click="addCondition(selectedConfig)"
-              >
-                + 添加条件
-              </button>
             </header>
-            <div
-              v-for="(condition, index) in selectedConfig.displayConditions ?? []"
-              :key="index"
-              class="condition-row"
-              data-testid="form-condition-row"
-            >
-              <select v-model="condition.fieldId" data-testid="form-condition-field">
-                <option value="">触发字段</option>
-                <option
-                  v-for="candidate in conditionFieldCandidates"
-                  :key="candidate.fieldId"
-                  :value="candidate.fieldId"
-                >
-                  {{ fieldName(candidate.fieldId) }}
-                </option>
-              </select>
-              <select v-model="condition.operator" data-testid="form-condition-operator">
-                <option v-for="op in conditionOperators" :key="op.value" :value="op.value">
-                  {{ op.label }}
-                </option>
-              </select>
-              <input
-                v-if="isConditionValueVisible(condition.operator)"
-                v-model="condition.value"
-                placeholder="比较值"
-                data-testid="form-condition-value"
-              />
-              <button class="icon-btn danger" @click="removeCondition(selectedConfig, index)">×</button>
-            </div>
+            <DisplayRuleEditor
+              :model-value="ensureDisplayRule(selectedConfig)"
+              :candidates="conditionCandidates"
+              :operators="conditionOperators"
+              @update:model-value="setDisplayRule(selectedConfig, $event)"
+            />
           </section>
 
           <section class="fill-settings" data-testid="form-fill-settings">
