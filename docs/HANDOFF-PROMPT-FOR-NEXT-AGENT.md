@@ -73,11 +73,14 @@
 - smoke：/health、/metrics、公开表单提交、自动化运行、附件上传。
 - 验证容器内代码与源码一致：容器镜像跑出的 /health 版本/新路由与仓库一致；不得让 :8080 继续跑旧镜像。
 
-### W5-D ClickHouse 最小闭环（能做完就做）
-- 现状：ANALYTICS_ADAPTER=clickhouse 只有查询适配器，没有 PG→CH ETL。
-- 二选一，必须落到文档和代码：
-  a) 实现最小可用同步任务/脚本（PG 表→CH 表，幂等、可重跑、有 compose profile 或独立命令）；或
-  b) 明确标注「查询适配器有、ETL 未做，默认 PG 路径不受影响」，并在 docs/REMAINING-GAPS.md 保留为 P2 客观限制，不得谎称完成。
+### W5-D ClickHouse（已完成，勿重做）
+- PG→CH ETL 已落地：`ClickHouseEtlService`（`ANALYTICS_ADAPTER=clickhouse`）。默认仍走 PG；不必再实现 ETL。
+- 若回归发现 ETL 异常，修服务与配置，并更新 docs/REMAINING-GAPS.md / VERIFY-M12。
+
+### W5-E 体验弱差（P0 交付绿之后再做；清单以 REMAINING-GAPS §2 P1 为准）
+- 视觉：按 SCREENSHOT-INDEX 逐屏对齐高频交互（非纯像素闸）。
+- 排序：补全 option / natural 相对企微的 SQL/应用层语义。
+- 仪表盘：加深 NUMBER（metric）卡配置与查询深度。
 - 若选 b，不得在 UI 暴露可切换 ClickHouse 的假入口。
 
 ### W6 收尾

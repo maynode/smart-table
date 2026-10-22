@@ -8,8 +8,9 @@
 
 ## 0. 一句话现状
 
-W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互、可视化表单构建器、可视化自动化编辑器、命名视图、真实 schedule runner、成员邀请、顶栏分享/更多、仪表盘多图布局均已落地，并有 Playwright/API E2E 证据。  
-**尚未完成的是 W5 交付闭环**：全量回归、Task 26 新鲜压测数据、Docker 镜像重建与 smoke。ClickHouse 已有查询适配器 + PG→CH ETL（`ClickHouseEtlService`，需 `ANALYTICS_ADAPTER=clickhouse`）。W6 最终报告待写。
+W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine / TITLE / 双向关联 / 公式脏行）已落地。相对企微网页版智能表格：**主能力已对齐**。  
+**下一步两类（§2 P0/P1）：** 交付未闭环；体验弱差。  
+**待定（§2 待定表，未排期）：** 多人实时协同 OT/WS；企微登录/通讯录/真企微群；AI BI；`USER_C`；大表 chunk 本地库。
 
 ---
 
@@ -75,64 +76,64 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
 
 ---
 
-## 2. 还没做（下一 AI 从这里继续）
+## 2. 下一步要做（下一 AI 从这里继续）
 
-### P0 交付闭环（必须做，否则不能宣称完工）
+> 功能主路径已对齐企微；**不要再扫一遍造功能**。按顺序做：**先 P0 交付闭环，再 P1 体验弱差**。
 
-1. **全量回归**
-   - 跑完整 `pnpm --filter api test:e2e --runInBand`；此前仅剩 `wecom-oauth.e2e-spec.ts` 一次不稳定失败（示例邮箱时间戳不一致，疑似共享 mock 状态），需复跑确认是 flake 还是真 bug。
-   - 跑完整 `pnpm --filter web exec playwright test`，必须包含 `grid-perf.spec.ts`。
-   - 跑 `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` 和 `pnpm --filter web exec vitest run`。
-   - **2026-10-22 本轮已跑：** `vue-tsc` 通过；`vitest` 9/9；`api` `ai-field.spec` 4/4；`pnpm --filter api build` 通过（需先 `prisma:generate`）。E2E / Playwright / perf / Docker 仍待跑。
-2. **Task 26 性能报告**
-   - 在本机跑 `pnpm perf:claim`、`pnpm perf:grid`、`pnpm perf:window`、`pnpm perf:form`。
-   - 把机器信息、命令、原始结果、结论写进 `docs/PERFORMANCE.md`；不得沿用旧数字。
-3. **Docker 镜像与源码一致**
-   - `docker compose build api web claim-worker`，`docker compose up -d`。
-   - smoke：`/health`、`/metrics`、公开表单提交、自动化运行。
-   - 当前开发环境是 Vite `:5173` + 本机 API `:3000`；`:8080` 仍是旧镜像，不能作为验收依据。
-4. **W6 最终报告**
-   - 变更摘要、验证命令与结果、客观限制、启动步骤。
+### P0 交付未闭环（必须做，否则不能宣称完工）
 
-### P1 / P2（不阻塞上述 P0，但应记录）
+| # | 项 | 做什么 | 完成判据 |
+|---|----|--------|----------|
+| 1 | **全量 API e2e 跑绿确认** | `pnpm --filter api test:e2e --runInBand`；若 `wecom-oauth.e2e-spec.ts` 再因示例邮箱时间戳失败，定位隔离/mock 后修到稳定（禁止简单 skip） | 全套绿；失败用例有根因说明 |
+| 2 | **前端回归** | `pnpm --filter web exec playwright test`（含 `grid-perf.spec.ts`）；`vue-tsc --noEmit`；`vitest run` | 全绿；结果摘要写回本文件 §3 |
+| 3 | **新鲜压测报告（Task 26）** | 本机跑 `pnpm perf:claim` / `perf:grid` / `perf:window` / `perf:form` | `docs/PERFORMANCE.md` 含本机信息、命令、原始结果、结论；**禁止沿用旧数字** |
+| 4 | **Docker 镜像与源码一致** | `docker compose build api web claim-worker` → `up -d`；smoke：`/health`、`/metrics`、公开表单提交、自动化运行 | `:8080`（或 compose 对外口）跑的是本轮镜像，不是旧镜像；开发验收仍以 Vite `:5173` + API `:3000` 为准 |
+| 5 | **W6 最终报告** | 变更摘要、验证命令与结果、客观限制、启动步骤 | 单独报告文档落地，并可被交接引用 |
+
+**2026-10-22 已部分跑过（不能代替 P0 全量）：** `vue-tsc` 通过；web `vitest`；`api` `ai-field.spec` 4/4；`pnpm --filter api build`（需先 `prisma:generate`）；Playwright 分套件曾 9/9。全量 API e2e / 新鲜 perf / Docker rebuild / W6 报告仍待做。
+
+### P1 体验弱差（相对企微，不阻塞 P0，但应排期）
+
+| # | 项 | 现状 | 下一步 |
+|---|----|------|--------|
+| 1 | **视觉非像素级对齐** | 主路径交互已按 `SCREENSHOT-INDEX` 对齐；布局/字号/间距仍有观感差 | 按 `docs/design-refs/wecom/SCREENSHOT-INDEX.md` 逐屏对照，先修高频屏（网格顶栏、表单编辑、自动化编辑器、仪表盘配置），目标「信息架构与交互一致」，**不以纯像素 diff 为闸** |
+| 2 | **排序 mode：`option` / `natural` SQL 简化** | UI 可选 value/option/natural；服务端 `buildSortSql` 基本按值序，option/natural 未完整实现企微语义 | 对照 VERIFY-02 / wecom-js 排序语义：单选按选项序、自然语言序在 SQL 或应用层落地；补 API/e2e 覆盖 |
+| 3 | **仪表盘 NUMBER 卡深度弱于企微** | API `metric` / 类型宫格已有；配置深度（对比期、趋势、条件格式等）弱于企微 NUMBER | 对照 VERIFY-M9 / 截图补 NUMBER 卡配置面与查询；保持现有 bar/line/pie 等主类不回退 |
+
+### P1 已完成归档（勿重做）
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| ClickHouse ETL | 未做 | 只有 `ANALYTICS_ADAPTER=clickhouse` 查询适配器；没有 PG→CH 同步任务。默认 PG 路径不受影响 |
-| 冻结列 | **已完成** | Canvas 引擎 + 工具栏「冻结」+ `ViewQuery.freezeColumnCount`；见 `engine.spec.ts` |
-| 表单提交站内消息 | **已完成** | 提交成功后通知 workspace owner/admin；顶栏 `NotificationBell` |
-| 评论 @ 同事 | **已完成** | `@` 提及工作区成员 + 站内通知；输入联想 |
-| natural-language 自动化步骤卡片 | **已完成** | 企微式「当满足条件 / 就执行」NL 卡片 +「仅保存 / 保存并启用」；独立「运行日志」面板 |
-| `autoNumber` / `ai` 字段 | **已完成** | autoNumber 真自增；AI 字段提示词/引用列 + 本地模板填充（可选 `AI_FIELD_URL`） |
-| OTel / K8s 完整度 | 骨架 | 无完整集群清单/Ingress/有状态组件 |
-| 单元格复制粘贴 / 填充柄 | **已完成** | Ctrl+C/V（含 TSV 多格）、Ctrl+D、选区右下角拖拽填充 |
-| 父记录字段 / 层级 | **已完成** | 表格设置可选关联字段；网格按父子缩进展示 |
-| 关联 / 公式 / lookup 配置 | **已完成** | FieldOptionsEditor；格子内关联选记录 |
-| 地理位置 / 条码 / 群聊格子 | **已完成** | 地址文本、条码输入、群聊多选成员 |
-| 自动化条件任意/全部 | **已完成** | 触发/查找 conjunction + 不包含运算符；失败运行可重试 |
-| 视觉像素级对齐 | **进行中** | 2026-10-22 起按 `SCREENSHOT-INDEX` 逐屏对齐主路径交互（非纯像素） |
-| 自动化变量树 / 消息按钮 | **已完成** | 变量树（今天/明天/昨天、第N步.字段）、消息按钮标题/链接、表情快捷插入；runner `interpolate` + `content.buttons` |
-| 自动化编辑器企微交互对齐 | **已完成** | 查找「满足条件」弹层、修改「指定内容」、发送双卡+消息芯片、变量侧栏、列表额度/NL pills、运行详情表、步骤类型下拉 |
-| 收集表单企微交互对齐 | **已完成** | 编辑/填写 Tab、可添加字段栏、画布选中工具条、分享表单浮层、成功页「已提交/再填一次」 |
-| 表格设置显隐 | **已完成** | 眼睛图标切换字段显隐 |
-| 内容权限首页钻取 | **已完成** | 全员权限对象列表 → 点入细调；「+为指定成员添加额外权限」 |
-| 仪表盘图表配置壳 | **已完成** | 类型宫格、主题色板、左配右预览；文案对齐横轴/记录行数 |
-| 模板库壳 | **已完成** | 搜索、分区、展开更多；Excel/我的模板入口占位 |
-| 仪表盘图表全集 | **已完成** | API 白名单含条形/组合/词云/文本；堆积/百分比、图例位置、轴/网格、排序依据；字段加载防竞态；W4 e2e 含 horizontalBar+text（2026-10-22 通过） |
+| ClickHouse ETL | **已完成** | `ClickHouseEtlService` 增量同步；需 `ANALYTICS_ADAPTER=clickhouse`；见 VERIFY-M12 |
+| 冻结列 / 站内消息 / 评论@ / NL 自动化卡 / autoNumber·ai / 复制粘贴填充 / 父子层级 / 关联·公式·lookup / 地理·条码·群聊格 / 自动化条件 / 变量树·消息按钮 / 表单·自动化交互对齐 / 字段显隐 / 内容权限钻取 / 仪表盘配置壳·图表全集 / 模板库壳 | **已完成** | 详见 §1 与 VERIFY-INDEX |
+
+### P2 客观限制（低优先）
+
+| 项 | 说明 |
+|----|------|
+| OTel / K8s 完整度 | 仅骨架；无完整集群清单 / Ingress / 有状态组件 |
+
+### 待定（故意不做 / 暂缓 — 未排期，需产品再定）
+
+> 状态统一标 **待定**：当前实现路径跳过；**不是缺口遗漏**。若要做，须单独立项，不得混进 P0/P1。
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| 多人实时协同（OT / WS / `NEW_CHANGES`） | **待定** | 暂缓；维持 REST + 乐观锁；不做光标/OT |
+| 企微登录 | **待定** | 产品用本系统自有账号；不做企微 OAuth 强绑定登录 |
+| 企微通讯录 / 联系人 | **待定** | 用本系统工作区成员表达同类语义 |
+| 真企微群聊 | **待定** | 自动化群聊走 Local fallback / `wecomChatId`；真企微群 API 不强制 |
+| AI BI（仪表盘 Agent / 智能分析） | **待定** | VERIFY-M9 / M12：材料有、当前不做 |
+| `USER_C` 字段 | **待定** | 材料语义不清；主类人员用 `person`（USER） |
+| 大表 chunk 本地库 | **待定** | 客户端分块本地库；性价比低，ROI 不足暂不做 |
 
 ### 产品目标与边界（2026-10-22 对齐）
 
 **目标：** 功能上**完全复刻企业微信网页版智能表格**（工作表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等），登录用本系统自有账号；在此之上可做更强能力（例：提交后用户页可见消息通知）。
 
-**不做 / 暂缓：**
+**其它产品边界（亦待定，非本期）：** 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标。
 
-| 类别 | 说明 |
-|------|------|
-| 企微生态强绑定 | 企微登录、通讯录/联系人、企微群聊等（可用本系统消息/成员替代产品语义） |
-| **协同编辑（暂缓）** | 多人实时同表编辑、光标/OT/`NEW_CHANGES` 等**现阶段不考虑**；继续 REST + 乐观锁即可 |
-| 其它产品边界 | 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标 |
-
-**技术路径：** 继续当前 Vue Canvas + Nest REST 底座，不推倒；企微 HAR/`wecom-js` 用于能力与交互对照，**不要求**协议级复刻 Mutation/WS 提交。
+**技术路径：** 继续当前 Vue Canvas + Nest REST 底座，不推倒；企微 HAR/`wecom-js` 用于能力与交互对照，**不要求**协议级复刻 Mutation/WS 提交。待定项见上表。
 
 ---
 

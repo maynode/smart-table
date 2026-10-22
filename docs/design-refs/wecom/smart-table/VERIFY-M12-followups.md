@@ -41,6 +41,14 @@
 |----|------|
 | API | `evaluateFormulaRecord`；`updateRecord` 响应叠加本行公式值（不落库） |
 
-## 6. 仍不做
+## 6. 待定（故意不做 / 暂缓 — 未排期）
 
-AI BI Agent、USER_C、chunk 本地库（性价比）。
+| 项 | 状态 | 说明 |
+|----|------|------|
+| AI BI Agent | **待定** | 仪表盘智能分析不做 |
+| `USER_C` | **待定** | 材料语义不清；主类用 `person` |
+| 大表 chunk 本地库 | **待定** | 性价比低 |
+| 多人实时协同 OT/WS | **待定** | 产品暂缓；见 `docs/REMAINING-GAPS.md` |
+| 企微登录 / 通讯录 / 真企微群 | **待定** | 非本系统账号生态强绑定 |
+
+完整清单与「下一步 P0/P1」分界：[`docs/REMAINING-GAPS.md`](../../../REMAINING-GAPS.md) §2「待定」。
