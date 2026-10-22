@@ -50,6 +50,9 @@ const uploadError = ref('');
 
 const choices = computed(() => props.options?.choices ?? []);
 const includeTime = computed(() => Boolean(props.options?.includeTime));
+const mobilePhotoOnly = computed(() =>
+  Boolean(props.options?.mobilePhotoOnly),
+);
 const currencySymbol = computed(() =>
   String(props.options?.currency ?? '¥'),
 );
@@ -252,10 +255,14 @@ function clearAttachment(): void {
         :id="`field-${fieldId}`"
         type="file"
         :accept="type === 'image' ? 'image/*' : undefined"
+        :capture="type === 'image' && mobilePhotoOnly ? 'environment' : undefined"
         :disabled="disabled || uploading || !uploadFile"
         :data-testid="type === 'image' ? 'form-image' : 'form-file'"
         @change="onFilePicked"
       />
+      <p v-if="type === 'image' && mobilePhotoOnly" class="hint">
+        仅限手机拍照上传（请使用手机摄像头）
+      </p>
       <p v-if="uploading" class="hint">上传中…</p>
       <p v-else-if="uploadError" class="error">{{ uploadError }}</p>
       <p v-else-if="!uploadFile" class="hint">当前环境无法上传附件</p>

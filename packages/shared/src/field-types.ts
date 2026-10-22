@@ -174,6 +174,8 @@ export interface FieldOptions {
   currency?: string;
   dateFormat?: string;
   includeTime?: boolean;
+  /** WeCom `mobilePhotoOnly` / 仅限手机拍照上传 — image fields only. */
+  mobilePhotoOnly?: boolean;
   formula?: string;
   lookup?: LookupOptions;
   relation?: RelationOptions;

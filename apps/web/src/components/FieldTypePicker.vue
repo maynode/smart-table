@@ -59,6 +59,8 @@ const typeMenuOpen = ref(false);
 const choices = ref<ChoiceDraft[]>([]);
 const choiceError = ref('');
 const nameInput = ref<HTMLInputElement | null>(null);
+/** WeCom image property: 仅限手机拍照上传 */
+const mobilePhotoOnly = ref(false);
 
 const MENU_GROUPS: FieldType[][] = [
   ['ai'],
@@ -90,6 +92,11 @@ const flatTypes = computed(() => menuGroups.value.flat());
 const isChoiceType = computed(
   () => selected.value === 'select' || selected.value === 'multiSelect',
 );
+const isImageType = computed(() => selected.value === 'image');
+/** Types that need a config panel before confirm (WeCom: select options / image photo-only). */
+const needsConfigPanel = computed(
+  () => isChoiceType.value || isImageType.value,
+);
 
 watch(
   () => props.open,
@@ -99,9 +106,13 @@ watch(
     selected.value = props.initialType;
     choiceError.value = '';
     seedChoices(props.initialOptions);
+    mobilePhotoOnly.value = Boolean(
+      (props.initialOptions as { mobilePhotoOnly?: boolean } | null)
+        ?.mobilePhotoOnly,
+    );
     if (props.mode === 'edit') {
       phase.value = 'config';
-      typeMenuOpen.value = !isChoiceType.value;
+      typeMenuOpen.value = !needsConfigPanel.value;
     } else {
       phase.value = 'types';
       typeMenuOpen.value = true;
@@ -164,6 +175,7 @@ function defaultOptions(type: FieldType): Record<string, unknown> | undefined {
   if (type === 'progress') return { min: 0, max: 100 };
   if (type === 'location') return { location: { mode: 'address' } };
   if (type === 'barcode') return { barcode: { format: 'code128' } };
+  if (type === 'image') return { mobilePhotoOnly: mobilePhotoOnly.value };
   return undefined;
 }
 
@@ -175,7 +187,12 @@ function pickType(type: FieldType): void {
     typeMenuOpen.value = false;
     return;
   }
-  // Non-choice types: finish immediately (WeCom-like quick pick).
+  if (type === 'image') {
+    phase.value = 'config';
+    typeMenuOpen.value = false;
+    return;
+  }
+  // Other types: finish immediately (WeCom-like quick pick).
   finish(type);
 }
 
@@ -198,18 +215,26 @@ function finish(type: FieldType = selected.value): void {
     }
   }
   const typeChanged = type !== props.initialType;
+  const mergedOptions = (): Record<string, unknown> | undefined => {
+    if (type === 'select' || type === 'multiSelect') {
+      return {
+        ...(props.initialOptions ?? {}),
+        ...defaultOptions(type),
+      };
+    }
+    if (type === 'image') {
+      return {
+        ...(props.initialOptions ?? {}),
+        mobilePhotoOnly: mobilePhotoOnly.value,
+      };
+    }
+    if (props.mode === 'create' || typeChanged) return defaultOptions(type);
+    return undefined;
+  };
   emit('confirm', {
     name: fieldName,
     type,
-    options:
-      type === 'select' || type === 'multiSelect'
-        ? {
-            ...(props.initialOptions ?? {}),
-            ...defaultOptions(type),
-          }
-        : props.mode === 'create' || typeChanged
-          ? defaultOptions(type)
-          : undefined,
+    options: mergedOptions(),
   });
 }
 
@@ -333,10 +358,12 @@ function iconFor(type: FieldType): string {
           data-testid="field-name-input"
           maxlength="100"
           placeholder="字段名称"
-          @keydown.enter.prevent="isChoiceType ? finish() : pickType(selected)"
+          @keydown.enter.prevent="
+            needsConfigPanel ? finish() : pickType(selected)
+          "
         />
 
-        <!-- WeCom: type chip opens type menu; select fields configure options here -->
+        <!-- WeCom: type chip opens type menu; select/image configure options here -->
         <template v-if="phase === 'config'">
           <button
             type="button"
@@ -395,6 +422,32 @@ function iconFor(type: FieldType): string {
               + 添加选项
             </button>
             <p v-if="choiceError" class="ftp-error">{{ choiceError }}</p>
+            <footer class="ftp-actions">
+              <button type="button" class="btn" @click="emit('close')">取消</button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                data-testid="field-config-save"
+                @click="finish()"
+              >
+                确定
+              </button>
+            </footer>
+          </div>
+
+          <div
+            v-else-if="isImageType && !typeMenuOpen"
+            class="ftp-image-opts"
+            data-testid="field-image-options"
+          >
+            <label class="ftp-check">
+              <input
+                v-model="mobilePhotoOnly"
+                type="checkbox"
+                data-testid="field-mobile-photo-only"
+              />
+              仅限手机拍照上传
+            </label>
             <footer class="ftp-actions">
               <button type="button" class="btn" @click="emit('close')">取消</button>
               <button
@@ -623,6 +676,26 @@ function iconFor(type: FieldType): string {
   margin: 6px 0 0;
   color: #d92d20;
   font-size: 12px;
+}
+.ftp-image-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.ftp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #344054;
+  cursor: pointer;
+  user-select: none;
+}
+.ftp-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2d8cf0;
 }
 .ftp-actions {
   display: flex;

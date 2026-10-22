@@ -51,13 +51,16 @@ const isChoice = computed(
 const isFormula = computed(() => fieldType.value === 'formula');
 const isRelation = computed(() => fieldType.value === 'relation');
 const isLookup = computed(() => fieldType.value === 'lookup');
+const isImage = computed(() => fieldType.value === 'image');
+const mobilePhotoOnly = ref(false);
 const needsConfig = computed(
   () =>
     isAi.value ||
     isChoice.value ||
     isFormula.value ||
     isRelation.value ||
-    isLookup.value,
+    isLookup.value ||
+    isImage.value,
 );
 
 const sourceCandidates = computed(() =>
@@ -77,6 +80,7 @@ const title = computed(() => {
   if (isFormula.value) return '编辑公式';
   if (isRelation.value) return '编辑关联';
   if (isLookup.value) return '编辑查找引用';
+  if (isImage.value) return '编辑图片字段';
   if (isChoice.value) return '编辑选项';
   return '字段配置';
 });
@@ -113,6 +117,11 @@ watch(
       aiSourceIds.value = Array.isArray(ai.sourceFieldIds)
         ? [...ai.sourceFieldIds]
         : [];
+      return;
+    }
+
+    if (isImage.value) {
+      mobilePhotoOnly.value = Boolean(opts.mobilePhotoOnly);
       return;
     }
 
@@ -234,6 +243,14 @@ function save(): void {
     return;
   }
 
+  if (isImage.value) {
+    emit('save', {
+      ...base,
+      mobilePhotoOnly: mobilePhotoOnly.value,
+    });
+    return;
+  }
+
   if (isFormula.value) {
     let formula = formulaText.value.trim();
     if (!formula) {
@@ -349,6 +366,9 @@ onMounted(() => {
             <template v-else-if="isLookup">
               {{ field?.name }} · 经关联字段拉取目标表字段并聚合
             </template>
+            <template v-else-if="isImage">
+              {{ field?.name }} · 对齐企微「仅限手机拍照上传」
+            </template>
             <template v-else>
               {{ field?.name }} · 颜色会显示在表格和表单中
             </template>
@@ -357,7 +377,14 @@ onMounted(() => {
         <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
       </header>
 
-      <template v-if="isAi">
+      <template v-if="isImage">
+        <label class="inline-check" data-testid="image-mobile-photo-only">
+          <input v-model="mobilePhotoOnly" type="checkbox" />
+          仅限手机拍照上传
+        </label>
+      </template>
+
+      <template v-else-if="isAi">
         <label class="ai-label" for="ai-prompt">提示词</label>
         <textarea
           id="ai-prompt"
@@ -665,6 +692,14 @@ textarea,
 .error {
   color: #d92d20;
   font-size: 12px;
+}
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #344054;
+  cursor: pointer;
 }
 footer {
   display: flex;
