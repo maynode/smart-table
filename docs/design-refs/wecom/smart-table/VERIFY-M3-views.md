@@ -14,7 +14,7 @@ sdk_0：`IS…IS_NOT_EMPTY`、`AND=1 OR=2`；`CONDITION/GROUP`；`fetch_view_fil
 | 服务端视图生效 | `POST /sheets/:id/query` LIMIT 1000 | **对齐** |
 | 命名视图 | `SavedView.query` JSON | **对齐** |
 | 分组/填色/行高/冻结 | `ViewQuery` 字段 + GridPanel UI | **对齐** |
-| option/natural 排序 | UI 有 mode；SQL 简化值序 | **弱差** |
+| option/natural 排序 | `buildSortSql`：option→choices 下标；natural→digit pad；UI 三档 | **对齐** |
 
 ## 3. 偏差
 

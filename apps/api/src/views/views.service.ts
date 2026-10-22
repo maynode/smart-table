@@ -67,7 +67,16 @@ export class ViewsService {
       : Prisma.sql`TRUE`;
     const order =
       query.sorts && query.sorts.length > 0
-        ? buildSortSql(query.sorts)
+        ? buildSortSql(
+            query.sorts,
+            fields.map((field) => ({
+              id: field.id,
+              type: field.type,
+              options: field.options as {
+                choices?: Array<{ id?: unknown; name?: unknown }>;
+              } | null,
+            })),
+          )
         : Prisma.sql`ORDER BY id ASC`;
 
     const rows = await this.prisma.$queryRaw<QueryRow[]>(

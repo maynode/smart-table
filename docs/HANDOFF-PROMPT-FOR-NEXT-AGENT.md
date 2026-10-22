@@ -79,7 +79,7 @@
 
 ### W5-E 体验弱差（P0 交付绿之后再做；清单以 REMAINING-GAPS §2 P1 为准）
 - 视觉：按 SCREENSHOT-INDEX 逐屏对齐高频交互（非纯像素闸）。
-- 排序：补全 option / natural 相对企微的 SQL/应用层语义。
+- 排序 option/natural：**已完成**（`buildSortSql`），勿重做。
 - 仪表盘：加深 NUMBER（metric）卡配置与查询深度。
 - 若选 b，不得在 UI 暴露可切换 ClickHouse 的假入口。
 

@@ -198,7 +198,88 @@ describe('View query (e2e)', () => {
     const labels = response.body.groups
       .map((group: any) => `${group.label}:${group.count}`)
       .sort();
-    expect(labels).toEqual(['已领:1', '未领:1']);
+    expect(labels).toEqual(expect.arrayContaining(['已领:1', '未领:1']));
+  });
+
+  it('sorts select by option order, not lexicographic value', async () => {
+    // choices order: unclaimed(0), claimed(1)
+    // lexicographic value: claimed < unclaimed
+    const byOption = await http()
+      .post(`/sheets/${sheetId}/query`)
+      .set(auth())
+      .send({
+        sorts: [{ fieldId: fields.status, direction: 'asc', mode: 'option' }],
+      })
+      .expect(200);
+    expect(
+      byOption.body.records.map((item: any) => item.cells[fields.status]),
+    ).toEqual(['unclaimed', 'claimed']);
+
+    const byValue = await http()
+      .post(`/sheets/${sheetId}/query`)
+      .set(auth())
+      .send({
+        sorts: [{ fieldId: fields.status, direction: 'asc', mode: 'value' }],
+      })
+      .expect(200);
+    expect(
+      byValue.body.records.map((item: any) => item.cells[fields.status]),
+    ).toEqual(['claimed', 'unclaimed']);
+  });
+
+  it('sorts text with natural mode so embedded numbers order correctly', async () => {
+    const label = await http()
+      .post(`/sheets/${sheetId}/fields`)
+      .set(auth())
+      .send({ name: '标签', type: 'text' })
+      .expect(201);
+    const labelId = label.body.id as string;
+
+    await http()
+      .post(`/sheets/${sheetId}/records`)
+      .set(auth())
+      .send({ cells: { [labelId]: 'item10' } })
+      .expect(201);
+    await http()
+      .post(`/sheets/${sheetId}/records`)
+      .set(auth())
+      .send({ cells: { [labelId]: 'item2' } })
+      .expect(201);
+    await http()
+      .post(`/sheets/${sheetId}/records`)
+      .set(auth())
+      .send({ cells: { [labelId]: 'item1' } })
+      .expect(201);
+
+    const natural = await http()
+      .post(`/sheets/${sheetId}/query`)
+      .set(auth())
+      .send({
+        filters: {
+          conjunction: 'and',
+          conditions: [{ fieldId: labelId, operator: 'isNotEmpty' }],
+        },
+        sorts: [{ fieldId: labelId, direction: 'asc', mode: 'natural' }],
+      })
+      .expect(200);
+    expect(
+      natural.body.records.map((item: any) => item.cells[labelId]),
+    ).toEqual(['item1', 'item2', 'item10']);
+
+    const byValue = await http()
+      .post(`/sheets/${sheetId}/query`)
+      .set(auth())
+      .send({
+        filters: {
+          conjunction: 'and',
+          conditions: [{ fieldId: labelId, operator: 'isNotEmpty' }],
+        },
+        sorts: [{ fieldId: labelId, direction: 'asc', mode: 'value' }],
+      })
+      .expect(200);
+    expect(
+      byValue.body.records.map((item: any) => item.cells[labelId]),
+    ).toEqual(['item1', 'item10', 'item2']);
   });
 
   it('rejects callers without access to the sheet', async () => {

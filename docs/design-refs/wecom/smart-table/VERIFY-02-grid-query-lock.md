@@ -33,7 +33,7 @@ HTTP `commitchanges` = 离线/回退。产品边界：**不做协同 OT/WS**，�
 | IS_EMPTY / IS_NOT_EMPTY | `isEmpty` / `isNotEmpty` | **对齐** |
 | AND / OR | `conjunction: and\|or`（嵌套 FilterGroup） | **对齐** |
 | 视图筛选服务端生效 | `POST /sheets/:id/query` → `buildFilterSql` + `buildSortSql` LIMIT 1000 | **对齐**（命名视图持久化 query） |
-| 排序 | `sorts[]` direction；mode value/option/natural（UI） | **基本对齐**；option/natural 在 SQL 层简化为值序时需知悉 |
+| 排序 | `sorts[]` direction；mode value/option/natural | **对齐**：`option`=choices 下标（选项正序）；`natural`=数字段补零自然语言序；`value`=文本/数值 |
 | rev / ACCEPT_COMMIT | `records.version` + `expectedVersion`；冲突 409「记录已被他人修改」 | **语义对齐**（非孪生协议） |
 | 客户端始终带 base_rev | `BaseShellView` 更新单元格传 `payload.record.version` | **对齐** |
 

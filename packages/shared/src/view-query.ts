@@ -51,7 +51,12 @@ export type SortMode = 'value' | 'option' | 'natural';
 export interface SortSpec {
   fieldId: string;
   direction: SortDirection;
-  /** Match WeCom's "排序依据：横轴值 / 选项正序". Defaults to value sort. */
+  /**
+   * WeCom-aligned sort basis (defaults to `value`):
+   * - `value` — cell text / numeric value
+   * - `option` — index in field.options.choices（选项正序）
+   * - `natural` — alphanumeric natural order（自然语言序，如 a2 < a10）
+   */
   mode?: SortMode;
 }
 

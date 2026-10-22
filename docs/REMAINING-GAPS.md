@@ -97,13 +97,13 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 | # | 项 | 现状 | 下一步 |
 |---|----|------|--------|
 | 1 | **视觉非像素级对齐** | 主路径交互已按 `SCREENSHOT-INDEX` 对齐；布局/字号/间距仍有观感差 | 按 `docs/design-refs/wecom/SCREENSHOT-INDEX.md` 逐屏对照，先修高频屏（网格顶栏、表单编辑、自动化编辑器、仪表盘配置），目标「信息架构与交互一致」，**不以纯像素 diff 为闸** |
-| 2 | **排序 mode：`option` / `natural` SQL 简化** | UI 可选 value/option/natural；服务端 `buildSortSql` 基本按值序，option/natural 未完整实现企微语义 | 对照 VERIFY-02 / wecom-js 排序语义：单选按选项序、自然语言序在 SQL 或应用层落地；补 API/e2e 覆盖 |
-| 3 | **仪表盘 NUMBER 卡深度弱于企微** | API `metric` / 类型宫格已有；配置深度（对比期、趋势、条件格式等）弱于企微 NUMBER | 对照 VERIFY-M9 / 截图补 NUMBER 卡配置面与查询；保持现有 bar/line/pie 等主类不回退 |
+| 2 | **仪表盘 NUMBER 卡深度弱于企微** | API `metric` / 类型宫格已有；配置深度（对比期、趋势、条件格式等）弱于企微 NUMBER | 对照 VERIFY-M9 / 截图补 NUMBER 卡配置面与查询；保持现有 bar/line/pie 等主类不回退 |
 
 ### P1 已完成归档（勿重做）
 
 | 项 | 状态 | 说明 |
 |----|------|------|
+| 排序 mode option / natural | **已完成** | `buildSortSql`：option=choices 下标、natural=数字段补零；views + findRecords；GridPanel 三档；单测 + view-query e2e |
 | ClickHouse ETL | **已完成** | `ClickHouseEtlService` 增量同步；需 `ANALYTICS_ADAPTER=clickhouse`；见 VERIFY-M12 |
 | 冻结列 / 站内消息 / 评论@ / NL 自动化卡 / autoNumber·ai / 复制粘贴填充 / 父子层级 / 关联·公式·lookup / 地理·条码·群聊格 / 自动化条件 / 变量树·消息按钮 / 表单·自动化交互对齐 / 字段显隐 / 内容权限钻取 / 仪表盘配置壳·图表全集 / 模板库壳 | **已完成** | 详见 §1 与 VERIFY-INDEX |
 

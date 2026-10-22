@@ -427,7 +427,16 @@ export class AutomationRunnerService {
       ? buildFilterSql(step.filters)
       : Prisma.sql`TRUE`;
     const claimStatus = this.claimStatusPredicate(step, fields);
-    const order = buildSortSql(step.sorts);
+    const order = buildSortSql(
+      step.sorts,
+      fields.map((field) => ({
+        id: field.id,
+        type: field.type,
+        options: field.options as {
+          choices?: Array<{ id?: unknown; name?: unknown }>;
+        } | null,
+      })),
+    );
     const lock = this.stepFeedsModify(step.id, state.automation.steps)
       ? Prisma.sql`FOR UPDATE SKIP LOCKED`
       : Prisma.sql``;

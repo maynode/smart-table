@@ -1083,9 +1083,10 @@ defineExpose({
             <option value="asc">升序</option>
             <option value="desc">降序</option>
           </select>
-          <select v-model="row.mode">
+          <select v-model="row.mode" :data-testid="`sort-condition-${index}-mode`">
             <option value="value">按值</option>
             <option value="option">按选项</option>
+            <option value="natural">自然语言序</option>
           </select>
           <button class="icon-btn danger" title="移除" @click="removeSort(index)">×</button>
         </div>
