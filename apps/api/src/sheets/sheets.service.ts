@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import {
+  evaluateFormulaRecord,
   isSystemFieldType,
   resolveRecordPageLimit,
   type FieldType,
@@ -26,6 +27,7 @@ import type { UpdateFieldDto } from './dto/update-field.dto';
 import { applyAutoNumbers, stripAutoNumberInputs } from './auto-number';
 import { applyAiFields, stripAiFieldInputs } from './ai-field';
 import { seedBlankSheetStructure } from './blank-sheet';
+import { syncBidirectionalRelations } from './relation-sync';
 
 @Injectable()
 export class SheetsService {
@@ -464,6 +466,27 @@ export class SheetsService {
       { changes: cells, version: updatedRecord.version },
     );
 
+    const sheetFields = await this.prisma.field.findMany({
+      where: { sheetId: record.sheetId },
+      orderBy: { order: 'asc' },
+    });
+    try {
+      await syncBidirectionalRelations(
+        this.prisma,
+        sheetFields,
+        recordId,
+        currentCells,
+        mergedCells,
+        Object.keys(stripped),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `bidirectional relation sync failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     try {
       await this.automationRunner.triggerRecordUpdated(recordId);
     } catch (error) {
@@ -474,7 +497,23 @@ export class SheetsService {
       );
     }
 
-    return updatedRecord;
+    const formulaValues = evaluateFormulaRecord(
+      sheetFields.map((field) => ({
+        id: field.id,
+        name: field.name,
+        type: field.type,
+        options: field.options as { formula?: string } | null,
+      })),
+      { cells: (updatedRecord.cells ?? {}) as Record<string, unknown> },
+    );
+
+    return {
+      ...updatedRecord,
+      cells: {
+        ...((updatedRecord.cells ?? {}) as Record<string, unknown>),
+        ...formulaValues,
+      },
+    };
   }
 
   async listRecords(

@@ -22,7 +22,12 @@ import type {
   UpdateAutomationDto,
 } from './dto/automation.dto';
 
-const TRIGGER_TYPES = ['recordCreated', 'recordUpdated', 'schedule'];
+const TRIGGER_TYPES = [
+  'recordCreated',
+  'recordUpdated',
+  'schedule',
+  'recordTimer',
+];
 const STEP_TYPES = [
   'findRecords',
   'createRecord',
@@ -279,6 +284,21 @@ export class AutomationsService {
         }
         throw new BadRequestException('cron 表达式或时区不合法');
       }
+    } else if (triggerType === 'recordTimer') {
+      await this.assertSheetInBase(baseId, String(trigger.sheetId ?? ''));
+      if (typeof trigger.fieldId !== 'string' || !trigger.fieldId.trim()) {
+        throw new BadRequestException('到达时间触发缺少日期字段');
+      }
+      const field = await this.prisma.field.findFirst({
+        where: {
+          id: trigger.fieldId,
+          sheetId: String(trigger.sheetId),
+        },
+      });
+      if (!field || field.type !== 'date') {
+        throw new BadRequestException('到达时间触发必须选择日期字段');
+      }
+      if (trigger.filters) this.validateFilters(trigger.filters);
     } else {
       await this.assertSheetInBase(baseId, String(trigger.sheetId ?? ''));
       if (trigger.filters) this.validateFilters(trigger.filters);

@@ -9,7 +9,7 @@
 ## 0. 一句话现状
 
 W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互、可视化表单构建器、可视化自动化编辑器、命名视图、真实 schedule runner、成员邀请、顶栏分享/更多、仪表盘多图布局均已落地，并有 Playwright/API E2E 证据。  
-**尚未完成的是 W5 交付闭环**：全量回归、Task 26 新鲜压测数据、Docker 镜像重建与 smoke；ClickHouse 仍只有查询适配器，没有 PG→CH ETL。W6 最终报告待写。
+**尚未完成的是 W5 交付闭环**：全量回归、Task 26 新鲜压测数据、Docker 镜像重建与 smoke。ClickHouse 已有查询适配器 + PG→CH ETL（`ClickHouseEtlService`，需 `ANALYTICS_ADAPTER=clickhouse`）。W6 最终报告待写。
 
 ---
 
@@ -192,5 +192,6 @@ pnpm --filter web exec playwright test
 - 产品方案：`docs/智能表格-产品与技术方案.md`
 - 实施计划：`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`
 - 性能：`docs/PERFORMANCE.md`
-- **企微源码级校验**：总表 [`VERIFY-INDEX.md`](design-refs/wecom/smart-table/VERIFY-INDEX.md)（M1–M11 + 首轮 VERIFY-01…05）；路径 `docs/design-refs/wecom/smart-table/`
+- **企微源码级校验**：总表 [`VERIFY-INDEX.md`](design-refs/wecom/smart-table/VERIFY-INDEX.md)（M1–M12 + 首轮 VERIFY-01…05）；路径 `docs/design-refs/wecom/smart-table/`
+- **M12 缺口补齐**：`recordTimer`、CH ETL、Canvas breakLine、`title` 字段、双向关联、公式脏行 — 见 [`VERIFY-M12-followups.md`](design-refs/wecom/smart-table/VERIFY-M12-followups.md)
 - 企微截图索引：`docs/design-refs/wecom/SCREENSHOT-INDEX.md`

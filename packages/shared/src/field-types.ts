@@ -6,6 +6,7 @@
  */
 export const FIELD_TYPES = [
   'text',
+  'title',
   'select',
   'multiSelect',
   'number',
@@ -38,6 +39,7 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 
 export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: '文本',
+  title: '标题',
   select: '单选',
   multiSelect: '多选',
   number: '数字',
@@ -127,6 +129,13 @@ export interface RelationOptions {
   multiple?: boolean;
   /** Field of the target sheet shown in the cell. */
   displayFieldId?: string;
+  /**
+   * When true, writing this cell also updates the paired reverse relation
+   * on the target sheet (`reverseFieldId`). WeCom TWO_WAY_LINK semantics.
+   */
+  bidirectional?: boolean;
+  /** Relation field id on the target sheet that points back here. */
+  reverseFieldId?: string;
 }
 
 export interface AutoNumberOptions {

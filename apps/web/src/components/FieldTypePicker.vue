@@ -59,6 +59,7 @@ const MENU_GROUPS: FieldType[][] = [
   ['ai'],
   [
     'text',
+    'title',
     'select',
     'multiSelect',
     'number',
@@ -268,6 +269,7 @@ function iconFor(type: FieldType): string {
   const map: Partial<Record<FieldType, string>> = {
     ai: '✦',
     text: 'T',
+    title: '题',
     select: '◉',
     multiSelect: '▣',
     number: '#',

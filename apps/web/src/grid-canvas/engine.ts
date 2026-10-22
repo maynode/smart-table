@@ -81,6 +81,49 @@ export function truncateToWidth(
   return lo <= 0 ? ellipsis : `${text.slice(0, lo)}${ellipsis}`;
 }
 
+/**
+ * WeCom sdk_1 `breakLine`: greedy pack tokens into lines up to maxWidth /
+ * maxLineCount, then ellipsis the last line if truncated.
+ */
+export function breakLine(
+  target: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLineCount: number,
+): string[] {
+  if (!text || maxWidth <= 0 || maxLineCount <= 0) return [];
+  const tokens = text.split(/(\s+)/).filter((token) => token.length > 0);
+  const lines: string[] = [];
+  let current = '';
+
+  const pushLine = (line: string, isLast: boolean) => {
+    if (isLast && measureCached(target, line) > maxWidth) {
+      lines.push(truncateToWidth(target, line, maxWidth));
+    } else {
+      lines.push(line);
+    }
+  };
+
+  for (const token of tokens) {
+    const candidate = current + token;
+    if (!current || measureCached(target, candidate) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (lines.length + 1 >= maxLineCount) {
+      pushLine(current + token, true);
+      return lines;
+    }
+    pushLine(current, false);
+    current = token.trimStart();
+  }
+  if (current) {
+    const last = lines.length + 1 >= maxLineCount;
+    pushLine(current, last || measureCached(target, current) > maxWidth);
+  }
+  return lines.slice(0, maxLineCount);
+}
+
 export interface CanvasGridOptions {
   columns: GridColumn[];
   rowCount: number;
@@ -1033,12 +1076,22 @@ export class CanvasGridEngine {
         target.font = `600 13px ${FONT_STACK}`;
       }
       target.fillStyle = cell.color ?? COLORS.cellText;
-      const label = truncateToWidth(
-        target,
-        cell.text,
-        Math.max(0, columnWidth - 24),
-      );
-      target.fillText(label, x + 12, y + rowHeight / 2);
+      const maxWidth = Math.max(0, columnWidth - 24);
+      const lineHeight = 16;
+      const maxLines = Math.max(1, Math.floor((rowHeight - 8) / lineHeight));
+      if (maxLines <= 1) {
+        const label = truncateToWidth(target, cell.text, maxWidth);
+        target.fillText(label, x + 12, y + rowHeight / 2);
+      } else {
+        const lines = breakLine(target, cell.text, maxWidth, maxLines);
+        const blockHeight = lines.length * lineHeight;
+        let textY = y + (rowHeight - blockHeight) / 2 + lineHeight / 2;
+        target.textBaseline = 'middle';
+        for (const line of lines) {
+          target.fillText(line, x + 12, textY);
+          textY += lineHeight;
+        }
+      }
       if (cell.bold) {
         target.font = `13px ${FONT_STACK}`;
       }

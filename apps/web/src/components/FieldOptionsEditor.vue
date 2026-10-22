@@ -30,6 +30,9 @@ const aiPrompt = ref('');
 const aiSourceIds = ref<string[]>([]);
 const formulaText = ref('=1');
 const relationTargetSheetId = ref('');
+const relationBidirectional = ref(false);
+const relationReverseFieldId = ref('');
+const relationMultiple = ref(false);
 const lookupRelationFieldId = ref('');
 const lookupTargetFieldId = ref('');
 const lookupAggregate = ref<'first' | 'count' | 'sum' | 'min' | 'max' | 'array'>(
@@ -118,9 +121,17 @@ watch(
     }
 
     if (isRelation.value) {
-      const relation = (opts.relation ?? {}) as { targetSheetId?: string };
+      const relation = (opts.relation ?? {}) as {
+        targetSheetId?: string;
+        bidirectional?: boolean;
+        reverseFieldId?: string;
+        multiple?: boolean;
+      };
       relationTargetSheetId.value =
         relation.targetSheetId ?? sheetOptions.value[0]?.id ?? '';
+      relationBidirectional.value = Boolean(relation.bidirectional);
+      relationReverseFieldId.value = relation.reverseFieldId ?? '';
+      relationMultiple.value = Boolean(relation.multiple);
       return;
     }
 
@@ -238,11 +249,20 @@ function save(): void {
       error.value = '请选择关联的工作表';
       return;
     }
+    if (relationBidirectional.value && !relationReverseFieldId.value) {
+      error.value = '双向关联需要选择对方表的反向关联字段';
+      return;
+    }
     emit('save', {
       ...base,
       relation: {
         ...((props.field?.options?.relation as Record<string, unknown>) ?? {}),
         targetSheetId: relationTargetSheetId.value,
+        multiple: relationMultiple.value,
+        bidirectional: relationBidirectional.value,
+        reverseFieldId: relationBidirectional.value
+          ? relationReverseFieldId.value || undefined
+          : undefined,
       },
     });
     return;
@@ -394,12 +414,42 @@ onMounted(() => {
           v-model="relationTargetSheetId"
           class="full-select"
           data-testid="relation-target-sheet"
+          @change="loadTargetFields(relationTargetSheetId)"
         >
           <option value="">请选择</option>
           <option v-for="sheet in sheetOptions" :key="sheet.id" :value="sheet.id">
             {{ sheet.name }}
           </option>
         </select>
+        <label class="inline-check">
+          <input v-model="relationMultiple" type="checkbox" data-testid="relation-multiple" />
+          允许多选关联记录
+        </label>
+        <label class="inline-check">
+          <input
+            v-model="relationBidirectional"
+            type="checkbox"
+            data-testid="relation-bidirectional"
+          />
+          双向关联（同步写回对方表）
+        </label>
+        <template v-if="relationBidirectional">
+          <label class="ai-label">对方表的反向关联字段</label>
+          <select
+            v-model="relationReverseFieldId"
+            class="full-select"
+            data-testid="relation-reverse-field"
+          >
+            <option value="">请选择</option>
+            <option
+              v-for="field in targetFields.filter((item) => item.type === 'relation')"
+              :key="field.id"
+              :value="field.id"
+            >
+              {{ field.name }}
+            </option>
+          </select>
+        </template>
         <p v-if="sheetOptions.length === 0" class="muted">当前 Base 没有其它工作表</p>
       </template>
 

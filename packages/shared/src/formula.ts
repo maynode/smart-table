@@ -81,6 +81,14 @@ export function compileFormula(
   return compiled.startsWith('=') ? compiled : `=${compiled}`;
 }
 
+/** Evaluate formula fields for a single record (dirty-row hot path). */
+export function evaluateFormulaRecord(
+  fields: FormulaFieldConfig[],
+  record: FormulaRecord,
+): Record<string, unknown> {
+  return evaluateFormulaRows(fields, [record])[0] ?? {};
+}
+
 /** Evaluate every formula field for all records, returning raw values by row. */
 export function evaluateFormulaRows(
   fields: FormulaFieldConfig[],

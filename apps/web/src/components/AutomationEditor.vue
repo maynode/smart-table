@@ -80,7 +80,7 @@ const error = ref('');
 
 const name = ref('');
 const enabled = ref(false);
-const triggerType = ref<'recordCreated' | 'recordUpdated' | 'schedule'>(
+const triggerType = ref<'recordCreated' | 'recordUpdated' | 'schedule' | 'recordTimer'>(
   'recordCreated',
 );
 const triggerSheetId = ref('');
@@ -90,6 +90,7 @@ const triggerFilters = ref<
 const triggerConjunction = ref<'and' | 'or'>('and');
 const cron = ref('0 9 * * *');
 const timezone = ref('Asia/Shanghai');
+const timerFieldId = ref('');
 const onFindEmpty = ref<'continue' | 'stop'>('continue');
 const monthlyQuota = ref<number | null>(null);
 const steps = ref<UiStep[]>([]);
@@ -271,6 +272,11 @@ function operatorLabel(operator: string): string {
 function triggerSummary(): string {
   if (triggerType.value === 'schedule') {
     return `按计划运行：${cron.value || '未设 cron'}（${timezone.value}）`;
+  }
+  if (triggerType.value === 'recordTimer') {
+    const sheet = sheetLabel(triggerSheetId.value);
+    const field = fieldName(triggerSheetId.value, timerFieldId.value) || '日期字段';
+    return `当「${sheet}」的「${field}」到达时`;
   }
   const when =
     triggerType.value === 'recordUpdated' ? '记录被更新时' : '新增记录时';
@@ -706,6 +712,14 @@ function buildTrigger(): Record<string, unknown> {
       timezone: timezone.value,
     };
   }
+  if (triggerType.value === 'recordTimer') {
+    return {
+      type: 'recordTimer',
+      sheetId: triggerSheetId.value,
+      fieldId: timerFieldId.value,
+      filters: buildFilter(triggerFilters.value, triggerConjunction.value),
+    };
+  }
   return {
     type: triggerType.value,
     sheetId: triggerSheetId.value,
@@ -831,6 +845,9 @@ function validate(): string {
   }
   if (triggerType.value === 'schedule' && !cron.value.trim()) {
     return '请输入 cron 表达式';
+  }
+  if (triggerType.value === 'recordTimer' && !timerFieldId.value) {
+    return '请选择到达时间的日期字段';
   }
   if (steps.value.length === 0) return '至少添加一个执行步骤';
   for (const [index, step] of steps.value.entries()) {
@@ -1011,9 +1028,12 @@ async function load(): Promise<void> {
     triggerType.value =
       trigger.type === 'schedule'
         ? 'schedule'
-        : trigger.type === 'recordUpdated'
-          ? 'recordUpdated'
-          : 'recordCreated';
+        : trigger.type === 'recordTimer'
+          ? 'recordTimer'
+          : trigger.type === 'recordUpdated'
+            ? 'recordUpdated'
+            : 'recordCreated';
+    timerFieldId.value = String(trigger.fieldId ?? '');
     triggerSheetId.value = String(trigger.sheetId ?? triggerSheetCandidate);
     cron.value = String(trigger.cron ?? '0 9 * * *');
     timezone.value = String(trigger.timezone ?? 'Asia/Shanghai');
@@ -1091,6 +1111,7 @@ onMounted(load);
               <option value="recordCreated">添加新记录时</option>
               <option value="recordUpdated">更新记录时</option>
               <option value="schedule">定时触发</option>
+              <option value="recordTimer">到达记录时间</option>
             </select>
             <template v-if="triggerType !== 'schedule'">
               <span>在</span>
@@ -1099,7 +1120,24 @@ onMounted(load);
                   {{ sheet.name }}
                 </option>
               </select>
-              <span>里{{ triggerType === 'recordCreated' ? '添加新记录' : '更新记录' }}时</span>
+              <span v-if="triggerType === 'recordTimer'">的</span>
+              <select
+                v-if="triggerType === 'recordTimer'"
+                v-model="timerFieldId"
+                class="nl-chip"
+                data-testid="timer-field"
+              >
+                <option value="">选择日期字段</option>
+                <option
+                  v-for="field in triggerFields.filter((item) => item.type === 'date')"
+                  :key="field.id"
+                  :value="field.id"
+                >
+                  {{ field.name }}
+                </option>
+              </select>
+              <span v-if="triggerType === 'recordTimer'">到达时</span>
+              <span v-else>里{{ triggerType === 'recordCreated' ? '添加新记录' : '更新记录' }}时</span>
             </template>
             <template v-else>
               <span>按</span>

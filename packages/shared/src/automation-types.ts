@@ -8,7 +8,8 @@ export type FindEmptyBehavior = 'continue' | 'stop';
 export type AutomationTriggerType =
   | 'recordCreated'
   | 'recordUpdated'
-  | 'schedule';
+  | 'schedule'
+  | 'recordTimer';
 
 export interface RecordTrigger {
   type: 'recordCreated' | 'recordUpdated';
@@ -24,7 +25,23 @@ export interface ScheduleTrigger {
   timezone?: string;
 }
 
-export type AutomationTrigger = RecordTrigger | ScheduleTrigger;
+/**
+ * WeCom record_timer: fire when a date/datetime cell becomes due.
+ * Idempotency key = automationId + recordId + cell stamp so each due value fires once.
+ */
+export interface RecordTimerTrigger {
+  type: 'recordTimer';
+  sheetId: string;
+  /** Date or datetime field that arms the trigger. */
+  fieldId: string;
+  filters?: FilterGroup;
+}
+
+export type AutomationTrigger =
+  | RecordTrigger
+  | ScheduleTrigger
+  | RecordTimerTrigger;
+
 
 export type NaturalTime = 'today' | 'tomorrow' | 'yesterday' | 'now';
 

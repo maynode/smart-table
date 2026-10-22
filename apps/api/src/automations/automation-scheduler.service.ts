@@ -9,12 +9,13 @@ import { nextCronDate, type ScheduleTrigger } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { AutomationRunnerService } from './automation-runner.service';
+import { RecordTimerService } from './record-timer.service';
 
 /**
  * Polls due schedule automations. Every replica can run this: the conditional
  * `updateMany` on `nextRunAt` acts as an atomic claim, so only one replica gets
  * a given occurrence. Execution itself still uses the same Runner as record
- * triggers and the manual "run" button.
+ * triggers and the manual "run" button. Also drives recordTimer（到达时间）.
  */
 @Injectable()
 export class AutomationSchedulerService
@@ -28,6 +29,7 @@ export class AutomationSchedulerService
     private readonly prisma: PrismaService,
     private readonly runner: AutomationRunnerService,
     private readonly quotas: QuotasService,
+    private readonly recordTimers: RecordTimerService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -39,6 +41,9 @@ export class AutomationSchedulerService
     this.timer = setInterval(() => {
       void this.runDueSchedules().catch((error: unknown) => {
         this.logger.warn(`automation scheduler failed: ${String(error)}`);
+      });
+      void this.recordTimers.runDueTimers().catch((error: unknown) => {
+        this.logger.warn(`record timer poll failed: ${String(error)}`);
       });
     }, 15_000);
     this.timer.unref?.();

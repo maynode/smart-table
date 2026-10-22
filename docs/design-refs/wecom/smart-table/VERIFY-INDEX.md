@@ -18,5 +18,6 @@
 | M10 分享/配额 | [VERIFY-M10-share-quotas.md](./VERIFY-M10-share-quotas.md) | 中 | 0 壳层 | — | — |
 | M11 模板/首页 | [VERIFY-M11-templates-home.md](./VERIFY-M11-templates-home.md) | 低（截图壳） | 0 壳层 | — | — |
 | 协同 WS | （暂缓） | HAR-TECH §8.3 | — | 不实现 | 跳过 |
+| M12 缺口补齐 | [VERIFY-M12-followups.md](./VERIFY-M12-followups.md) | 实现对照 | 0 主项 | timer/ETL/breakLine/TITLE/双向/公式脏行 | 已落地 |
 
 首轮抽样 VERIFY-01…05 仍有效；M* 为加深/补齐。

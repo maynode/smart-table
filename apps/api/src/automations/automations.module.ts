@@ -9,6 +9,7 @@ import { AutomationRunnerService } from './automation-runner.service';
 import { AutomationSchedulerService } from './automation-scheduler.service';
 import { AutomationsController } from './automations.controller';
 import { AutomationsService } from './automations.service';
+import { RecordTimerService } from './record-timer.service';
 import {
   LocalNotifyAdapter,
   NOTIFY_ADAPTER,
@@ -23,6 +24,7 @@ import { NotificationsController } from './notifications.controller';
     AutomationRunnerService,
     AutomationQueueService,
     AutomationSchedulerService,
+    RecordTimerService,
     LocalNotifyAdapter,
     {
       provide: NOTIFY_ADAPTER,
