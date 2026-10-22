@@ -40,7 +40,7 @@ export interface GridStats {
 const measureCache = new Map<string, Map<string, number>>();
 
 function measureCached(
-  target: CanvasRenderingContext2D,
+  target: Pick<CanvasRenderingContext2D, 'measureText' | 'font'>,
   text: string,
 ): number {
   const fontKey = target.font || '';
@@ -60,8 +60,10 @@ function measureCached(
  * WeCom sdk_1 `appendEllipsis`: binary-search the longest prefix whose
  * measured width plus "…" fits in the cell. Keeps paint O(log n) measures.
  */
+type TextMeasureCtx = Pick<CanvasRenderingContext2D, 'measureText' | 'font'>;
+
 export function truncateToWidth(
-  target: CanvasRenderingContext2D,
+  target: TextMeasureCtx,
   text: string,
   maxWidth: number,
 ): string {
@@ -86,7 +88,7 @@ export function truncateToWidth(
  * maxLineCount, then ellipsis the last line if truncated.
  */
 export function breakLine(
-  target: CanvasRenderingContext2D,
+  target: TextMeasureCtx,
   text: string,
   maxWidth: number,
   maxLineCount: number,
@@ -132,6 +134,8 @@ export interface CanvasGridOptions {
   overscan?: number;
   getCell?: (row: number, col: number) => CellRender | null;
   getRowColor?: (row: number) => string | null;
+  /** Sticky canvas footer label per column（企微：记录数 / 求和）. */
+  getColumnFooter?: (col: number) => string | null;
   onSelectionChange?: (selection: Selection | null) => void;
   onCellClick?: (selection: Selection) => void;
   onCellDoubleClick?: (selection: Selection) => void;
@@ -149,6 +153,13 @@ export interface CanvasGridOptions {
   ) => void;
   /** Fired when the trailing "+" header (id `__add_field__`) is clicked. */
   onAddColumnClick?: (anchor: { top: number; left: number }) => void;
+  /** 企微底栏行号区「+」：打开向上/向下插入菜单。 */
+  onFooterAddClick?: (anchor: { top: number; left: number }) => void;
+  /** 行号右键：打开向上/向下插入菜单（相对该行）。 */
+  onRowInsertMenu?: (
+    row: number,
+    anchor: { top: number; left: number },
+  ) => void;
   /**
    * Drag the selection fill-handle (bottom-right square) to extend a value
    * across rows in the same column — WeCom / spreadsheet fill gesture.
@@ -185,6 +196,8 @@ const COLORS = {
 };
 
 const HEADER_HEIGHT = 40;
+/** 企微底栏两行文案（标题 + 数值），略高于单行。 */
+const FOOTER_HEIGHT = 40;
 const ROW_HEIGHT = 36;
 const COLUMN_WIDTH = 160;
 const MIN_COLUMN_WIDTH = 60;
@@ -213,6 +226,7 @@ export class CanvasGridEngine {
   private columnWidths: number[];
   private getCell: (row: number, col: number) => CellRender | null;
   private getRowColor: (row: number) => string | null;
+  private getColumnFooter: (col: number) => string | null;
   private selection: Selection | null = null;
   private selectedRows = new Set<number>();
   private readonly imageCache = new Map<
@@ -262,6 +276,7 @@ export class CanvasGridEngine {
     this.frozenColumnCount = Math.max(0, options.freezeColumnCount ?? 0);
     this.getCell = options.getCell ?? (() => null);
     this.getRowColor = options.getRowColor ?? (() => null);
+    this.getColumnFooter = options.getColumnFooter ?? (() => null);
 
     // The host is positioned by CSS (absolute inset: 0); forcing
     // position:relative here would collapse it inside a flex row.
@@ -321,6 +336,7 @@ export class CanvasGridEngine {
     this.scroller.addEventListener('scroll', this.onScroll, { passive: true });
     host.addEventListener('pointerdown', this.onPointerDown);
     host.addEventListener('dblclick', this.onDoubleClick);
+    host.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('pointermove', this.onResizeMove);
     window.addEventListener('pointerup', this.onResizeEnd);
 
@@ -386,12 +402,40 @@ export class CanvasGridEngine {
     this.invalidate();
   }
 
+  setColumnFooterProvider(
+    provider: (col: number) => string | null,
+  ): void {
+    this.getColumnFooter = provider;
+    this.invalidate();
+  }
+
+  private footerHeight(): number {
+    return FOOTER_HEIGHT;
+  }
+
+  /**
+   * 企微：行少时底栏紧贴末行；行多超出视口时粘在底部。
+   * 勿始终 `height - footerH`，否则中间会空出一大块「假表格」。
+   */
+  private footerTop(height: number): number {
+    const footerH = this.footerHeight();
+    const contentBottom =
+      this.headerHeight + this.rowAxis.totalSize - this.scrollY;
+    return Math.min(
+      Math.max(contentBottom, this.headerHeight),
+      Math.max(this.headerHeight, height - footerH),
+    );
+  }
+
   ensureCellVisible(row: number, col: number): void {
     const headerHeight = this.headerHeight;
     const top = this.rowAxis.offset(row);
     const bottom = top + this.rowAxis.size(row);
     const scrollTop = this.scroller.scrollTop;
-    const viewportHeight = this.host.clientHeight - headerHeight;
+    const viewportHeight = Math.max(
+      0,
+      this.footerTop(this.host.clientHeight) - headerHeight,
+    );
 
     if (top < scrollTop) {
       this.scroller.scrollTop = top;
@@ -491,7 +535,10 @@ export class CanvasGridEngine {
     this.updateSpacer();
     this.resizeCanvases();
 
-    const bodyHeight = Math.max(0, height - this.headerHeight);
+    const bodyHeight = Math.max(
+      0,
+      this.footerTop(height) - this.headerHeight,
+    );
     const rows = computeVisibleRange(
       this.rowAxis,
       this.scrollY,
@@ -516,6 +563,7 @@ export class CanvasGridEngine {
     this.drawGrid(width, height, rows, columns, bodyColumnStart);
     this.drawContent(width, height, rows, columns, bodyColumnStart);
     this.drawSelection(width, height);
+    this.drawFooter(width, height, columns, bodyColumnStart);
 
     this.stats = {
       cellsDrawn:
@@ -534,6 +582,7 @@ export class CanvasGridEngine {
     this.scroller.removeEventListener('scroll', this.onScroll);
     this.host.removeEventListener('pointerdown', this.onPointerDown);
     this.host.removeEventListener('dblclick', this.onDoubleClick);
+    this.host.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('pointermove', this.onResizeMove);
     window.removeEventListener('pointerup', this.onResizeEnd);
     this.resizeObserver?.disconnect();
@@ -551,10 +600,40 @@ export class CanvasGridEngine {
     this.scrollY = this.scroller.scrollTop;
   }
 
+  private readonly onContextMenu = (event: MouseEvent): void => {
+    const point = this.localPoint(event);
+    if (point.x >= this.rowGutterWidth) return;
+    if (point.y < this.headerHeight) return;
+    if (point.y >= this.footerTop(this.host.clientHeight)) return;
+    const row = this.rowAxis.indexAt(
+      point.y - this.headerHeight + this.scrollY,
+    );
+    if (row < 0 || row >= this.rowAxis.count) return;
+    event.preventDefault();
+    const rect = this.host.getBoundingClientRect();
+    this.options.onRowInsertMenu?.(row, {
+      top: rect.top + point.y,
+      left: rect.left + this.rowGutterWidth + 4,
+    });
+  };
+
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0) return;
     const point = this.localPoint(event);
     if (point.x > this.host.clientWidth || point.y > this.host.clientHeight) {
+      return;
+    }
+    const footerY = this.footerTop(this.host.clientHeight);
+    // 企微：底栏行号区「+」可点，打开插入菜单。
+    if (point.y >= footerY) {
+      if (point.x < this.rowGutterWidth && this.options.onFooterAddClick) {
+        event.preventDefault();
+        const rect = this.host.getBoundingClientRect();
+        this.options.onFooterAddClick({
+          top: rect.top + footerY,
+          left: rect.left + 4,
+        });
+      }
       return;
     }
 
@@ -866,15 +945,12 @@ export class CanvasGridEngine {
       context.restore();
     }
 
-    // Body grid lines.
+    // Body ends at footer top — 行少时紧贴末行，不在中间灌空行线。
+    const bodyBottom = this.footerTop(height);
+    const bodyH = Math.max(0, bodyBottom - this.headerHeight);
     context.save();
     context.beginPath();
-    context.rect(
-      scrollLeft,
-      this.headerHeight,
-      Math.max(0, width - scrollLeft),
-      height - this.headerHeight,
-    );
+    context.rect(scrollLeft, this.headerHeight, Math.max(0, width - scrollLeft), bodyH);
     context.clip();
 
     context.strokeStyle = COLORS.border;
@@ -882,13 +958,14 @@ export class CanvasGridEngine {
     for (let row = rows.start; row < rows.end; row += 1) {
       const y =
         this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
+      if (y < this.headerHeight || y > bodyBottom) continue;
       context.moveTo(scrollLeft, y);
       context.lineTo(width, y);
     }
     for (let col = bodyColumnStart; col < columns.end; col += 1) {
       const x = this.columnScreenX(col + 1) - 0.5;
       context.moveTo(x, this.headerHeight);
-      context.lineTo(x, height);
+      context.lineTo(x, bodyBottom);
     }
     context.stroke();
 
@@ -896,18 +973,6 @@ export class CanvasGridEngine {
       const dataColumns = this.columns.filter(
         (column) => column.id !== ADD_FIELD_COLUMN_ID,
       );
-      // Draw a few empty row skeletons so an empty sheet still reads as a table.
-      const ghostRows = 8;
-      context.strokeStyle = COLORS.border;
-      context.beginPath();
-      for (let row = 0; row < ghostRows; row += 1) {
-        const y = this.headerHeight + (row + 1) * this.rowHeight - 0.5;
-        if (y > height) break;
-        context.moveTo(scrollLeft, y);
-        context.lineTo(width, y);
-      }
-      context.stroke();
-
       context.fillStyle = COLORS.emptyText;
       context.font = `13px ${FONT_STACK}`;
       context.textAlign = 'center';
@@ -925,32 +990,23 @@ export class CanvasGridEngine {
     if (this.frozenColumnCount > 0) {
       context.save();
       context.beginPath();
-      context.rect(
-        gutter,
-        this.headerHeight,
-        frozenW,
-        height - this.headerHeight,
-      );
+      context.rect(gutter, this.headerHeight, frozenW, bodyH);
       context.clip();
       context.fillStyle = COLORS.background;
-      context.fillRect(
-        gutter,
-        this.headerHeight,
-        frozenW,
-        height - this.headerHeight,
-      );
+      context.fillRect(gutter, this.headerHeight, frozenW, bodyH);
       context.strokeStyle = COLORS.border;
       context.beginPath();
       for (let row = rows.start; row < rows.end; row += 1) {
         const y =
           this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
+        if (y < this.headerHeight || y > bodyBottom) continue;
         context.moveTo(gutter, y);
         context.lineTo(gutter + frozenW, y);
       }
       for (let col = 0; col < this.frozenColumnCount; col += 1) {
         const x = this.columnScreenX(col + 1) - 0.5;
         context.moveTo(x, this.headerHeight);
-        context.lineTo(x, height);
+        context.lineTo(x, bodyBottom);
       }
       context.stroke();
       context.restore();
@@ -958,7 +1014,7 @@ export class CanvasGridEngine {
       context.strokeStyle = COLORS.border;
       context.beginPath();
       context.moveTo(gutter + frozenW - 0.5, 0);
-      context.lineTo(gutter + frozenW - 0.5, height);
+      context.lineTo(gutter + frozenW - 0.5, bodyBottom);
       context.stroke();
     }
 
@@ -974,15 +1030,21 @@ export class CanvasGridEngine {
     const gutter = this.rowGutterWidth;
     if (gutter <= 0) return;
 
+    const bodyBottom = this.footerTop(height);
     context.fillStyle = COLORS.headerBackground;
-    context.fillRect(0, 0, gutter, height);
+    context.fillRect(0, 0, gutter, bodyBottom);
     context.strokeStyle = COLORS.border;
     context.beginPath();
     context.moveTo(gutter - 0.5, 0);
-    context.lineTo(gutter - 0.5, height);
+    context.lineTo(gutter - 0.5, bodyBottom);
     context.moveTo(0, this.headerHeight - 0.5);
     context.lineTo(gutter, this.headerHeight - 0.5);
     context.stroke();
+
+    context.save();
+    context.beginPath();
+    context.rect(0, this.headerHeight, gutter, Math.max(0, bodyBottom - this.headerHeight));
+    context.clip();
 
     context.fillStyle = COLORS.emptyText;
     context.font = `12px ${FONT_STACK}`;
@@ -992,7 +1054,7 @@ export class CanvasGridEngine {
       const y =
         this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
       const rowHeight = this.rowAxis.size(row);
-      if (y + rowHeight < this.headerHeight || y > height) continue;
+      if (y + rowHeight < this.headerHeight || y > bodyBottom) continue;
       if (this.selectedRows.has(row)) {
         context.fillStyle = '#e8f3ff';
         context.fillRect(1, y, gutter - 1, rowHeight);
@@ -1008,6 +1070,7 @@ export class CanvasGridEngine {
       context.lineTo(gutter, y + rowHeight - 0.5);
       context.stroke();
     }
+    context.restore();
     context.textAlign = 'start';
   }
 
@@ -1140,21 +1203,12 @@ export class CanvasGridEngine {
     ) => {
       target.save();
       target.beginPath();
-      target.rect(
-        clipX,
-        this.headerHeight,
-        Math.max(0, clipW),
-        height - this.headerHeight,
-      );
+      const bodyH = Math.max(0, this.footerTop(height) - this.headerHeight);
+      target.rect(clipX, this.headerHeight, Math.max(0, clipW), bodyH);
       target.clip();
       if (fillBg) {
         target.fillStyle = COLORS.background;
-        target.fillRect(
-          clipX,
-          this.headerHeight,
-          Math.max(0, clipW),
-          height - this.headerHeight,
-        );
+        target.fillRect(clipX, this.headerHeight, Math.max(0, clipW), bodyH);
       }
       target.font = `13px ${FONT_STACK}`;
       target.textBaseline = 'middle';
@@ -1194,10 +1248,14 @@ export class CanvasGridEngine {
     }
 
     if (offscreenActive) {
+      // Offscreen 已按 device pixel 尺寸绘制；回贴必须 1:1，不能用 CSS 像素宽高，
+      // 否则在 dpr>1 时内容缩到左上角，单元格看起来「改了不显示」。
       const content = this.contexts.content;
+      const pixelW = this.offscreen!.width;
+      const pixelH = this.offscreen!.height;
       content.setTransform(1, 0, 0, 1, 0, 0);
-      content.clearRect(0, 0, width * this.dpr, height * this.dpr);
-      content.drawImage(this.offscreen!, 0, 0, width, height);
+      content.clearRect(0, 0, pixelW, pixelH);
+      content.drawImage(this.offscreen!, 0, 0);
     }
   }
 
@@ -1219,6 +1277,134 @@ export class CanvasGridEngine {
     return null;
   }
 
+  /** 企微底栏：贴末行（或粘视口底）；文案两行「标题 / 数值」。 */
+  private drawFooter(
+    width: number,
+    height: number,
+    columns: VisibleRange,
+    bodyColumnStart: number,
+  ): void {
+    const footerH = this.footerHeight();
+    if (footerH <= 0) return;
+    const y = this.footerTop(height);
+    const footerBottom = y + footerH;
+    const gutter = this.rowGutterWidth;
+    const frozenW = this.frozenWidth();
+
+    const paintOn = (context: CanvasRenderingContext2D) => {
+      context.save();
+      context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+      context.fillStyle = COLORS.headerBackground;
+      context.fillRect(0, y, width, footerH);
+      context.strokeStyle = COLORS.border;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(0, y + 0.5);
+      context.lineTo(width, y + 0.5);
+      context.moveTo(0, footerBottom - 0.5);
+      context.lineTo(width, footerBottom - 0.5);
+      context.stroke();
+
+      context.beginPath();
+      if (gutter > 0) {
+        context.moveTo(gutter - 0.5, y);
+        context.lineTo(gutter - 0.5, footerBottom);
+      }
+      for (let col = bodyColumnStart; col < columns.end; col += 1) {
+        const x = this.columnScreenX(col + 1) - 0.5;
+        if (x < gutter || x > width) continue;
+        context.moveTo(x, y);
+        context.lineTo(x, footerBottom);
+      }
+      if (this.frozenColumnCount > 0) {
+        for (let col = 0; col < this.frozenColumnCount; col += 1) {
+          const x = this.columnScreenX(col + 1) - 0.5;
+          context.moveTo(x, y);
+          context.lineTo(x, footerBottom);
+        }
+        context.moveTo(gutter + frozenW - 0.5, y);
+        context.lineTo(gutter + frozenW - 0.5, footerBottom);
+      }
+      context.stroke();
+
+      // 企微：底栏左侧「+」
+      if (gutter > 0) {
+        context.fillStyle = COLORS.headerText;
+        context.font = `600 18px ${FONT_STACK}`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText('+', gutter / 2, y + footerH / 2);
+        context.textAlign = 'start';
+      }
+
+      context.fillStyle = COLORS.emptyText;
+      context.textAlign = 'start';
+
+      const drawCol = (col: number) => {
+        const label = this.getColumnFooter(col);
+        if (!label) return;
+        const x = this.columnScreenX(col);
+        const colW = this.columnAxis.size(col);
+        if (x + colW < gutter || x > width) return;
+        const split = label.lastIndexOf(' ');
+        const title = split > 0 ? label.slice(0, split) : label;
+        const value = split > 0 ? label.slice(split + 1) : '';
+        context.save();
+        context.beginPath();
+        context.rect(Math.max(x, gutter), y, colW, footerH);
+        context.clip();
+        context.font = `12px ${FONT_STACK}`;
+        context.textBaseline = 'middle';
+        const titleY = y + footerH * 0.32;
+        context.fillText(title, x + 10, titleY);
+        // 企微：记录数旁小三角
+        if (title === '记录数') {
+          const tw = context.measureText(title).width;
+          context.beginPath();
+          const cx = x + 10 + tw + 8;
+          const cy = titleY + 1;
+          context.moveTo(cx - 3, cy - 2);
+          context.lineTo(cx + 3, cy - 2);
+          context.lineTo(cx, cy + 3);
+          context.closePath();
+          context.fill();
+        }
+        if (value) {
+          context.font = `13px ${FONT_STACK}`;
+          context.fillText(value, x + 10, y + footerH * 0.7);
+        }
+        context.restore();
+      };
+
+      context.save();
+      context.beginPath();
+      context.rect(
+        gutter + frozenW,
+        y,
+        Math.max(0, width - gutter - frozenW),
+        footerH,
+      );
+      context.clip();
+      for (let col = bodyColumnStart; col < columns.end; col += 1) {
+        drawCol(col);
+      }
+      context.restore();
+
+      if (this.frozenColumnCount > 0) {
+        for (let col = 0; col < this.frozenColumnCount; col += 1) {
+          drawCol(col);
+        }
+      }
+
+      context.restore();
+    };
+
+    paintOn(this.contexts.grid);
+    paintOn(this.contexts.content);
+    paintOn(this.contexts.selection);
+  }
+
   private drawSelection(width: number, height: number): void {
     const context = this.contexts.selection;
     this.prepareContext(context, width, height, true);
@@ -1236,7 +1422,7 @@ export class CanvasGridEngine {
       this.rowGutterWidth,
       this.headerHeight,
       Math.max(0, width - this.rowGutterWidth),
-      height - this.headerHeight,
+      Math.max(0, this.footerTop(height) - this.headerHeight),
     );
     context.clip();
 

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import QRCode from 'qrcode';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { copyText } from '../ui/clipboard';
+import { fieldTypeIcon } from '../ui/field-icons';
+import { newId } from '../ui/id';
+import { fillShareUrl, rewritePublicUrl } from '../ui/public-url';
 import { toast } from '../ui/toast';
 import type {
   DisplayConditionDto,
@@ -10,13 +15,20 @@ import type {
   FormFieldConfigDto,
   SheetDto,
 } from '../api/types';
-import { fieldTypeIcon } from '../ui/field-icons';
 
-const props = defineProps<{ baseId: string; sheet: SheetDto | null }>();
+const props = withDefaults(
+  defineProps<{
+    baseId: string;
+    sheet: SheetDto | null;
+    /** 作为主内容嵌入（侧栏点「收集表单」），非弹层 */
+    embedded?: boolean;
+  }>(),
+  { embedded: false },
+);
 const emit = defineEmits<{ close: [] }>();
 
 const form = ref<FormDto | null>(null);
-const draftId = ref(crypto.randomUUID());
+const draftId = ref(newId());
 const loading = ref(true);
 const saving = ref(false);
 const uploadingCover = ref(false);
@@ -32,7 +44,10 @@ const items = ref<FormFieldConfigDto[]>([]);
 const selectedFieldId = ref('');
 const conditionOwnerId = ref('');
 const addFieldId = ref('');
-const previewTab = ref<'design' | 'preview'>('design');
+/** 嵌入主区时默认「填写表单」，与企微收集表单一致 */
+const previewTab = ref<'design' | 'preview'>(
+  props.embedded ? 'preview' : 'design',
+);
 const successPreviewHtml = ref('');
 const previewValues = ref<Record<string, unknown>>({});
 const coverInput = ref<HTMLInputElement | null>(null);
@@ -70,8 +85,28 @@ const selectedSheetField = computed(
   () => fieldById.value.get(selectedFieldId.value) ?? null,
 );
 const formId = computed(() => form.value?.id ?? draftId.value);
-const shareUrl = computed(() => form.value?.share.qrUrl ?? '');
-const qrDataUrl = computed(() => form.value?.share.qrCodeDataUrl ?? '');
+/** 跟地址栏同源，避免 API 写死 localhost 导致手机/局域网打不开 */
+const shareUrl = computed(() => {
+  const token = form.value?.share.token;
+  if (token) return fillShareUrl(token);
+  return rewritePublicUrl(form.value?.share.qrUrl);
+});
+const qrDataUrl = ref('');
+watch(
+  shareUrl,
+  async (url) => {
+    if (!url) {
+      qrDataUrl.value = form.value?.share.qrCodeDataUrl ?? '';
+      return;
+    }
+    try {
+      qrDataUrl.value = await QRCode.toDataURL(url, { margin: 1, width: 240 });
+    } catch {
+      qrDataUrl.value = form.value?.share.qrCodeDataUrl ?? '';
+    }
+  },
+  { immediate: true },
+);
 const expiresAtInput = computed({
   get: () => (expiresAt.value ? expiresAt.value.slice(0, 10) : ''),
   set: (value: string) => {
@@ -137,20 +172,24 @@ async function load(): Promise<void> {
     audience.value = form.value?.share.audience ?? 'anyone';
     expiresAt.value = form.value?.share.expiresAt ?? '';
 
-    const existing = form.value?.fields ?? [];
+    const sheetIds = new Set(sheetFields.value.map((field) => field.id));
+    const existing = (form.value?.fields ?? [])
+      .filter((item) => sheetIds.has(item.fieldId))
+      .map((item) => ({
+        ...item,
+        displayConditions: (item.displayConditions ?? []).map((condition) => ({
+          ...condition,
+        })),
+      }));
+    // Form 字段全是孤儿 ID / 尚未配置时，回退到工作表列（手机号、备注等）
     items.value =
       existing.length > 0
-        ? existing.map((item) => ({
-            ...item,
-            displayConditions: (item.displayConditions ?? []).map((condition) => ({
-              ...condition,
-            })),
-          }))
+        ? existing
         : sheetFields.value.map((field) => ({
             fieldId: field.id,
             required: field.required,
           }));
-    if (!selectedFieldId.value) {
+    if (!selectedFieldId.value || !items.value.some((i) => i.fieldId === selectedFieldId.value)) {
       selectedFieldId.value = items.value[0]?.fieldId ?? '';
     }
   } catch (caught) {
@@ -292,12 +331,8 @@ async function copyShareUrl(): Promise<void> {
     toast('请先保存表单，生成分享链接');
     return;
   }
-  try {
-    await navigator.clipboard.writeText(shareUrl.value);
-    toast('分享链接已复制');
-  } catch {
-    toast('复制失败，请手动复制');
-  }
+  const ok = await copyText(shareUrl.value);
+  toast(ok ? '分享链接已复制' : '复制失败，请手动选中链接复制');
 }
 
 function insertVariable(variable: string): void {
@@ -338,7 +373,11 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="form-builder" data-testid="form-builder">
+  <div
+    class="form-builder"
+    :class="{ embedded }"
+    data-testid="form-builder"
+  >
     <input
       ref="coverInput"
       type="file"
@@ -348,27 +387,26 @@ onMounted(load);
       @change="uploadCover"
     />
     <header class="panel-header">
-      <div>
+      <div class="header-left">
         <h3>收集表单</h3>
-        <p class="muted">字段来自「{{ sheet?.name }}」</p>
+      </div>
+      <div class="tabs">
+        <button
+          :class="{ active: previewTab === 'design' }"
+          data-testid="form-tab-edit"
+          @click="previewTab = 'design'"
+        >
+          编辑表单
+        </button>
+        <button
+          :class="{ active: previewTab === 'preview' }"
+          data-testid="form-tab-fill"
+          @click="previewTab = 'preview'"
+        >
+          填写表单
+        </button>
       </div>
       <div class="header-actions">
-        <div class="tabs">
-          <button
-            :class="{ active: previewTab === 'design' }"
-            data-testid="form-tab-edit"
-            @click="previewTab = 'design'"
-          >
-            编辑表单
-          </button>
-          <button
-            :class="{ active: previewTab === 'preview' }"
-            data-testid="form-tab-fill"
-            @click="previewTab = 'preview'"
-          >
-            填写表单
-          </button>
-        </div>
         <button
           class="btn btn-primary small"
           type="button"
@@ -377,7 +415,14 @@ onMounted(load);
         >
           分享表单
         </button>
-        <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
+        <button
+          v-if="!embedded"
+          class="icon-btn"
+          aria-label="关闭"
+          @click="emit('close')"
+        >
+          ×
+        </button>
       </div>
     </header>
 
@@ -650,7 +695,7 @@ onMounted(load);
           </div>
           <button class="preview-submit" type="button" disabled>提交</button>
         </div>
-        <section class="success-preview">
+        <section v-if="!embedded" class="success-preview">
           <h4>成功页预览</h4>
           <div
             class="success-html"
@@ -661,7 +706,8 @@ onMounted(load);
         </section>
       </div>
 
-      <section v-if="form" class="share-box">
+      <!-- 嵌入主区时分享走顶栏「分享表单」；底部大二维码会把填写区挤成 0 高 -->
+      <section v-if="form && !embedded" class="share-box">
         <div>
           <span class="muted small-text">分享链接</span>
           <p class="share-url" data-testid="form-share-url">{{ shareUrl }}</p>
@@ -711,17 +757,24 @@ onMounted(load);
               <option value="workspace">仅工作区成员</option>
             </select>
           </label>
+          <p v-if="shareUrl" class="share-url" data-testid="form-share-url-dialog">{{ shareUrl }}</p>
           <div class="share-invite">
             <button class="btn" type="button" @click="copyShareUrl">复制链接</button>
             <button
               class="btn"
               type="button"
               :disabled="!qrDataUrl"
-              @click="toast(qrDataUrl ? '请使用右侧二维码' : '请先保存表单')"
+              @click="toast(qrDataUrl ? '请使用下方二维码' : '请先保存表单')"
             >
               二维码
             </button>
-            <img v-if="qrDataUrl" :src="qrDataUrl" class="share-qr" alt="二维码" />
+            <img
+              v-if="qrDataUrl"
+              :src="qrDataUrl"
+              class="share-qr"
+              data-testid="form-share-qr-dialog"
+              alt="二维码"
+            />
           </div>
           <footer>
             <button class="btn btn-primary" type="button" @click="save().then(() => (shareDialogOpen = false))">
@@ -740,44 +793,63 @@ onMounted(load);
   flex-direction: column;
   gap: 14px;
 }
+.form-builder.embedded {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+  background: #f2f4f7;
+}
+.form-builder.embedded .panel-header {
+  flex: none;
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--border, #e5e6eb);
+}
+.form-builder.embedded .builder-layout,
+.form-builder.embedded .fill-preview-pane {
+  flex: 1 1 auto;
+  min-height: 320px;
+  overflow: auto;
+}
 .panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 12px;
 }
-.panel-header h3 {
-  margin: 0 0 4px;
-}
-.panel-header p {
+.header-left h3 {
   margin: 0;
-  font-size: 12px;
 }
 .header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 .tabs {
   display: flex;
-  padding: 2px;
-  border-radius: 8px;
-  background: #f2f4f7;
+  gap: 20px;
+  justify-content: center;
+  border-bottom: 1px solid var(--border, #e5e6eb);
 }
 .tabs button {
-  height: 28px;
-  padding: 0 13px;
+  height: 36px;
+  padding: 0 4px;
   border: none;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
-  color: #646a73;
-  font-size: 12px;
+  color: var(--text-secondary, #646a73);
+  font-size: 14px;
   cursor: pointer;
 }
 .tabs button.active {
-  background: #fff;
-  color: #1d6fdc;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  background: transparent;
+  color: var(--brand-strong, #1d6fdc);
+  box-shadow: none;
+  border-bottom-color: var(--brand, #2d8cf0);
+  font-weight: 600;
 }
 .builder-layout {
   display: grid;
@@ -933,14 +1005,19 @@ onMounted(load);
   margin-top: 8px;
   border: none;
   border-radius: 8px;
-  background: #e8f3ff;
-  color: #1d6fdc;
+  background: var(--bg-hover, #f2f3f5);
+  color: var(--brand-strong, #1d6fdc);
   cursor: pointer;
 }
 .fill-preview-pane {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  display: block;
+  background: var(--bg-muted, #f7f8fa);
+  padding: 24px 16px;
+  border-radius: 10px;
+}
+.fill-preview-pane .form-canvas {
+  max-width: 480px;
+  margin: 0 auto;
 }
 .fill-mode {
   background: #fff;

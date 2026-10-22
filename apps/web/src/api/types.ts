@@ -10,6 +10,9 @@ export interface WorkspaceDto {
   createdAt: string;
   updatedAt: string;
   role?: 'owner' | 'admin' | 'editor' | 'viewer';
+  /** 新建时自动挂上的序列号领取演示 */
+  defaultBaseId?: string;
+  shareUrl?: string;
 }
 
 export interface BaseDto {
@@ -323,6 +326,13 @@ export interface DashboardWidgetDto {
   order: number;
 }
 
+export interface MetricConditionalRule {
+  op: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'between';
+  value: number;
+  value2?: number;
+  color: string;
+}
+
 export interface DashboardWidgetData {
   id: string;
   type: string;
@@ -331,6 +341,17 @@ export interface DashboardWidgetData {
   values: number[];
   rows?: Array<{ label: string; value: number }>;
   layout?: { w?: number; h?: number; x?: number; y?: number };
+  metric?: {
+    value: number;
+    previousValue?: number | null;
+    delta?: number | null;
+    deltaPercent?: number | null;
+    compareLabel?: string;
+    displayColor?: string;
+    prefix?: string;
+    suffix?: string;
+    decimalPlaces?: number;
+  };
   config?: {
     themeColor?: string;
     showLegend?: boolean;
@@ -351,6 +372,14 @@ export interface DashboardWidgetData {
     aggregation?: string;
     sortBy?: 'value' | 'label';
     sortOrder?: 'asc' | 'desc';
+    compareMode?: 'none' | 'mom' | 'yoy';
+    compareWindowDays?: number;
+    trendEnabled?: boolean;
+    trendDays?: number;
+    conditionalRules?: MetricConditionalRule[];
+    valuePrefix?: string;
+    valueSuffix?: string;
+    decimalPlaces?: number;
   };
   driver: string;
 }

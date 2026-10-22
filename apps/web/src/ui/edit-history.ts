@@ -1,3 +1,5 @@
+import { newId } from './id';
+
 export interface EditHistoryEntry {
   id: string;
   at: number;
@@ -44,7 +46,7 @@ export function canRedo(): boolean {
 export function pushEdit(entry: Omit<EditHistoryEntry, 'id' | 'at'>): void {
   undoStack.push({
     ...entry,
-    id: crypto.randomUUID(),
+    id: newId(),
     at: Date.now(),
   });
   if (undoStack.length > MAX) undoStack.shift();

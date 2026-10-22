@@ -9,6 +9,7 @@ import type {
   SheetDto,
 } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
+import { newId } from '../ui/id';
 
 const props = defineProps<{
   baseId: string;
@@ -145,13 +146,36 @@ function fieldName(sheetId: string, fieldId: string): string {
   return sheetFields(sheetId).find((field) => field.id === fieldId)?.name ?? fieldId;
 }
 
+function fieldById(sheetId: string, fieldId: string): FieldDto | undefined {
+  return sheetFields(sheetId).find((field) => field.id === fieldId);
+}
+
+/** 单选/多选：选项 id → 展示名（未领 / 已领） */
+function fieldChoices(
+  sheetId: string,
+  fieldId: string,
+): Array<{ id: string; name: string }> {
+  const field = fieldById(sheetId, fieldId);
+  const choices = field?.options?.choices;
+  return Array.isArray(choices)
+    ? choices.map((c) => ({ id: String(c.id), name: c.name || String(c.id) }))
+    : [];
+}
+
+function choiceLabel(sheetId: string, fieldId: string, value: unknown): string {
+  const raw = value == null ? '' : String(value);
+  if (!raw) return '…';
+  const hit = fieldChoices(sheetId, fieldId).find((c) => c.id === raw);
+  return hit?.name ?? raw;
+}
+
 function errorOf(value: unknown): string {
   return value instanceof ApiError ? value.message : '自动化保存失败';
 }
 
 function blankStep(type: StepType): UiStep {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     type,
     name: '',
     sheetId: sheets.value[0]?.id ?? '',
@@ -288,7 +312,8 @@ function triggerSummary(): string {
       if (row.operator === 'isEmpty' || row.operator === 'isNotEmpty') {
         return `${field}${operatorLabel(row.operator)}`;
       }
-      return `${field}${operatorLabel(row.operator)}「${row.value || '…'}」`;
+      const shown = choiceLabel(triggerSheetId.value, row.fieldId, row.value);
+      return `${field}${operatorLabel(row.operator)}「${shown}」`;
     });
   if (conditions.length === 0) {
     return `当「${sheet}」${when}`;
@@ -304,11 +329,12 @@ function stepSummary(step: UiStep): string {
         return `在「${sheet}」中查找最多 ${step.limit} 条记录`;
       }
       const field = fieldName(step.sheetId, step.filterFieldId);
+      const shown = choiceLabel(step.sheetId, step.filterFieldId, step.filterValue);
       const cond =
         step.filterOperator === 'isEmpty' ||
         step.filterOperator === 'isNotEmpty'
           ? `${field}${operatorLabel(step.filterOperator)}`
-          : `${field}${operatorLabel(step.filterOperator)}「${step.filterValue || '…'}」`;
+          : `${field}${operatorLabel(step.filterOperator)}「${shown}」`;
       return `在「${sheet}」中查找 ${cond} 的记录（最多 ${step.limit} 条）`;
     }
     case 'createRecord': {
@@ -592,7 +618,8 @@ function findFilterSummary(step: UiStep): string {
   if (step.filterOperator === 'isEmpty' || step.filterOperator === 'isNotEmpty') {
     return `${field}${operatorLabel(step.filterOperator)}`;
   }
-  return `${field}${operatorLabel(step.filterOperator)}${step.filterValue || '…'}`;
+  const shown = choiceLabel(step.sheetId, step.filterFieldId, step.filterValue);
+  return `${field}${operatorLabel(step.filterOperator)}${shown}`;
 }
 
 function findStepOptionLabel(candidate: UiStep): string {
@@ -925,7 +952,7 @@ async function save(mode: 'draft' | 'enable' = 'draft'): Promise<void> {
 function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
   const type = String(raw.type) as StepType;
   const step = blankStep(type);
-  step.id = String(raw.id ?? crypto.randomUUID());
+  step.id = String(raw.id ?? newId());
   step.name = String(raw.name ?? `步骤 ${index + 1}`);
   step.sheetId = String(raw.sheetId ?? '');
   step.limit = Number(raw.limit ?? 1) || 1;
@@ -1104,8 +1131,14 @@ onMounted(load);
 
       <section class="nl-section">
         <h4 class="nl-section-title">当满足以下条件</h4>
+        <div class="timeline-block">
+          <div class="timeline-rail">
+            <span class="timeline-dot" />
+            <span class="timeline-line" />
+          </div>
+          <div class="timeline-main">
+            <div class="timeline-step-no">第1步</div>
         <div class="nl-card" data-testid="automation-trigger-card">
-          <div class="nl-step-label">第 1 步</div>
           <div class="nl-sentence" data-testid="automation-trigger-summary">
             <select v-model="triggerType" class="nl-chip" data-testid="trigger-type">
               <option value="recordCreated">添加新记录时</option>
@@ -1173,8 +1206,26 @@ onMounted(load);
                 <option value="gt">大于</option>
                 <option value="lt">小于</option>
               </select>
+              <select
+                v-if="
+                  filter.operator !== 'isEmpty' &&
+                  filter.operator !== 'isNotEmpty' &&
+                  fieldChoices(triggerSheetId, filter.fieldId).length
+                "
+                v-model="filter.value"
+                class="nl-chip"
+              >
+                <option value="">选择选项</option>
+                <option
+                  v-for="choice in fieldChoices(triggerSheetId, filter.fieldId)"
+                  :key="choice.id"
+                  :value="choice.id"
+                >
+                  {{ choice.name }}
+                </option>
+              </select>
               <input
-                v-if="filter.operator !== 'isEmpty' && filter.operator !== 'isNotEmpty'"
+                v-else-if="filter.operator !== 'isEmpty' && filter.operator !== 'isNotEmpty'"
                 v-model="filter.value"
                 class="nl-chip nl-chip-input"
                 placeholder="值"
@@ -1194,6 +1245,8 @@ onMounted(load);
             <p class="nl-hint">
               条件未满足时，任何编辑均不会触发后续操作
             </p>
+          </div>
+        </div>
           </div>
         </div>
       </section>
@@ -1338,7 +1391,27 @@ onMounted(load);
                   <option value="literal">固定值</option>
                   <option value="variable">变量</option>
                 </select>
-                <input v-if="mapping.mode === 'literal'" v-model="mapping.value" placeholder="值" />
+                <select
+                  v-if="
+                    mapping.mode === 'literal' &&
+                    fieldChoices(step.sheetId, mapping.fieldId).length
+                  "
+                  v-model="mapping.value"
+                >
+                  <option value="">选择选项</option>
+                  <option
+                    v-for="choice in fieldChoices(step.sheetId, mapping.fieldId)"
+                    :key="choice.id"
+                    :value="choice.id"
+                  >
+                    {{ choice.name }}
+                  </option>
+                </select>
+                <input
+                  v-else-if="mapping.mode === 'literal'"
+                  v-model="mapping.value"
+                  placeholder="值"
+                />
                 <template v-else>
                   <select v-model="mapping.variableSource">
                     <option value="trigger">触发记录</option>
@@ -1701,7 +1774,7 @@ onMounted(load);
                 v-if="step.httpMethod !== 'GET' && step.httpMethod !== 'DELETE'"
                 class="form-field"
               >
-                <span>请求体（可插入 {{变量}}）</span>
+                <span>请求体（可插入 <code v-pre>{{变量}}</code>）</span>
                 <textarea
                   v-model="step.httpBody"
                   data-testid="step-http-body"
@@ -1819,8 +1892,33 @@ onMounted(load);
               <option value="isEmpty">为空</option>
               <option value="isNotEmpty">不为空</option>
             </select>
-            <input
+            <select
               v-if="
+                filterEditorStep()!.filterFieldId &&
+                filterEditorStep()!.filterOperator !== 'isEmpty' &&
+                filterEditorStep()!.filterOperator !== 'isNotEmpty' &&
+                fieldChoices(
+                  filterEditorStep()!.sheetId,
+                  filterEditorStep()!.filterFieldId,
+                ).length
+              "
+              v-model="filterEditorStep()!.filterValue"
+              data-testid="step-filter-value"
+            >
+              <option value="">选择选项</option>
+              <option
+                v-for="choice in fieldChoices(
+                  filterEditorStep()!.sheetId,
+                  filterEditorStep()!.filterFieldId,
+                )"
+                :key="choice.id"
+                :value="choice.id"
+              >
+                {{ choice.name }}
+              </option>
+            </select>
+            <input
+              v-else-if="
                 filterEditorStep()!.filterFieldId &&
                 filterEditorStep()!.filterOperator !== 'isEmpty' &&
                 filterEditorStep()!.filterOperator !== 'isNotEmpty'
@@ -1889,8 +1987,30 @@ onMounted(load);
               <option value="literal">固定值</option>
               <option value="variable">变量</option>
             </select>
+            <select
+              v-if="
+                mapping.mode === 'literal' &&
+                fieldChoices(
+                  stepSheetId(contentEditorStep()!),
+                  mapping.fieldId,
+                ).length
+              "
+              v-model="mapping.value"
+            >
+              <option value="">选择选项</option>
+              <option
+                v-for="choice in fieldChoices(
+                  stepSheetId(contentEditorStep()!),
+                  mapping.fieldId,
+                )"
+                :key="choice.id"
+                :value="choice.id"
+              >
+                {{ choice.name }}
+              </option>
+            </select>
             <input
-              v-if="mapping.mode === 'literal'"
+              v-else-if="mapping.mode === 'literal'"
               v-model="mapping.value"
               placeholder="值"
             />
@@ -1959,7 +2079,10 @@ onMounted(load);
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 720px;
+  max-width: 640px;
+  padding: 12px 16px;
+  background: var(--bg-muted, #f7f8fa);
+  border-radius: 12px;
 }
 .editor-head {
   display: flex;
@@ -2132,7 +2255,7 @@ onMounted(load);
 .nl-step-label {
   font-size: 12px;
   font-weight: 600;
-  color: #1d6fdc;
+  color: var(--text-tertiary, #8f959e);
 }
 .nl-sentence {
   display: flex;
@@ -2148,10 +2271,10 @@ onMounted(load);
 .nl-chip-input {
   height: 30px;
   padding: 0 10px;
-  border: 1px solid #c7d7f5;
+  border: 1px solid var(--border-strong, #d0d3d6);
   border-radius: 8px;
-  background: #f0f7ff;
-  color: #1d6fdc;
+  background: #fff;
+  color: var(--text, #1f2329);
   font-size: 13px;
   font-family: inherit;
   max-width: 220px;
@@ -2177,11 +2300,11 @@ onMounted(load);
   cursor: pointer;
 }
 .nl-hint {
-  margin: 10px 0 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #f0f7ff;
-  color: #1d6fdc;
+  margin: 12px -16px -14px;
+  padding: 10px 16px;
+  border-radius: 0 0 12px 12px;
+  background: #f5f6f7;
+  color: var(--text-secondary, #646a73);
   font-size: 12px;
 }
 .form-field {

@@ -30,7 +30,22 @@ async function createWorkspace(): Promise<void> {
     const workspace = await endpoints.createWorkspace(name);
     workspaces.value = [...workspaces.value, workspace];
     newName.value = '';
-    toast('工作区已创建');
+    toast(
+      workspace.shareUrl
+        ? '工作区已创建，并带上「序列号领取」演示'
+        : '工作区已创建',
+    );
+    if (workspace.shareUrl) {
+      // eslint-disable-next-line no-console
+      console.info('[serial-claim] shareUrl', workspace.shareUrl);
+    }
+    if (workspace.defaultBaseId) {
+      void router.push(
+        `/workspaces/${workspace.id}/bases/${workspace.defaultBaseId}`,
+      );
+    } else {
+      void router.push(`/workspaces/${workspace.id}`);
+    }
   } catch (error) {
     toast(error instanceof ApiError ? error.message : '创建工作区失败');
   }

@@ -11,6 +11,7 @@ import type {
   DashboardScheduleDto,
   DashboardWidgetData,
   FieldDto,
+  MetricConditionalRule,
   SheetDto,
 } from '../api/types';
 
@@ -90,12 +91,72 @@ const yAxisTitle = ref('');
 const yMin = ref<number | null>(null);
 const yMax = ref<number | null>(null);
 const logScale = ref(false);
+const compareMode = ref<'none' | 'mom' | 'yoy'>('none');
+const compareWindowDays = ref(30);
+const trendEnabled = ref(false);
+const trendDays = ref(7);
+const valuePrefix = ref('');
+const valueSuffix = ref('');
+const decimalPlaces = ref(0);
+const conditionalRules = ref<MetricConditionalRule[]>([]);
 const sheetFields = ref<FieldDto[]>([]);
 const cron = ref('0 9 * * *');
 const channel = ref('notification');
 const dragWidgetId = ref('');
 const dropWidgetId = ref('');
 const busyWidgetId = ref('');
+
+const previewMetric = computed(() => {
+  if (widgetType.value !== 'metric') return null;
+  const value = previewValues.value[0] ?? 0;
+  const previous = compareMode.value === 'none' ? null : Math.max(0, value - 1);
+  const delta = previous === null ? null : value - previous;
+  const deltaPercent =
+    previous && previous !== 0
+      ? Math.round(((delta ?? 0) / Math.abs(previous)) * 1000) / 10
+      : null;
+  const ruleColor = conditionalRules.value.find((rule) => {
+    if (rule.op === 'gt') return value > rule.value;
+    if (rule.op === 'gte') return value >= rule.value;
+    if (rule.op === 'lt') return value < rule.value;
+    if (rule.op === 'lte') return value <= rule.value;
+    if (rule.op === 'eq') return value === rule.value;
+    if (rule.op === 'between') {
+      const lo = Math.min(rule.value, rule.value2 ?? rule.value);
+      const hi = Math.max(rule.value, rule.value2 ?? rule.value);
+      return value >= lo && value <= hi;
+    }
+    return false;
+  })?.color;
+  return {
+    value,
+    previousValue: previous,
+    delta,
+    deltaPercent,
+    compareLabel:
+      compareMode.value === 'mom'
+        ? `环比近${compareWindowDays.value}天`
+        : compareMode.value === 'yoy'
+          ? '同比去年同期'
+          : undefined,
+    displayColor: ruleColor ?? themeColor.value,
+    prefix: valuePrefix.value,
+    suffix: valueSuffix.value,
+    decimalPlaces: decimalPlaces.value,
+  };
+});
+
+function addConditionalRule(): void {
+  conditionalRules.value.push({
+    op: 'gte',
+    value: 0,
+    color: '#0f9d58',
+  });
+}
+
+function removeConditionalRule(index: number): void {
+  conditionalRules.value.splice(index, 1);
+}
 
 function layoutOf(widget: DashboardWidgetData): {
   w: number;
@@ -283,7 +344,15 @@ watch(widgetSheetId, (sheetId, previous) => {
 
 async function addWidget(): Promise<void> {
   if (!active.value) return;
-  if (widgetType.value !== 'text' && (!widgetSheetId.value || !dimensionField.value)) {
+  if (widgetType.value !== 'text' && !widgetSheetId.value) {
+    toast('请选择工作表');
+    return;
+  }
+  if (
+    widgetType.value !== 'text' &&
+    widgetType.value !== 'metric' &&
+    !dimensionField.value
+  ) {
     toast('请选择工作表和维度字段');
     return;
   }
@@ -295,7 +364,10 @@ async function addWidget(): Promise<void> {
         ? {}
         : { sheetId: widgetSheetId.value }),
       config: {
-        dimensionFieldId: dimensionField.value || undefined,
+        dimensionFieldId:
+          widgetType.value === 'metric'
+            ? undefined
+            : dimensionField.value || undefined,
         metricFieldId: metricField.value || undefined,
         aggregation: aggregation.value,
         sortBy: sortBy.value,
@@ -314,8 +386,20 @@ async function addWidget(): Promise<void> {
         yMax: yMax.value,
         logScale: logScale.value,
         textContent: widgetText.value || undefined,
+        ...(widgetType.value === 'metric'
+          ? {
+              compareMode: compareMode.value,
+              compareWindowDays: compareWindowDays.value,
+              trendEnabled: trendEnabled.value,
+              trendDays: trendDays.value,
+              conditionalRules: conditionalRules.value,
+              valuePrefix: valuePrefix.value || undefined,
+              valueSuffix: valueSuffix.value || undefined,
+              decimalPlaces: decimalPlaces.value,
+            }
+          : {}),
       },
-      layout: { w: 6, h: 3 },
+      layout: { w: widgetType.value === 'metric' ? 4 : 6, h: 3 },
     });
     await selectDashboard(active.value);
     toast('图表已添加');
@@ -357,10 +441,7 @@ onMounted(loadDashboards);
     <header class="panel-header">
       <div>
         <strong>{{ title }}</strong>
-        <p class="panel-subtitle">
-          ECharts 画布 · 多图布局 · 定时推送。分析引擎
-          {{ data?.driver ?? 'postgres' }}。
-        </p>
+        <p class="panel-subtitle">多图布局 · 定时推送</p>
       </div>
       <button class="icon-btn" data-testid="dashboard-close" @click="emit('close')">
         ×
@@ -488,7 +569,7 @@ onMounted(loadDashboards);
                   </option>
                 </select>
               </label>
-              <label>
+              <label v-if="widgetType !== 'metric'">
                 横轴（类别）字段
                 <select v-model="dimensionField" data-testid="dashboard-widget-dimension">
                   <option v-for="field in sheetFields" :key="field.id" :value="field.id">
@@ -497,7 +578,7 @@ onMounted(loadDashboards);
                 </select>
               </label>
               <label>
-                纵轴数值字段
+                {{ widgetType === 'metric' ? '数值字段' : '纵轴数值字段' }}
                 <select v-model="metricField" data-testid="dashboard-widget-metric">
                   <option value="">无（记录行数）</option>
                   <option v-for="field in sheetFields" :key="field.id" :value="field.id">
@@ -515,28 +596,121 @@ onMounted(loadDashboards);
                   <option value="max">最大</option>
                 </select>
               </label>
-              <label>
-                排序依据
-                <select v-model="sortBy" data-testid="dashboard-widget-sort-by">
-                  <option value="value">聚合值</option>
-                  <option value="label">横轴值</option>
-                </select>
-              </label>
-              <label>
-                排序方向
-                <select v-model="sortOrder" data-testid="dashboard-widget-sort-order">
-                  <option value="desc">降序</option>
-                  <option value="asc">选项正序</option>
-                </select>
-              </label>
+              <template v-if="widgetType === 'metric'">
+                <label>
+                  对比期
+                  <select v-model="compareMode" data-testid="dashboard-metric-compare">
+                    <option value="none">无</option>
+                    <option value="mom">环比</option>
+                    <option value="yoy">同比</option>
+                  </select>
+                </label>
+                <label v-if="compareMode === 'mom'">
+                  环比天数
+                  <input
+                    v-model.number="compareWindowDays"
+                    type="number"
+                    min="1"
+                    max="366"
+                    data-testid="dashboard-metric-window"
+                  />
+                </label>
+                <label class="inline-check">
+                  <span>趋势折线</span>
+                  <span>
+                    <input
+                      v-model="trendEnabled"
+                      type="checkbox"
+                      data-testid="dashboard-metric-trend"
+                    />
+                    显示
+                  </span>
+                </label>
+                <label v-if="trendEnabled">
+                  趋势天数
+                  <input
+                    v-model.number="trendDays"
+                    type="number"
+                    min="3"
+                    max="90"
+                    data-testid="dashboard-metric-trend-days"
+                  />
+                </label>
+                <label>
+                  前缀
+                  <input v-model="valuePrefix" data-testid="dashboard-metric-prefix" placeholder="如 ¥" />
+                </label>
+                <label>
+                  后缀
+                  <input v-model="valueSuffix" data-testid="dashboard-metric-suffix" placeholder="如 元" />
+                </label>
+                <label>
+                  小数位
+                  <input
+                    v-model.number="decimalPlaces"
+                    type="number"
+                    min="0"
+                    max="6"
+                    data-testid="dashboard-metric-decimals"
+                  />
+                </label>
+                <div class="metric-rules" data-testid="dashboard-metric-rules">
+                  <div class="field-label">条件格式</div>
+                  <div
+                    v-for="(rule, index) in conditionalRules"
+                    :key="index"
+                    class="metric-rule-row"
+                  >
+                    <select v-model="rule.op">
+                      <option value="gt">大于</option>
+                      <option value="gte">大于等于</option>
+                      <option value="lt">小于</option>
+                      <option value="lte">小于等于</option>
+                      <option value="eq">等于</option>
+                      <option value="between">介于</option>
+                    </select>
+                    <input v-model.number="rule.value" type="number" />
+                    <input
+                      v-if="rule.op === 'between'"
+                      v-model.number="rule.value2"
+                      type="number"
+                    />
+                    <input v-model="rule.color" type="color" title="颜色" />
+                    <button
+                      type="button"
+                      class="icon-btn"
+                      @click="removeConditionalRule(index)"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    data-testid="dashboard-metric-rule-add"
+                    @click="addConditionalRule"
+                  >
+                    + 添加规则
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                <label>
+                  排序依据
+                  <select v-model="sortBy" data-testid="dashboard-widget-sort-by">
+                    <option value="value">聚合值</option>
+                    <option value="label">横轴值</option>
+                  </select>
+                </label>
+                <label>
+                  排序方向
+                  <select v-model="sortOrder" data-testid="dashboard-widget-sort-order">
+                    <option value="desc">降序</option>
+                    <option value="asc">选项正序</option>
+                  </select>
+                </label>
+              </template>
             </template>
-            <button
-              class="btn btn-primary"
-              data-testid="dashboard-widget-add"
-              @click="addWidget"
-            >
-              添加
-            </button>
           </div>
           <div v-else class="builder-grid">
             <label class="inline-check">
@@ -611,8 +785,16 @@ onMounted(loadDashboards);
             <DashboardChart
               :type="widgetType"
               :title="widgetTitle || '预览'"
-              :labels="previewLabels"
-              :values="previewValues"
+              :labels="
+                widgetType === 'metric' && trendEnabled
+                  ? ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7']
+                  : previewLabels
+              "
+              :values="
+                widgetType === 'metric' && trendEnabled
+                  ? [1, 2, 2, 3, 2, 4, 3]
+                  : previewValues
+              "
               :theme-color="themeColor"
               :show-legend="showLegend"
               :show-label="showLabel"
@@ -627,7 +809,20 @@ onMounted(loadDashboards);
               :y-max="yMax"
               :log-scale="logScale"
               :text-content="widgetText || '文本预览'"
+              :metric="previewMetric"
             />
+            <div class="preview-actions">
+              <button type="button" class="btn" @click="configTab = 'basic'">
+                取消
+              </button>
+              <button
+                class="btn btn-primary"
+                data-testid="dashboard-widget-add"
+                @click="addWidget"
+              >
+                添加
+              </button>
+            </div>
           </aside>
         </section>
 
@@ -705,6 +900,7 @@ onMounted(loadDashboards);
               :y-max="widget.config?.yMax"
               :log-scale="widget.config?.logScale"
               :text-content="widget.config?.textContent"
+              :metric="widget.metric"
             />
           </article>
           <p v-if="!data?.widgets?.length" class="empty-hint">
@@ -858,22 +1054,60 @@ onMounted(loadDashboards);
 }
 .config-tabs {
   display: flex;
-  gap: 4px;
+  gap: 16px;
   margin-bottom: 12px;
+  border-bottom: 1px solid var(--border, #e5e6eb);
 }
 .config-tabs .tab {
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid #dee0e3;
-  border-radius: 7px;
-  background: #fff;
-  font-size: 12px;
+  height: 32px;
+  padding: 0 4px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-secondary, #646a73);
   cursor: pointer;
 }
 .config-tabs .tab.active {
-  border-color: #2d8cf0;
-  background: #e8f3ff;
-  color: #1d6fdc;
+  border-bottom-color: var(--brand, #2d8cf0);
+  background: transparent;
+  color: var(--text, #1f2329);
+  font-weight: 600;
+}
+.preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #eef0f3;
+}
+.metric-rules {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.metric-rule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.metric-rule-row select,
+.metric-rule-row input[type='number'] {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d0d3d9;
+  border-radius: 6px;
+}
+.metric-rule-row input[type='color'] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 .type-block {
   grid-column: 1 / -1;

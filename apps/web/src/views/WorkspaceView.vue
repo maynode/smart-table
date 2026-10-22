@@ -24,6 +24,25 @@ async function load(): Promise<void> {
     ]);
     workspace.value = detail;
     bases.value = list;
+    // 旧工作区若为空：补一套「序列号领取」演示（码库+收集表单+自动化）
+    if (list.length === 0) {
+      try {
+        const demo = await endpoints.instantiateTemplate('serial-claim', {
+          workspaceId,
+        });
+        bases.value = await endpoints.listBases(workspaceId);
+        toast('已创建默认「序列号领取」演示，可扫码填表');
+        if (demo.shareUrl) {
+          // eslint-disable-next-line no-console
+          console.info('[serial-claim] shareUrl', demo.shareUrl);
+        }
+        if (demo.baseId) {
+          void router.push(`/workspaces/${workspaceId}/bases/${demo.baseId}`);
+        }
+      } catch (error) {
+        toast(error instanceof ApiError ? error.message : '创建演示失败');
+      }
+    }
   } catch (error) {
     toast(error instanceof ApiError ? error.message : '加载失败');
   } finally {

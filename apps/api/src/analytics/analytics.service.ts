@@ -35,4 +35,14 @@ export class AnalyticsService {
   query(request: AnalyticsQuery): Promise<AnalyticsRow[]> {
     return this.adapter.query(request);
   }
+
+  /** Metric sparkline; only Postgres adapter supports created_at bucketing. */
+  queryTrend(
+    request: AnalyticsQuery & { days: number },
+  ): Promise<AnalyticsRow[]> {
+    if (this.adapter instanceof PgAnalyticsAdapter) {
+      return this.adapter.queryTrend(request);
+    }
+    return Promise.resolve([]);
+  }
 }

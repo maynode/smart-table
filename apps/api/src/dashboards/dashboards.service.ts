@@ -12,6 +12,13 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import type { AggregateMode } from '../analytics/analytics.types';
+import {
+  formatMetricDelta,
+  matchConditionalColor,
+  resolveCompareWindows,
+  type CompareMode,
+  type ConditionalRule,
+} from './metric-widget';
 
 const WIDGET_TYPES = [
   'bar',
@@ -46,6 +53,19 @@ export interface WidgetConfig {
   yMax?: number | null;
   logScale?: boolean;
   textContent?: string;
+  /** NUMBER 卡：对比期 none | mom(环比) | yoy(同比) */
+  compareMode?: CompareMode;
+  /** 环比窗口天数，默认 30 */
+  compareWindowDays?: number;
+  /** 是否绘制趋势折线 */
+  trendEnabled?: boolean;
+  /** 趋势天数，默认 7 */
+  trendDays?: number;
+  /** 条件格式：命中第一条规则则改数字色 */
+  conditionalRules?: ConditionalRule[];
+  valuePrefix?: string;
+  valueSuffix?: string;
+  decimalPlaces?: number;
 }
 
 @Injectable()
@@ -338,11 +358,19 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
   ) {
     const config = (widget.config ?? {}) as WidgetConfig;
-    if (
-      widget.type === 'text' ||
-      !widget.sheetId ||
-      !config.dimensionFieldId
-    ) {
+    if (widget.type === 'text' || !widget.sheetId) {
+      return {
+        id: widget.id,
+        type: widget.type,
+        title: widget.title,
+        labels: [],
+        values: [],
+        config,
+        layout: widget.layout ?? {},
+        driver: this.analytics.driver,
+      };
+    }
+    if (widget.type !== 'metric' && !config.dimensionFieldId) {
       return {
         id: widget.id,
         type: widget.type,
@@ -360,6 +388,9 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       userId,
       'read',
     );
+    if (widget.type === 'metric') {
+      return this.computeMetricWidget(widget, config, userId);
+    }
     const rows = await this.analytics.query({
       sheetId: widget.sheetId,
       dimensionFieldId: config.dimensionFieldId,
@@ -376,6 +407,99 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       labels: rows.map((row) => row.label),
       values: rows.map((row) => row.value),
       rows,
+      config,
+      layout: widget.layout ?? {},
+      driver: this.analytics.driver,
+    };
+  }
+
+  private async computeMetricWidget(
+    widget: {
+      id: string;
+      type: string;
+      title: string;
+      sheetId: string | null;
+      layout: unknown;
+    },
+    config: WidgetConfig,
+    _userId: string,
+  ) {
+    const sheetId = widget.sheetId!;
+    const aggregation = config.aggregation ?? 'count';
+    const compareMode = config.compareMode ?? 'none';
+    const windows = resolveCompareWindows(
+      compareMode,
+      config.compareWindowDays ?? 30,
+    );
+
+    let value = 0;
+    let previousValue: number | null = null;
+    let compareLabel: string | undefined;
+
+    if (windows) {
+      const currentRows = await this.analytics.query({
+        sheetId,
+        metricFieldId: config.metricFieldId,
+        aggregation,
+        createdAtFrom: windows.currentFrom,
+        createdAtTo: windows.currentTo,
+      });
+      const previousRows = await this.analytics.query({
+        sheetId,
+        metricFieldId: config.metricFieldId,
+        aggregation,
+        createdAtFrom: windows.previousFrom,
+        createdAtTo: windows.previousTo,
+      });
+      value = currentRows[0]?.value ?? 0;
+      previousValue = previousRows[0]?.value ?? 0;
+      compareLabel = windows.label;
+    } else {
+      const rows = await this.analytics.query({
+        sheetId,
+        metricFieldId: config.metricFieldId,
+        aggregation,
+      });
+      value = rows[0]?.value ?? 0;
+    }
+
+    const { delta, deltaPercent } = formatMetricDelta(value, previousValue);
+    const displayColor =
+      matchConditionalColor(value, config.conditionalRules) ??
+      config.themeColor ??
+      '#1f2329';
+
+    let trendLabels: string[] = [];
+    let trendValues: number[] = [];
+    if (config.trendEnabled) {
+      const trend = await this.analytics.queryTrend({
+        sheetId,
+        metricFieldId: config.metricFieldId,
+        aggregation,
+        days: config.trendDays ?? 7,
+      });
+      trendLabels = trend.map((row) => row.label);
+      trendValues = trend.map((row) => row.value);
+    }
+
+    return {
+      id: widget.id,
+      type: widget.type,
+      title: widget.title,
+      labels: trendLabels.length ? trendLabels : ['全部'],
+      values: trendValues.length ? trendValues : [value],
+      rows: [{ label: '全部', value }],
+      metric: {
+        value,
+        previousValue,
+        delta,
+        deltaPercent,
+        compareLabel,
+        displayColor,
+        prefix: config.valuePrefix ?? '',
+        suffix: config.valueSuffix ?? '',
+        decimalPlaces: config.decimalPlaces ?? 0,
+      },
       config,
       layout: widget.layout ?? {},
       driver: this.analytics.driver,

@@ -2,12 +2,15 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
+import { TemplatesService } from '../templates/templates.service';
 import { roleAtLeast } from './workspace-roles';
 
 export interface WorkspaceWithRole {
@@ -16,6 +19,9 @@ export interface WorkspaceWithRole {
   createdAt: Date;
   updatedAt: Date;
   role: WorkspaceRole;
+  /** 新建工作区时默认挂上的「序列号领取」Base（含表单+自动化）。 */
+  defaultBaseId?: string;
+  shareUrl?: string;
 }
 
 @Injectable()
@@ -23,6 +29,8 @@ export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly quotas: QuotasService,
+    @Inject(forwardRef(() => TemplatesService))
+    private readonly templates: TemplatesService,
   ) {}
 
   async create(userId: string, name: string): Promise<WorkspaceWithRole> {
@@ -34,7 +42,35 @@ export class WorkspacesService {
       return created;
     });
 
-    return { ...workspace, role: 'owner' };
+    // e2e 跳过：避免每个用例都灌 100 条码库拖慢套件。
+    const skipDefault =
+      process.env.NODE_ENV === 'test' ||
+      process.env.SKIP_DEFAULT_SERIAL_CLAIM === '1';
+    if (skipDefault) {
+      return { ...workspace, role: 'owner' };
+    }
+
+    try {
+      const demo = await this.templates.instantiate(
+        workspace.id,
+        userId,
+        'serial-claim',
+      );
+      return {
+        ...workspace,
+        role: 'owner',
+        defaultBaseId: demo.baseId,
+        shareUrl: demo.shareUrl,
+      };
+    } catch (error) {
+      // 工作区已创建；演示灌库失败不回滚，但打日志便于排查「收集表单为空」
+      console.error(
+        '[workspaces.create] serial-claim instantiate failed',
+        workspace.id,
+        error,
+      );
+      return { ...workspace, role: 'owner' };
+    }
   }
 
   async listMine(userId: string): Promise<WorkspaceWithRole[]> {

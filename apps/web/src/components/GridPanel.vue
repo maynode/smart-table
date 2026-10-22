@@ -49,6 +49,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   addRow: [];
+  insertRows: [payload: { count: number; direction: 'above' | 'below' }];
   loadMore: [];
   refresh: [];
   undo: [];
@@ -762,36 +763,40 @@ defineExpose({
         <button
           class="btn btn-ghost icon-tool"
           title="历史"
+          aria-label="历史"
           data-testid="grid-history"
           @click="historyOpen = !historyOpen; searchOpen = false"
         >
-          历史
+          ⏱
         </button>
         <button
           class="btn btn-ghost icon-tool"
           title="刷新"
+          aria-label="刷新"
           data-testid="grid-refresh"
           @click="emit('refresh')"
         >
-          刷新
+          ⟳
         </button>
         <button
           class="btn btn-ghost icon-tool"
           :class="{ 'btn-active': searchOpen }"
           title="搜索"
+          aria-label="搜索"
           data-testid="grid-search"
           @click="searchOpen = !searchOpen; historyOpen = false"
         >
-          搜索
+          ⌕
         </button>
         <button
           class="btn btn-ghost icon-tool"
           title="撤销 (Ctrl+Z)"
+          aria-label="撤销"
           data-testid="grid-undo"
           :disabled="!undoAvailable"
           @click="emit('undo')"
         >
-          撤销
+          ↶
         </button>
         <button
           class="btn btn-ghost icon-tool"
@@ -800,11 +805,8 @@ defineExpose({
           :disabled="!redoAvailable"
           @click="emit('redo')"
         >
-          重做
+          ↻
         </button>
-        <span class="record-count" data-testid="record-count">
-          记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
-        </span>
       </div>
     </div>
 
@@ -1232,8 +1234,14 @@ defineExpose({
         @header-click="openFieldEditor"
         @resize-field="onColumnResize"
         @rows-selected="onRowsSelected"
+        @insert-rows="emit('insertRows', $event)"
       />
     </div>
+
+    <!-- 底栏已画在 Canvas 内；保留测试钩子 -->
+    <span class="sr-only" data-testid="record-count">
+      记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
+    </span>
 
     <div v-if="deletingField" class="confirm-mask" @click.self="deletingField = null">
       <div class="confirm-card" data-testid="delete-field-confirm">
@@ -1262,10 +1270,10 @@ defineExpose({
 .grid-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px 4px;
   flex-wrap: wrap;
-  min-height: 46px;
-  padding: 7px 12px;
+  min-height: 40px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
   background: #fff;
 }
@@ -1284,9 +1292,11 @@ defineExpose({
   gap: 4px;
 }
 .icon-tool {
-  padding: 0 8px;
+  width: 28px;
   height: 28px;
-  font-size: 12px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
 }
 .icon-tool:disabled {
   opacity: 0.35;
@@ -1418,14 +1428,21 @@ defineExpose({
   margin-left: 4px;
   font-style: normal;
   font-size: 11px;
-  background: #2d8cf0;
-  color: #fff;
+  background: #e8f3ff;
+  color: var(--brand-strong, #1d6fdc);
   border-radius: 8px;
   padding: 0 5px;
 }
-.record-count {
-  color: #8f959e;
-  font-size: 12px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .selection-bar {
   display: flex;

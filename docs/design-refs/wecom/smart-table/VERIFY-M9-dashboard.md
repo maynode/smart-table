@@ -11,7 +11,7 @@
 | 企微 | 我方 | 状态 |
 |------|------|------|
 | CHART | bar/line/pie/horizontalBar/combo | **对齐** |
-| NUMBER/TABLE/WORD_CLOUD/TEXT | metric/table/wordcloud/text 白名单 | **类型齐；渲染深度弱** |
+| NUMBER/TABLE/WORD_CLOUD/TEXT | metric/table/wordcloud/text 白名单 | **类型齐；NUMBER 已加深（对比/趋势/条件色）** |
 | AI BI | 不做 | **刻意** |
 | 栅格拖拽 | 12 列 bento | **对齐** |
 | 聚合 | PG GROUP BY；CH adapter 无 ETL | **中小表对齐；大表债** |

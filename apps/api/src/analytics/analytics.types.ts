@@ -2,7 +2,8 @@ export type AggregateMode = 'sum' | 'count' | 'avg' | 'min' | 'max';
 
 export interface AnalyticsQuery {
   sheetId: string;
-  dimensionFieldId: string;
+  /** 省略时返回单行总量（指标卡） */
+  dimensionFieldId?: string;
   metricFieldId?: string;
   aggregation: AggregateMode;
   limit?: number;
@@ -10,6 +11,9 @@ export interface AnalyticsQuery {
   sortBy?: 'value' | 'label';
   /** 默认 desc（值大在前） */
   sortOrder?: 'asc' | 'desc';
+  /** 可选：按 records.created_at 过滤（指标对比期） */
+  createdAtFrom?: Date;
+  createdAtTo?: Date;
 }
 
 export interface AnalyticsRow {

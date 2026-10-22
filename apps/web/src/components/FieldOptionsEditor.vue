@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, FieldOptionChoice, SheetDto } from '../api/types';
+import { newId } from '../ui/id';
 
 const props = defineProps<{
   open: boolean;
@@ -177,7 +178,7 @@ function addChoice(): void {
   choices.value = [
     ...choices.value,
     {
-      id: `opt-${crypto.randomUUID().slice(0, 8)}`,
+      id: `opt-${newId().slice(0, 8)}`,
       name: `选项${choices.value.length + 1}`,
       color: COLORS[choices.value.length % COLORS.length].id,
     },

@@ -32,29 +32,60 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
           ? Prisma.sql`ORDER BY value ASC`
           : Prisma.sql`ORDER BY value DESC`;
 
-    const aggregation =
-      mode === 'count'
-        ? Prisma.sql`COUNT(*)::float8`
-        : mode === 'sum'
-          ? Prisma.sql`COALESCE(SUM(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`
-          : mode === 'avg'
-            ? Prisma.sql`COALESCE(AVG(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`
-            : mode === 'min'
-              ? Prisma.sql`COALESCE(MIN(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`
-              : Prisma.sql`COALESCE(MAX(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`;
+    const aggregation = this.aggregationSql(mode, metric);
+    const from = request.createdAtFrom;
+    const to = request.createdAtTo;
+
+    if (!dimension) {
+      const rows = await this.prisma.$queryRaw<
+        Array<{ value: number | string | null }>
+      >(
+        from && to
+          ? Prisma.sql`
+              SELECT ${aggregation} AS value
+              FROM "records"
+              WHERE "sheet_id" = ${request.sheetId}::uuid
+                AND "created_at" >= ${from}
+                AND "created_at" < ${to}
+            `
+          : Prisma.sql`
+              SELECT ${aggregation} AS value
+              FROM "records"
+              WHERE "sheet_id" = ${request.sheetId}::uuid
+            `,
+      );
+      return [
+        {
+          label: '全部',
+          value: Number(rows[0]?.value ?? 0),
+        },
+      ];
+    }
 
     const rows = await this.prisma.$queryRaw<
       Array<{ label: string | null; value: number | string | null }>
     >(
-      Prisma.sql`
-        SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
-               ${aggregation} AS value
-        FROM "records"
-        WHERE "sheet_id" = ${request.sheetId}::uuid
-        GROUP BY 1
-        ${orderClause}
-        LIMIT ${limit}
-      `,
+      from && to
+        ? Prisma.sql`
+            SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
+                   ${aggregation} AS value
+            FROM "records"
+            WHERE "sheet_id" = ${request.sheetId}::uuid
+              AND "created_at" >= ${from}
+              AND "created_at" < ${to}
+            GROUP BY 1
+            ${orderClause}
+            LIMIT ${limit}
+          `
+        : Prisma.sql`
+            SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
+                   ${aggregation} AS value
+            FROM "records"
+            WHERE "sheet_id" = ${request.sheetId}::uuid
+            GROUP BY 1
+            ${orderClause}
+            LIMIT ${limit}
+          `,
     );
 
     return rows.map((row) => ({
@@ -62,4 +93,56 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
       value: Number(row.value ?? 0),
     }));
   }
+
+  /** Daily buckets for metric sparkline (created_at). */
+  async queryTrend(
+    request: AnalyticsQuery & { days: number },
+  ): Promise<AnalyticsRow[]> {
+    const mode = MODES.includes(request.aggregation)
+      ? request.aggregation
+      : 'count';
+    const metric = request.metricFieldId ?? request.dimensionFieldId;
+    const days = Math.min(Math.max(request.days, 1), 90);
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const aggregation = this.aggregationSql(mode, metric);
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{ label: string; value: number | string | null }>
+    >(
+      Prisma.sql`
+        SELECT to_char(date_trunc('day', "created_at"), 'MM-DD') AS label,
+               ${aggregation} AS value
+        FROM "records"
+        WHERE "sheet_id" = ${request.sheetId}::uuid
+          AND "created_at" >= ${from}
+        GROUP BY date_trunc('day', "created_at")
+        ORDER BY date_trunc('day', "created_at") ASC
+      `,
+    );
+
+    return rows.map((row) => ({
+      label: String(row.label),
+      value: Number(row.value ?? 0),
+    }));
+  }
+
+  private aggregationSql(
+    mode: AggregateMode,
+    metric: string | undefined,
+  ): Prisma.Sql {
+    if (mode === 'count' || !metric) {
+      return Prisma.sql`COUNT(*)::float8`;
+    }
+    if (mode === 'sum') {
+      return Prisma.sql`COALESCE(SUM(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`;
+    }
+    if (mode === 'avg') {
+      return Prisma.sql`COALESCE(AVG(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`;
+    }
+    if (mode === 'min') {
+      return Prisma.sql`COALESCE(MIN(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`;
+    }
+    return Prisma.sql`COALESCE(MAX(NULLIF(regexp_replace(cells->>${metric}, '[^0-9.\\-]', '', 'g'), '')::numeric), 0)::float8`;
+  }
+
 }

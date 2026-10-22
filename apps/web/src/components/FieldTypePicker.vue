@@ -5,6 +5,7 @@ import {
   SYSTEM_FIELD_TYPES,
   type FieldType,
 } from 'shared';
+import { newId } from '../ui/id';
 
 interface ChoiceDraft {
   id: string;
@@ -205,7 +206,7 @@ function addChoice(): void {
   choices.value = [
     ...choices.value,
     {
-      id: `opt-${crypto.randomUUID().slice(0, 8)}`,
+      id: `opt-${newId().slice(0, 8)}`,
       name: `选项${choices.value.length + 1}`,
       color: COLORS[choices.value.length % COLORS.length].id,
     },

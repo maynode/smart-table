@@ -35,22 +35,31 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
       : 'count';
     const metric = request.metricFieldId ?? request.dimensionFieldId;
     const aggregation =
-      mode === 'count'
+      mode === 'count' || !metric
         ? 'count()'
         : `${mode}(toFloat64OrZero(JSONExtractString(cells, '${this.escape(metric)}')))`;
     const limit = Math.min(Math.max(request.limit ?? 20, 1), 100);
     const sortBy = request.sortBy === 'label' ? 'label' : 'value';
     const sortDir = request.sortOrder === 'asc' ? 'ASC' : 'DESC';
-    const sql = [
-      `SELECT JSONExtractString(cells, '${this.escape(request.dimensionFieldId)}') AS label,`,
-      `${aggregation} AS value`,
-      'FROM records',
-      `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
-      'GROUP BY label',
-      `ORDER BY ${sortBy} ${sortDir}`,
-      `LIMIT ${limit}`,
-      'FORMAT JSON',
-    ].join(' ');
+
+    // CH ETL 表无 created_at；时间窗过滤在 PG 指标卡路径处理。
+    const sql = request.dimensionFieldId
+      ? [
+          `SELECT JSONExtractString(cells, '${this.escape(request.dimensionFieldId)}') AS label,`,
+          `${aggregation} AS value`,
+          'FROM records',
+          `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
+          'GROUP BY label',
+          `ORDER BY ${sortBy} ${sortDir}`,
+          `LIMIT ${limit}`,
+          'FORMAT JSON',
+        ].join(' ')
+      : [
+          `SELECT '全部' AS label, ${aggregation} AS value`,
+          'FROM records',
+          `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
+          'FORMAT JSON',
+        ].join(' ');
 
     const params = new URLSearchParams();
     if (this.options.database) params.set('database', this.options.database);
@@ -78,12 +87,12 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
       data?: Array<{ label?: unknown; value?: unknown }>;
     };
     return (payload.data ?? []).map((row) => ({
-      label: String(row.label ?? '(空)') || '(空)',
+      label: String(row.label ?? '(空)'),
       value: Number(row.value ?? 0),
     }));
   }
 
-  private escape(value: string): string {
-    return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  private escape(value: string | undefined): string {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   }
 }

@@ -12,6 +12,8 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
   const stamp = Date.now();
   let token: string;
   let baseId: string;
+  let sheetId: string;
+  let amountFieldId: string;
   let dashboardId: string;
   let widgetId: string;
   let scheduleId: string;
@@ -53,14 +55,16 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
       .send({ name: '销售数据' });
+    sheetId = sheet.body.id;
     const region = await http()
-      .post(`/sheets/${sheet.body.id}/fields`)
+      .post(`/sheets/${sheetId}/fields`)
       .set(auth())
       .send({ name: '区域', type: 'text' });
     const amount = await http()
-      .post(`/sheets/${sheet.body.id}/fields`)
+      .post(`/sheets/${sheetId}/fields`)
       .set(auth())
       .send({ name: '金额', type: 'number' });
+    amountFieldId = amount.body.id;
 
     for (const [area, value] of [
       ['华东', 10],
@@ -68,7 +72,7 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       ['华南', 3],
     ] as const) {
       await http()
-        .post(`/sheets/${sheet.body.id}/records`)
+        .post(`/sheets/${sheetId}/records`)
         .set(auth())
         .send({
           cells: { [region.body.id]: area, [amount.body.id]: value },
@@ -89,10 +93,10 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       .send({
         type: 'bar',
         title: '区域销售额',
-        sheetId: sheet.body.id,
+        sheetId,
         config: {
           dimensionFieldId: region.body.id,
-          metricFieldId: amount.body.id,
+          metricFieldId: amountFieldId,
           aggregation: 'sum',
         },
       })
@@ -111,10 +115,18 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       .expect(201);
 
     expect(response.body.type).toBe('bar');
-    expect(response.body.labels.sort()).toEqual(['华东', '华南']);
-    expect(response.body.values.sort((a: number, b: number) => a - b)).toEqual([
-      3, 15,
-    ]);
+    // 新建工作表可能带空行；只断言业务维度聚合正确。
+    expect(response.body.labels).toEqual(
+      expect.arrayContaining(['华东', '华南']),
+    );
+    const byLabel = Object.fromEntries(
+      (response.body.labels as string[]).map((label: string, index: number) => [
+        label,
+        response.body.values[index],
+      ]),
+    );
+    expect(byLabel['华东']).toBe(15);
+    expect(byLabel['华南']).toBe(3);
     expect(response.body.driver).toBe('postgres');
 
     const data = await http()
@@ -179,5 +191,42 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       .set(auth())
       .send({ type: 'radar', title: '不支持' })
       .expect(400);
+  });
+
+  it('computes NUMBER metric card with compare, trend and conditional color', async () => {
+    const widget = await http()
+      .post(`/dashboards/${dashboardId}/widgets`)
+      .set(auth())
+      .send({
+        type: 'metric',
+        title: '销售额',
+        sheetId,
+        config: {
+          metricFieldId: amountFieldId,
+          aggregation: 'sum',
+          compareMode: 'mom',
+          compareWindowDays: 30,
+          trendEnabled: true,
+          trendDays: 7,
+          valuePrefix: '¥',
+          decimalPlaces: 0,
+          conditionalRules: [{ op: 'gte', value: 1, color: '#0f9d58' }],
+        },
+      })
+      .expect(201);
+
+    const response = await http()
+      .post(`/dashboards/${dashboardId}/widgets/${widget.body.id}/query`)
+      .set(auth())
+      .expect(201);
+
+    expect(response.body.type).toBe('metric');
+    // 环比窗口内含本轮写入的 10+5+3；空行金额不计入 sum。
+    expect(response.body.metric.value).toBe(18);
+    expect(response.body.metric.prefix).toBe('¥');
+    expect(response.body.metric.displayColor).toBe('#0f9d58');
+    expect(response.body.metric.compareLabel).toContain('环比');
+    expect(response.body.metric.delta).not.toBeNull();
+    expect(Array.isArray(response.body.labels)).toBe(true);
   });
 });

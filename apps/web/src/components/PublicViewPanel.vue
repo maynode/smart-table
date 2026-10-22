@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { copyText } from '../ui/clipboard';
+import { rewritePublicUrl } from '../ui/public-url';
 import { toast } from '../ui/toast';
 import type { PublicViewDto } from '../api/types';
 
@@ -58,12 +60,9 @@ async function revoke(view: PublicViewDto): Promise<void> {
 }
 
 async function copy(view: PublicViewDto): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(view.url);
-    toast('链接已复制');
-  } catch {
-    toast(view.url);
-  }
+  const url = rewritePublicUrl(view.url) || view.url;
+  const ok = await copyText(url);
+  toast(ok ? '链接已复制' : url);
 }
 
 onMounted(load);

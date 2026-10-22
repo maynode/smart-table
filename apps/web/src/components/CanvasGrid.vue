@@ -74,7 +74,40 @@ const emit = defineEmits<{
   ];
   resizeField: [payload: { field: FieldDto; width: number }];
   rowsSelected: [recordIds: string[]];
+  /** 企微：向上/向下插入 N 行（末尾追加；无 order 字段时暂不按锚点重排）。 */
+  insertRows: [payload: { count: number; direction: 'above' | 'below' }];
 }>();
+
+const insertMenu = ref<{
+  top: number;
+  left: number;
+  aboveCount: number;
+  belowCount: number;
+} | null>(null);
+
+function openInsertMenu(anchor: { top: number; left: number }): void {
+  insertMenu.value = {
+    top: anchor.top,
+    left: anchor.left,
+    aboveCount: 1,
+    belowCount: 1,
+  };
+}
+
+function closeInsertMenu(): void {
+  insertMenu.value = null;
+}
+
+function confirmInsert(direction: 'above' | 'below'): void {
+  if (!insertMenu.value) return;
+  const raw =
+    direction === 'above'
+      ? insertMenu.value.aboveCount
+      : insertMenu.value.belowCount;
+  const count = Math.min(100, Math.max(1, Math.floor(Number(raw) || 1)));
+  closeInsertMenu();
+  emit('insertRows', { count, direction });
+}
 
 const host = ref<HTMLDivElement | null>(null);
 const editorInput = ref<HTMLInputElement | HTMLSelectElement | null>(null);
@@ -1040,6 +1073,28 @@ function handleViewport(stats: GridStats): void {
   emit('viewport', stats);
 }
 
+function columnFooter(col: number): string | null {
+  const field = visibleFields.value[col];
+  if (!field) return null;
+  // 企微：首列「记录数」，数字/货币列「求和」
+  if (col === 0) {
+    return `记录数 ${props.records.length}`;
+  }
+  if (field.type === 'number' || field.type === 'currency') {
+    let sum = 0;
+    for (const record of props.records) {
+      const raw = record.cells[field.id];
+      const n =
+        typeof raw === 'number'
+          ? raw
+          : Number(String(raw ?? '').replace(/[^0-9.\-]/g, ''));
+      if (Number.isFinite(n)) sum += n;
+    }
+    return `求和 ${sum}`;
+  }
+  return null;
+}
+
 function createEngine(): void {
   if (!host.value) return;
   engine = new CanvasGridEngine(host.value, {
@@ -1048,6 +1103,7 @@ function createEngine(): void {
     rowHeight: props.rowHeight,
     freezeColumnCount: props.freezeColumnCount,
     getCell: renderCell,
+    getColumnFooter: columnFooter,
     getRowColor: (row) => {
       const record = props.records[row];
       return record ? (props.rowColors[record.id] ?? null) : null;
@@ -1068,6 +1124,8 @@ function createEngine(): void {
     },
     onRowNumberClick: selectRow,
     onAddColumnClick: (anchor) => emit('addColumn', anchor),
+    onFooterAddClick: openInsertMenu,
+    onRowInsertMenu: (_row, anchor) => openInsertMenu(anchor),
     onHeaderClick: (columnIndex, anchor) => {
       const field = visibleFields.value[columnIndex];
       if (field) emit('headerClick', { field, anchor });
@@ -1088,6 +1146,7 @@ watch(
     engine.setColumns(columns.value);
     engine.setRowCount(props.rowCount ?? props.records.length);
     engine.setCellProvider(renderCell);
+    engine.setColumnFooterProvider(columnFooter);
     engine.invalidate();
   },
   { deep: true },
@@ -1142,6 +1201,59 @@ defineExpose({
     @paste="onHostPaste"
   >
     <div ref="host" class="canvas-grid-host" data-testid="canvas-grid"></div>
+    <div
+      v-if="insertMenu"
+      class="insert-menu-mask"
+      data-testid="insert-rows-mask"
+      @mousedown.self="closeInsertMenu"
+    />
+    <div
+      v-if="insertMenu"
+      class="insert-menu"
+      data-testid="insert-rows-menu"
+      :style="{ top: `${insertMenu.top}px`, left: `${insertMenu.left}px` }"
+    >
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="insert-rows-above"
+        @click="confirmInsert('above')"
+      >
+        <span class="insert-menu-icon">↑</span>
+        <span class="insert-menu-label">向上插入</span>
+        <input
+          v-model.number="insertMenu.aboveCount"
+          type="number"
+          min="1"
+          max="100"
+          class="insert-menu-count"
+          data-testid="insert-rows-above-count"
+          @click.stop
+          @keydown.enter.prevent="confirmInsert('above')"
+        />
+        <span class="insert-menu-unit">行</span>
+      </button>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="insert-rows-below"
+        @click="confirmInsert('below')"
+      >
+        <span class="insert-menu-icon">↓</span>
+        <span class="insert-menu-label">向下插入</span>
+        <input
+          v-model.number="insertMenu.belowCount"
+          type="number"
+          min="1"
+          max="100"
+          class="insert-menu-count"
+          data-testid="insert-rows-below-count"
+          @click.stop
+          @keydown.enter.prevent="confirmInsert('below')"
+        />
+        <span class="insert-menu-unit">行</span>
+      </button>
+    </div>
     <input
       ref="uploadInput"
       type="file"
@@ -1388,5 +1500,57 @@ defineExpose({
   align-self: flex-end;
   height: 28px;
   margin-top: 4px;
+}
+.insert-menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.insert-menu {
+  position: fixed;
+  z-index: 41;
+  min-width: 220px;
+  padding: 6px 0;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
+}
+.insert-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: #1f2329;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.insert-menu-row:hover {
+  background: #f5f6f7;
+}
+.insert-menu-icon {
+  width: 16px;
+  color: #646a73;
+  text-align: center;
+}
+.insert-menu-label {
+  flex: 1;
+}
+.insert-menu-count {
+  width: 44px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #d0d3d6;
+  border-radius: 4px;
+  font-size: 13px;
+  text-align: center;
+}
+.insert-menu-unit {
+  color: #646a73;
 }
 </style>

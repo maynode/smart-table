@@ -293,7 +293,7 @@ export class TemplatesService {
           required: true,
         },
       });
-      await tx.field.create({
+      const remark = await tx.field.create({
         data: { sheetId: formSheet.id, name: '备注', type: 'text', order: 1 },
       });
 
@@ -321,6 +321,7 @@ export class TemplatesService {
           shareToken,
           fields: [
             { fieldId: phone.id, required: true },
+            { fieldId: remark.id },
           ] as Prisma.InputJsonValue,
           share: {
             enabled: true,
@@ -332,10 +333,12 @@ export class TemplatesService {
           rejectDuplicatePhone: true,
         },
       });
+      // 与 seedSerialClaim 对齐：查找未领码 → 改状态 → 发消息（成功页读 stepOutputs.序列号）
       await tx.automation.create({
         data: {
           baseId: base.id,
           name: '联动修改：领取序列号',
+          enabled: true,
           trigger: {
             type: 'recordCreated',
             sheetId: formSheet.id,
@@ -349,6 +352,8 @@ export class TemplatesService {
               id: 'find-code',
               type: 'findRecords',
               sheetId: codeSheet.id,
+              limit: 1,
+              onEmpty: 'stop',
               filters: {
                 conjunction: 'and',
                 conditions: [
@@ -372,8 +377,19 @@ export class TemplatesService {
                 },
                 [claimedAt.id]: {
                   kind: 'variable',
-                  variable: { source: 'naturalTime', naturalTime: 'today' },
+                  variable: { source: 'naturalTime', naturalTime: 'now' },
                 },
+              },
+            },
+            {
+              id: 'notify-claimer',
+              type: 'sendMessage',
+              name: '你的序列号为',
+              channel: 'doc',
+              recipients: [{ source: 'trigger', field: '填写者' }],
+              content: {
+                text: '{{第3步.序列号}}',
+                buttons: [],
               },
             },
           ] as Prisma.InputJsonValue,

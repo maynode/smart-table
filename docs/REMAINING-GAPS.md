@@ -9,7 +9,8 @@
 ## 0. 一句话现状
 
 W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine / TITLE / 双向关联 / 公式脏行）已落地。相对企微网页版智能表格：**主能力已对齐**。  
-**下一步两类（§2 P0/P1）：** 交付未闭环；体验弱差。  
+**P1 体验弱差（2026-10-22）：** 高频屏 IA/chrome 对齐 + NUMBER 指标卡加深已落地。  
+**下一步（§2 P0）：** 交付闭环（全量 e2e / 新鲜压测 / Docker / W6 报告）。  
 **待定（§2 待定表，未排期）：** 多人实时协同 OT/WS；企微登录/通讯录/真企微群；AI BI；`USER_C`；大表 chunk 本地库。
 
 ---
@@ -78,7 +79,7 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 
 ## 2. 下一步要做（下一 AI 从这里继续）
 
-> 功能主路径已对齐企微；**不要再扫一遍造功能**。按顺序做：**先 P0 交付闭环，再 P1 体验弱差**。
+> 功能主路径 + P1 体验弱差已对齐企微；**不要再扫一遍造功能**。按顺序做：**P0 交付闭环**。
 
 ### P0 交付未闭环（必须做，否则不能宣称完工）
 
@@ -92,12 +93,12 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 
 **2026-10-22 已部分跑过（不能代替 P0 全量）：** `vue-tsc` 通过；web `vitest`；`api` `ai-field.spec` 4/4；`pnpm --filter api build`（需先 `prisma:generate`）；Playwright 分套件曾 9/9。全量 API e2e / 新鲜 perf / Docker rebuild / W6 报告仍待做。
 
-### P1 体验弱差（相对企微，不阻塞 P0，但应排期）
+### P1 体验弱差 — 已完成（2026-10-22）
 
-| # | 项 | 现状 | 下一步 |
-|---|----|------|--------|
-| 1 | **视觉非像素级对齐** | 主路径交互已按 `SCREENSHOT-INDEX` 对齐；布局/字号/间距仍有观感差 | 按 `docs/design-refs/wecom/SCREENSHOT-INDEX.md` 逐屏对照，先修高频屏（网格顶栏、表单编辑、自动化编辑器、仪表盘配置），目标「信息架构与交互一致」，**不以纯像素 diff 为闸** |
-| 2 | **仪表盘 NUMBER 卡深度弱于企微** | API `metric` / 类型宫格已有；配置深度（对比期、趋势、条件格式等）弱于企微 NUMBER | 对照 VERIFY-M9 / 截图补 NUMBER 卡配置面与查询；保持现有 bar/line/pie 等主类不回退 |
+| # | 项 | 状态 | 说明 / 证据 |
+|---|----|------|-------------|
+| 1 | **高频屏视觉对照** | **已完成** | 网格底栏记录数 + 右侧 icon 工具；表单居中下划线 Tab；自动化第1步时间线 + 中性 chip；仪表盘配置下划线 Tab + 预览区「取消/添加」。对照 `SCREENSHOT-INDEX` IA，非像素闸 |
+| 2 | **仪表盘 NUMBER 卡加深** | **已完成** | 对比期 mom/yoy、趋势 sparkline、条件格式色、前后缀/小数位；`metric-widget` 单测 4/4；`charts.e2e` 含 NUMBER 用例；配置面在 `DashboardPanel` 指标卡分支 |
 
 ### P1 已完成归档（勿重做）
 
@@ -105,6 +106,7 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 |----|------|------|
 | 排序 mode option / natural | **已完成** | `buildSortSql`：option=choices 下标、natural=数字段补零；views + findRecords；GridPanel 三档；单测 + view-query e2e |
 | ClickHouse ETL | **已完成** | `ClickHouseEtlService` 增量同步；需 `ANALYTICS_ADAPTER=clickhouse`；见 VERIFY-M12 |
+| 高频屏视觉 / NUMBER 卡深度 | **已完成** | 见上表；勿再扫造功能 |
 | 冻结列 / 站内消息 / 评论@ / NL 自动化卡 / autoNumber·ai / 复制粘贴填充 / 父子层级 / 关联·公式·lookup / 地理·条码·群聊格 / 自动化条件 / 变量树·消息按钮 / 表单·自动化交互对齐 / 字段显隐 / 内容权限钻取 / 仪表盘配置壳·图表全集 / 模板库壳 | **已完成** | 详见 §1 与 VERIFY-INDEX |
 
 ### P2 客观限制（低优先）
@@ -152,8 +154,11 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 | `pnpm --filter web exec playwright test e2e/serial-claim.spec.ts` | 1/1 passed |
 | 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-22 复跑）**：含 W1–W4、serial-claim、grid-perf；e2e 用 `seed: false` 建空表，AppDialog/`field-more` 菜单对齐 |
 | `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` | passed |
-| `pnpm --filter web exec vitest run` | 8/8 passed（2 files） |
+| `pnpm --filter web exec vitest run` | 9/9 passed（P1 后） |
 | 全量 API e2e | 未跑绿；此前 wecom-oauth 一次 flake；见 P0-1 |
+| `metric-widget` 单测 | 4/4 passed |
+| `charts.e2e-spec.ts`（含 NUMBER） | 4/4 passed |
+| `vue-tsc` / web `vitest`（P1 后） | passed / 9/9 |
 
 ---
 

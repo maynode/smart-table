@@ -32,6 +32,7 @@ import type {
   BaseDto,
   CommentDto,
   FieldDto,
+  FormDto,
   MemberDto,
   RecordDto,
   SavedViewDto,
@@ -47,7 +48,18 @@ const baseId = computed(() => String(route.params.baseId));
 const workspace = ref<WorkspaceDto | null>(null);
 const base = ref<BaseDto | null>(null);
 const sheets = ref<SheetDto[]>([]);
+const forms = ref<FormDto[]>([]);
 const activeSheet = ref<SheetDto | null>(null);
+/** 企微：有关联 Form 的工作表打开表单 UI，不是网格 */
+const mainView = ref<'grid' | 'form'>('grid');
+
+const formSheetIds = computed(
+  () => new Set(forms.value.map((item) => item.sheetId)),
+);
+
+function sheetHasForm(sheetId: string): boolean {
+  return formSheetIds.value.has(sheetId);
+}
 const records = ref<RecordDto[]>([]);
 const nextCursor = ref<string | null>(null);
 const loading = ref(false);
@@ -108,25 +120,35 @@ function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : '网络错误，请稍后重试';
 }
 
+function isFormSheet(sheet: SheetDto): boolean {
+  return sheetHasForm(sheet.id) || sheet.name === '收集表单';
+}
+
 async function bootstrap(): Promise<void> {
   bootError.value = '';
   try {
-    const [ws, baseDetail, sheetList, memberList] = await Promise.all([
+    const [ws, baseDetail, sheetList, memberList, formList] = await Promise.all([
       endpoints.getWorkspace(workspaceId.value),
       endpoints.getBase(baseId.value),
       endpoints.listSheets(baseId.value),
       endpoints.listMembers(workspaceId.value).catch(() => [] as MemberDto[]),
+      endpoints.listForms(baseId.value).catch(() => [] as FormDto[]),
     ]);
     workspace.value = ws;
     base.value = baseDetail;
     sheets.value = sheetList;
     members.value = memberList;
+    forms.value = formList;
 
     const requested =
       typeof route.query.sheet === 'string' ? route.query.sheet : null;
-    const target = requested ?? sheetList[0]?.id;
-    if (target) {
-      await selectSheet(target, false);
+    // 默认优先打开码库类工作表；若只有收集表单则进表单视图
+    const preferred =
+      requested ??
+      sheetList.find((sheet) => !isFormSheet(sheet))?.id ??
+      sheetList[0]?.id;
+    if (preferred) {
+      await selectSheet(preferred, false);
     }
   } catch (error) {
     bootError.value = messageOf(error);
@@ -147,6 +169,16 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       clearEditHistory();
     }
     activeSheet.value = detail;
+    // 企微：收集表单进表单 UI（编辑/填写），不是表格网格
+    if (isFormSheet(detail)) {
+      mainView.value = 'form';
+      formBuilderOpen.value = false;
+      savedViews.value = [];
+      records.value = [];
+      nextCursor.value = null;
+      return;
+    }
+    mainView.value = 'grid';
     savedViews.value = views;
     currentViewId.value = '';
     currentQuery.value = {};
@@ -173,11 +205,25 @@ watch(
 );
 
 async function addRow(): Promise<void> {
+  await insertRows({ count: 1, direction: 'below' });
+}
+
+async function insertRows(payload: {
+  count: number;
+  direction: 'above' | 'below';
+}): Promise<void> {
   if (!activeSheet.value) return;
+  const count = Math.min(100, Math.max(1, Math.floor(payload.count || 1)));
   try {
-    const record = await endpoints.createRecord(activeSheet.value.id, {});
-    records.value = [...records.value, record];
-    toast('已添加一行');
+    const created = [];
+    for (let i = 0; i < count; i += 1) {
+      created.push(
+        await endpoints.createRecord(activeSheet.value.id, {}),
+      );
+    }
+    // 无行 order 字段：新建记录按 id 排在末尾；上下插入 UI 先统一追加。
+    records.value = [...records.value, ...created];
+    toast(count === 1 ? '已添加一行' : `已添加 ${count} 行`);
   } catch (error) {
     toast(messageOf(error));
   }
@@ -601,6 +647,23 @@ function onQueryChange(query: ViewQuery): void {
   }
 }
 
+async function openOrCreateFormSheet(): Promise<void> {
+  const existing = sheets.value.find((sheet) => isFormSheet(sheet));
+  if (existing) {
+    await selectSheet(existing.id);
+    return;
+  }
+  try {
+    const sheet = await endpoints.createSheet(baseId.value, '收集表单');
+    sheets.value = [...sheets.value, sheet];
+    // 尚无 Form 记录时靠名称识别为表单视图；保存后 listForms 会挂上
+    mainView.value = 'form';
+    await selectSheet(sheet.id);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 async function createSheet(): Promise<void> {
   const name = (await promptDialog('新工作表名称', '新工作表'))?.trim();
   if (!name) return;
@@ -759,7 +822,7 @@ function handleCreateAction(
     return;
   }
   if (action === 'form') {
-    formBuilderOpen.value = true;
+    void openOrCreateFormSheet();
     return;
   }
   if (action === 'import') {
@@ -1045,7 +1108,9 @@ onBeforeUnmount(() => {
             :class="{ active: sheet.id === activeSheet?.id }"
           >
             <button class="sidebar-item" @click="selectSheet(sheet.id)">
-              <span class="sheet-icon">▦</span>
+              <span class="sheet-icon">{{
+                isFormSheet(sheet) ? '📝' : '▦'
+              }}</span>
               <span class="sheet-label">{{ sheet.name }}</span>
             </button>
             <button
@@ -1063,7 +1128,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="activeSheet" class="sidebar-section views-section">
+        <div
+          v-if="activeSheet && mainView === 'grid'"
+          class="sidebar-section views-section"
+        >
           <div class="sidebar-title">
             <span>视图</span>
             <button
@@ -1156,6 +1224,13 @@ onBeforeUnmount(() => {
 
       <main class="base-main">
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
+        <FormBuilderPanel
+          v-else-if="activeSheet && mainView === 'form'"
+          :key="`form-${activeSheet.id}`"
+          embedded
+          :base-id="baseId"
+          :sheet="activeSheet"
+        />
         <GridPanel
           v-else-if="activeSheet"
           ref="gridRef"
@@ -1173,6 +1248,7 @@ onBeforeUnmount(() => {
           :sheets="sheets"
           :upload-attachment="uploadToSheet"
           @add-row="addRow"
+          @insert-rows="insertRows"
           @load-more="loadMore"
           @refresh="refreshSheet"
           @undo="undoEdit"
