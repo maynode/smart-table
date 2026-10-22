@@ -36,6 +36,51 @@ export interface GridStats {
   usedOffscreen: boolean;
 }
 
+/** WeCom `WordMeasurer`: fontKey → word → width. Cleared when font changes. */
+const measureCache = new Map<string, Map<string, number>>();
+
+function measureCached(
+  target: CanvasRenderingContext2D,
+  text: string,
+): number {
+  const fontKey = target.font || '';
+  let byWord = measureCache.get(fontKey);
+  if (!byWord) {
+    byWord = new Map();
+    measureCache.set(fontKey, byWord);
+  }
+  const hit = byWord.get(text);
+  if (hit !== undefined) return hit;
+  const width = target.measureText(text).width;
+  byWord.set(text, width);
+  return width;
+}
+
+/**
+ * WeCom sdk_1 `appendEllipsis`: binary-search the longest prefix whose
+ * measured width plus "…" fits in the cell. Keeps paint O(log n) measures.
+ */
+export function truncateToWidth(
+  target: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (!text || maxWidth <= 0) return '';
+  if (measureCached(target, text) <= maxWidth) return text;
+  const ellipsis = '…';
+  const ellipsisWidth = measureCached(target, ellipsis);
+  if (ellipsisWidth > maxWidth) return '';
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const width = measureCached(target, text.slice(0, mid)) + ellipsisWidth;
+    if (width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo <= 0 ? ellipsis : `${text.slice(0, lo)}${ellipsis}`;
+}
+
 export interface CanvasGridOptions {
   columns: GridColumn[];
   rowCount: number;
@@ -959,7 +1004,12 @@ export class CanvasGridEngine {
       if (cell.text) {
         target.fillStyle = cell.color ?? COLORS.cellText;
         target.font = `12px ${FONT_STACK}`;
-        target.fillText(cell.text, x + size + 12, y + rowHeight / 2);
+        const label = truncateToWidth(
+          target,
+          cell.text,
+          Math.max(0, columnWidth - size - 24),
+        );
+        target.fillText(label, x + size + 12, y + rowHeight / 2);
       }
     } else if (cell.pill) {
       const textWidth = target.measureText(cell.text).width;
@@ -972,13 +1022,23 @@ export class CanvasGridEngine {
       target.roundRect(pillX, pillY, pillWidth, pillHeight, 11);
       target.fill();
       target.fillStyle = cell.color ?? '#1f2329';
-      target.fillText(cell.text, pillX + 10, y + rowHeight / 2);
+      const label = truncateToWidth(
+        target,
+        cell.text,
+        Math.max(0, pillWidth - 16),
+      );
+      target.fillText(label, pillX + 10, y + rowHeight / 2);
     } else {
       if (cell.bold) {
         target.font = `600 13px ${FONT_STACK}`;
       }
       target.fillStyle = cell.color ?? COLORS.cellText;
-      target.fillText(cell.text, x + 12, y + rowHeight / 2);
+      const label = truncateToWidth(
+        target,
+        cell.text,
+        Math.max(0, columnWidth - 24),
+      );
+      target.fillText(label, x + 12, y + rowHeight / 2);
       if (cell.bold) {
         target.font = `13px ${FONT_STACK}`;
       }

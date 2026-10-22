@@ -39,18 +39,11 @@ const coverInput = ref<HTMLInputElement | null>(null);
 const showConditionsFor = ref<Record<string, boolean>>({});
 const description = ref('');
 const shareDialogOpen = ref(false);
-const shareDialogOpen = ref(false);
-const description = ref('');
 const conditionDialogOpen = ref(false);
 
 function openConditionDialog(fieldId: string): void {
   selectedFieldId.value = fieldId;
   conditionDialogOpen.value = true;
-}
-
-function removeAllFields(): void {
-  items.value = [];
-  selectedFieldId.value = '';
 }
 
 const sheetFields = computed(() => props.sheet?.fields ?? []);
@@ -63,6 +56,15 @@ const availableFields = computed(() =>
 );
 const selectedConfig = computed(
   () => items.value.find((item) => item.fieldId === selectedFieldId.value) ?? null,
+);
+/** WeCom `form_visible_setting_unsupport`: 公式/查找不可作显示条件。 */
+const conditionFieldCandidates = computed(() =>
+  items.value.filter((item) => {
+    if (item.fieldId === selectedConfig.value?.fieldId) return false;
+    const field = fieldById.value.get(item.fieldId);
+    if (!field) return false;
+    return field.type !== 'formula' && field.type !== 'lookup';
+  }),
 );
 const selectedSheetField = computed(
   () => fieldById.value.get(selectedFieldId.value) ?? null,
@@ -480,7 +482,7 @@ onMounted(load);
               <select v-model="condition.fieldId" data-testid="form-condition-field">
                 <option value="">触发字段</option>
                 <option
-                  v-for="candidate in items.filter((item) => item.fieldId !== selectedConfig?.fieldId)"
+                  v-for="candidate in conditionFieldCandidates"
                   :key="candidate.fieldId"
                   :value="candidate.fieldId"
                 >

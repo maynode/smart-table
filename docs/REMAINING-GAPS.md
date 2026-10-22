@@ -192,11 +192,5 @@ pnpm --filter web exec playwright test
 - 产品方案：`docs/智能表格-产品与技术方案.md`
 - 实施计划：`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`
 - 性能：`docs/PERFORMANCE.md`
-- **企微源码级校验（2026-10-22）**：
-  - ①领取 `VERIFY-01-automation-claim.md`
-  - ②表格筛选/乐观锁 `VERIFY-02-grid-query-lock.md`
-  - ③公开表单 `VERIFY-03-public-form.md`
-  - ④schedule 抢占 `VERIFY-04-automation-schedule.md`
-  - ⑤仪表盘聚合 `VERIFY-05-dashboard-analytics.md`
-  - 路径：`docs/design-refs/wecom/smart-table/`
+- **企微源码级校验**：总表 [`VERIFY-INDEX.md`](design-refs/wecom/smart-table/VERIFY-INDEX.md)（M1–M11 + 首轮 VERIFY-01…05）；路径 `docs/design-refs/wecom/smart-table/`
 - 企微截图索引：`docs/design-refs/wecom/SCREENSHOT-INDEX.md`

@@ -168,6 +168,18 @@ export class FormsService implements OnModuleDestroy {
         if (!sheetFieldIds.has(condition.fieldId)) {
           throw new BadRequestException('显示条件引用了不存在的字段');
         }
+        // WeCom: 不支持将公式及查找引用字段设置为条件
+        const triggerField = sheet.fields.find(
+          (item) => item.id === condition.fieldId,
+        );
+        if (
+          triggerField &&
+          (triggerField.type === 'formula' || triggerField.type === 'lookup')
+        ) {
+          throw new BadRequestException(
+            '显示条件不支持公式或查找引用字段',
+          );
+        }
       }
     }
 

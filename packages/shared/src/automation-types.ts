@@ -26,7 +26,7 @@ export interface ScheduleTrigger {
 
 export type AutomationTrigger = RecordTrigger | ScheduleTrigger;
 
-export type NaturalTime = 'today' | 'tomorrow' | 'yesterday';
+export type NaturalTime = 'today' | 'tomorrow' | 'yesterday' | 'now';
 
 /**
  * A variable reference in a step field mapping or message body:
@@ -74,7 +74,10 @@ export type AutomationStepType =
   | 'modifyRecords'
   | 'sendMessage'
   | 'startGroupChat'
-  | 'addGroupMembers';
+  | 'addGroupMembers'
+  | 'sendHttp';
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface FindRecordsStep extends BaseStep {
   type: 'findRecords';
@@ -157,13 +160,27 @@ export interface AddGroupMembersStep extends BaseStep {
   memberUserIds: string[];
 }
 
+/** WeCom X2.SEND_HTTP=7 — outbound webhook from a workflow step. */
+export interface SendHttpStep extends BaseStep {
+  type: 'sendHttp';
+  method: HttpMethod;
+  /** Supports {{变量}} interpolation. */
+  url: string;
+  headers?: Record<string, string>;
+  /** Raw body; interpolated. Ignored for GET. */
+  body?: string;
+  /** Default 15s; capped by runner. */
+  timeoutMs?: number;
+}
+
 export type AutomationStep =
   | FindRecordsStep
   | CreateRecordStep
   | ModifyRecordsStep
   | SendMessageStep
   | StartGroupChatStep
-  | AddGroupMembersStep;
+  | AddGroupMembersStep
+  | SendHttpStep;
 
 export interface AutomationDefinition {
   id: string;

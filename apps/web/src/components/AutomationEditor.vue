@@ -26,7 +26,8 @@ type StepType =
   | 'modifyRecords'
   | 'sendMessage'
   | 'startGroupChat'
-  | 'addGroupMembers';
+  | 'addGroupMembers'
+  | 'sendHttp';
 
 interface MappingRow {
   fieldId: string;
@@ -59,6 +60,11 @@ interface UiStep {
   memberUserIds: string[];
   memberUserIdsText: string;
   buttons: Array<{ title: string; url: string }>;
+  httpMethod: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  httpUrl: string;
+  httpHeadersJson: string;
+  httpBody: string;
+  httpTimeoutMs: number;
 }
 
 interface VariableMenuGroup {
@@ -115,6 +121,7 @@ const stepTypes: Array<{
   { value: 'findRecords', label: '查找记录', icon: '🔍', color: '#722ed1' },
   { value: 'startGroupChat', label: '发起群聊', icon: '👥', color: '#13c2c2' },
   { value: 'addGroupMembers', label: '添加群成员', icon: '🙋', color: '#2f54eb' },
+  { value: 'sendHttp', label: '发送HTTP请求', icon: '🌐', color: '#595959' },
 ];
 
 const typeMenuStepId = ref('');
@@ -164,6 +171,11 @@ function blankStep(type: StepType): UiStep {
     userIds: [],
     memberUserIds: [],
     memberUserIdsText: '',
+    httpMethod: 'POST',
+    httpUrl: '',
+    httpHeadersJson: '',
+    httpBody: '',
+    httpTimeoutMs: 15_000,
   };
 }
 
@@ -327,6 +339,10 @@ function stepSummary(step: UiStep): string {
         : '发起群聊';
     case 'addGroupMembers':
       return `向群聊添加 ${step.memberUserIds.length || '若干'} 名成员`;
+    case 'sendHttp': {
+      const url = step.httpUrl.trim() || '…';
+      return `${step.httpMethod} ${url.length > 40 ? `${url.slice(0, 40)}…` : url}`;
+    }
     default:
       return stepTypeLabel(step.type);
   }
@@ -770,6 +786,38 @@ function buildSteps(): Array<Record<string, unknown>> {
           groupChatId: step.groupChatId || undefined,
           memberUserIds: step.memberUserIds,
         };
+      case 'sendHttp': {
+        let headers: Record<string, string> | undefined;
+        const rawHeaders = step.httpHeadersJson.trim();
+        if (rawHeaders) {
+          try {
+            const parsed = JSON.parse(rawHeaders) as unknown;
+            if (
+              !parsed ||
+              typeof parsed !== 'object' ||
+              Array.isArray(parsed)
+            ) {
+              throw new Error('headers');
+            }
+            headers = Object.fromEntries(
+              Object.entries(parsed as Record<string, unknown>).map(
+                ([key, value]) => [key, String(value)],
+              ),
+            );
+          } catch {
+            headers = undefined;
+          }
+        }
+        return {
+          id: step.id,
+          type: step.type,
+          method: step.httpMethod,
+          url: step.httpUrl,
+          ...(headers ? { headers } : {}),
+          ...(step.httpBody.trim() ? { body: step.httpBody } : {}),
+          timeoutMs: step.httpTimeoutMs,
+        };
+      }
       default:
         return { id: step.id, type: step.type };
     }
@@ -805,6 +853,21 @@ function validate(): string {
     }
     if (step.type === 'startGroupChat' && !step.name.trim()) {
       return `第 ${index + 1} 步群聊名称不能为空`;
+    }
+    if (step.type === 'sendHttp') {
+      if (!step.httpUrl.trim()) {
+        return `第 ${index + 1} 步 HTTP 请求缺少 URL`;
+      }
+      if (step.httpHeadersJson.trim()) {
+        try {
+          const parsed = JSON.parse(step.httpHeadersJson) as unknown;
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return `第 ${index + 1} 步请求头须为 JSON 对象`;
+          }
+        } catch {
+          return `第 ${index + 1} 步请求头 JSON 不合法`;
+        }
+      }
     }
   }
   return '';
@@ -900,6 +963,20 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
       expression.variable?.source === 'step' ? 'step' : 'trigger',
     variableField: expression.variable?.field ?? '',
   }));
+  const method = String(raw.method ?? 'POST').toUpperCase();
+  step.httpMethod = (
+    ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+      ? method
+      : 'POST'
+  ) as UiStep['httpMethod'];
+  step.httpUrl = String(raw.url ?? '');
+  step.httpBody = String(raw.body ?? '');
+  step.httpTimeoutMs = Number(raw.timeoutMs ?? 15_000) || 15_000;
+  const headers = raw.headers;
+  step.httpHeadersJson =
+    headers && typeof headers === 'object' && !Array.isArray(headers)
+      ? JSON.stringify(headers, null, 2)
+      : '';
   return step;
 }
 
@@ -1548,6 +1625,62 @@ onMounted(load);
                   {{ member.name }}
                 </label>
               </div>
+            </template>
+
+            <template v-else-if="step.type === 'sendHttp'">
+              <div class="nl-sentence">
+                <span>请求方法</span>
+                <select
+                  v-model="step.httpMethod"
+                  class="nl-chip"
+                  data-testid="step-http-method"
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+              <label class="form-field">
+                <span>请求 URL</span>
+                <input
+                  v-model="step.httpUrl"
+                  data-testid="step-http-url"
+                  placeholder="https://example.com/hook?code={{序列号}}"
+                />
+              </label>
+              <label class="form-field">
+                <span>请求头（JSON 对象，可选）</span>
+                <textarea
+                  v-model="step.httpHeadersJson"
+                  data-testid="step-http-headers"
+                  rows="3"
+                  placeholder='{"Content-Type":"application/json"}'
+                />
+              </label>
+              <label
+                v-if="step.httpMethod !== 'GET' && step.httpMethod !== 'DELETE'"
+                class="form-field"
+              >
+                <span>请求体（可插入 {{变量}}）</span>
+                <textarea
+                  v-model="step.httpBody"
+                  data-testid="step-http-body"
+                  rows="4"
+                  placeholder='{"serial":"{{第3步.序列号}}"}'
+                />
+              </label>
+              <label class="form-field">
+                <span>超时（毫秒）</span>
+                <input
+                  v-model.number="step.httpTimeoutMs"
+                  type="number"
+                  min="1000"
+                  max="60000"
+                  data-testid="step-http-timeout"
+                />
+              </label>
             </template>
           </div>
         </article>

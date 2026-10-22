@@ -407,6 +407,8 @@ export class AutomationRunnerService {
         return this.startGroupChat(step, state, tx);
       case 'addGroupMembers':
         return this.addGroupMembers(step, state, tx);
+      case 'sendHttp':
+        return this.sendHttp(step, state);
       default:
         throw new Error(
           `未知自动化步骤: ${(step as { type: string }).type}`,
@@ -607,6 +609,65 @@ export class AutomationRunnerService {
         stepId: step.id,
         type: 'sendMessage',
         values: { 消息内容: text },
+      },
+    };
+  }
+
+  private async sendHttp(
+    step: Extract<AutomationStep, { type: 'sendHttp' }>,
+    state: ExecutionState,
+  ): Promise<StepExecution> {
+    const url = this.interpolate(step.url, state).trim();
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error('HTTP 请求 URL 必须以 http:// 或 https:// 开头');
+    }
+    const method = (step.method ?? 'GET').toUpperCase();
+    const timeoutMs = Math.min(
+      Math.max(step.timeoutMs ?? 15_000, 1_000),
+      60_000,
+    );
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(step.headers ?? {})) {
+      headers[key] = this.interpolate(String(value), state);
+    }
+    const body =
+      method === 'GET' || method === 'DELETE'
+        ? undefined
+        : this.interpolate(step.body ?? '', state);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let status = 0;
+    let responseText = '';
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body || undefined,
+        signal: controller.signal,
+      });
+      status = response.status;
+      responseText = (await response.text()).slice(0, 8_192);
+      if (!response.ok) {
+        throw new Error(`HTTP ${status}: ${responseText.slice(0, 200)}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`HTTP 请求超时（${timeoutMs}ms）`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    return {
+      output: {
+        stepId: step.id,
+        type: 'sendHttp',
+        values: {
+          状态码: String(status),
+          响应: responseText,
+        },
       },
     };
   }

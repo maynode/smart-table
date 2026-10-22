@@ -30,7 +30,9 @@ const STEP_TYPES = [
   'sendMessage',
   'startGroupChat',
   'addGroupMembers',
+  'sendHttp',
 ];
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
 @Injectable()
 export class AutomationsService {
@@ -343,6 +345,25 @@ export class AutomationsService {
       if (type === 'startGroupChat') {
         if (typeof raw.name !== 'string' || !raw.name.trim()) {
           throw new BadRequestException('群聊名称不能为空');
+        }
+      }
+
+      if (type === 'sendHttp') {
+        const method = String(raw.method ?? 'GET').toUpperCase();
+        if (!HTTP_METHODS.includes(method)) {
+          throw new BadRequestException('HTTP 方法不合法');
+        }
+        if (typeof raw.url !== 'string' || !raw.url.trim()) {
+          throw new BadRequestException('HTTP 请求缺少 URL');
+        }
+        if (raw.headers !== undefined) {
+          if (
+            !raw.headers ||
+            typeof raw.headers !== 'object' ||
+            Array.isArray(raw.headers)
+          ) {
+            throw new BadRequestException('HTTP 请求头格式不正确');
+          }
         }
       }
 
