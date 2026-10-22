@@ -727,6 +727,57 @@ h3 {
   border-color: var(--brand);
 }
 
+.comment-compose {
+  position: relative;
+}
+
+.mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 5;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.mention-menu li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mention-menu li span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.mention-menu li.active,
+.mention-menu li:hover {
+  background: #f0f7ff;
+}
+
+.mention-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.comment-body .mention {
+  color: #2d8cf0;
+  font-weight: 600;
+}
+
 .modal-mask {
   display: flex;
   align-items: center;

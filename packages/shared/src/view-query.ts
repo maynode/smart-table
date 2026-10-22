@@ -77,6 +77,8 @@ export interface ViewQuery {
   sorts?: SortSpec[];
   rowHeight?: RowHeight;
   colorRules?: ColorRule[];
+  /** Number of leading data columns kept fixed while scrolling horizontally. */
+  freezeColumnCount?: number;
 }
 
 export const DEFAULT_RECORD_PAGE_LIMIT = 50;

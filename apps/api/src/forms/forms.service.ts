@@ -34,6 +34,14 @@ import type {
   PreviewSuccessDto,
   UpsertFormDto,
 } from './dto/form-config.dto';
+import {
+  applyAutoNumbers,
+  stripAutoNumberInputs,
+} from '../sheets/auto-number';
+import {
+  applyAiFields,
+  stripAiFieldInputs,
+} from '../sheets/ai-field';
 
 interface ShareConfig {
   enabled?: boolean;
@@ -458,6 +466,7 @@ export class FormsService implements OnModuleDestroy {
         mode: 'sync',
         status: 'success',
       });
+      await this.notifyFormOwners(form, submissionId, outcome);
       return {
         submissionId,
         recordId: outcome.recordId,
@@ -503,6 +512,7 @@ export class FormsService implements OnModuleDestroy {
         mode: 'queue',
         status: 'success',
       });
+      await this.notifyFormOwners(form, submissionId, outcome);
     } catch (error) {
       const message =
         error instanceof HttpException
@@ -573,10 +583,26 @@ export class FormsService implements OnModuleDestroy {
           }
         }
 
+        const strippedNumbers = await stripAutoNumberInputs(
+          tx,
+          form.sheetId,
+          sanitized,
+        );
+        const stripped = await stripAiFieldInputs(
+          tx,
+          form.sheetId,
+          strippedNumbers,
+        );
+        const withNumbers = await applyAutoNumbers(
+          tx,
+          form.sheetId,
+          stripped,
+        );
+        const withAi = await applyAiFields(tx, form.sheetId, withNumbers);
         const record = await tx.recordRow.create({
           data: {
             sheetId: form.sheetId,
-            cells: sanitized as Prisma.InputJsonValue,
+            cells: withAi as Prisma.InputJsonValue,
           },
         });
 
@@ -624,6 +650,66 @@ export class FormsService implements OnModuleDestroy {
       },
       { timeout: 30_000 },
     );
+  }
+
+  /**
+   * Notify workspace owners/admins when a public form submission completes.
+   * Failures are logged only — they must never roll back a successful claim.
+   */
+  private async notifyFormOwners(
+    form: SubmissionForm,
+    submissionId: string,
+    outcome: { recordId: string; stepOutputs: Record<string, string> },
+  ): Promise<void> {
+    try {
+      const base = await this.prisma.base.findUnique({
+        where: { id: form.baseId },
+        select: { id: true, name: true, workspaceId: true },
+      });
+      if (!base) return;
+
+      const recipients = await this.prisma.workspaceMember.findMany({
+        where: {
+          workspaceId: base.workspaceId,
+          role: { in: ['owner', 'admin'] },
+        },
+        select: { userId: true },
+      });
+      if (recipients.length === 0) return;
+
+      const serial =
+        outcome.stepOutputs['序列号'] ??
+        outcome.stepOutputs['serial'] ??
+        outcome.stepOutputs['SN'];
+      const title = `表单「${form.name}」有新提交`;
+      const body = serial
+        ? `已写入记录，序列号：${serial}`
+        : `已写入记录 ${outcome.recordId.slice(0, 8)}…`;
+      const data = {
+        kind: 'form_submit',
+        formId: form.id,
+        formName: form.name,
+        baseId: base.id,
+        sheetId: form.sheetId,
+        submissionId,
+        recordId: outcome.recordId,
+      } as unknown as Prisma.InputJsonValue;
+
+      await this.prisma.notification.createMany({
+        data: recipients.map((row) => ({
+          userId: row.userId,
+          title,
+          body,
+          data,
+        })),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `form submit notify failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private successHtml(

@@ -134,6 +134,8 @@ export interface AutoNumberOptions {
   padding?: number;
   start?: number;
   scope?: 'sheet' | 'base';
+  /** Next integer to assign; advanced atomically on each new record. */
+  next?: number;
 }
 
 export interface AiFieldOptions {

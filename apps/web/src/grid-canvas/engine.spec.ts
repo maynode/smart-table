@@ -128,4 +128,28 @@ describe('CanvasGridEngine', () => {
 
     engine.destroy();
   });
+
+  it('keeps frozen columns fixed while horizontal scroll moves later columns', () => {
+    const host = createHost(400, 300);
+    const engine = new CanvasGridEngine(host, {
+      columns: [
+        { id: 'a', name: 'A', width: 100 },
+        { id: 'b', name: 'B', width: 100 },
+        { id: 'c', name: 'C', width: 100 },
+        { id: 'd', name: 'D', width: 100 },
+      ],
+      rowCount: 20,
+      freezeColumnCount: 1,
+    });
+
+    const before = engine.cellRect(0, 0).x;
+    engine.scrollTo(150, 0);
+    expect(engine.cellRect(0, 0).x).toBe(before);
+    expect(engine.cellRect(0, 2).x).toBeLessThan(
+      48 + 100 + 100 + 100 - 150 + 1,
+    );
+    expect(engine.cellRect(0, 2).x).toBe(48 + 200 - 150);
+
+    engine.destroy();
+  });
 });

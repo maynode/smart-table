@@ -29,7 +29,7 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
 | 图片/文件上传 + 格子展示 | 完成 | `POST /sheets/:sheetId/attachments`、`/files/uploads/:name`；W1 Playwright 上传后记录含文件 URL |
 | 行多选 + 批量删除工具条 | 完成 | 行号点击选择；`selection-bar`；W1 Playwright 通过 |
 | 命名视图保存/切换/重命名/删除 | 完成 | `SavedView` 模型、`views.controller.ts`、侧栏；W1 Playwright 保存/应用，W4 API CRUD 5/5 |
-| 条件填色、行高、冻结列 | 部分 | 多规则填色/行高完成；**冻结列未做**，行多选已覆盖常用场景 |
+| 条件填色、行高、冻结列 | 完成 | 填色/行高 + **冻结列**（`freezeColumnCount` / 工具栏「冻结」） |
 
 ### W2 收集表单
 
@@ -83,6 +83,7 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
    - 跑完整 `pnpm --filter api test:e2e --runInBand`；此前仅剩 `wecom-oauth.e2e-spec.ts` 一次不稳定失败（示例邮箱时间戳不一致，疑似共享 mock 状态），需复跑确认是 flake 还是真 bug。
    - 跑完整 `pnpm --filter web exec playwright test`，必须包含 `grid-perf.spec.ts`。
    - 跑 `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` 和 `pnpm --filter web exec vitest run`。
+   - **2026-10-22 本轮已跑：** `vue-tsc` 通过；`vitest` 9/9；`api` `ai-field.spec` 4/4；`pnpm --filter api build` 通过（需先 `prisma:generate`）。E2E / Playwright / perf / Docker 仍待跑。
 2. **Task 26 性能报告**
    - 在本机跑 `pnpm perf:claim`、`pnpm perf:grid`、`pnpm perf:window`、`pnpm perf:form`。
    - 把机器信息、命令、原始结果、结论写进 `docs/PERFORMANCE.md`；不得沿用旧数字。
@@ -98,16 +99,34 @@ W1–W4 的代码与关键路径测试已完成：Canvas 主网格高级交互�
 | 项 | 状态 | 说明 |
 |----|------|------|
 | ClickHouse ETL | 未做 | 只有 `ANALYTICS_ADAPTER=clickhouse` 查询适配器；没有 PG→CH 同步任务。默认 PG 路径不受影响 |
-| 冻结列 | 未做 | 行多选已做；列冻结仍缺 |
-| 评论 @ 同事 | 未做 | 评论仍是纯文本 |
-| natural-language 自动化步骤卡片 | 未做 | 当前是结构化表单编辑器，功能等价但不是截图同款文案卡片 |
-| `autoNumber` / `ai` 字段 | 仅类型位 | 无真正自增/模型调用逻辑 |
+| 冻结列 | **已完成** | Canvas 引擎 + 工具栏「冻结」+ `ViewQuery.freezeColumnCount`；见 `engine.spec.ts` |
+| 表单提交站内消息 | **已完成** | 提交成功后通知 workspace owner/admin；顶栏 `NotificationBell` |
+| 评论 @ 同事 | **已完成** | `@` 提及工作区成员 + 站内通知；输入联想 |
+| natural-language 自动化步骤卡片 | **已完成** | 企微式「当满足条件 / 就执行」NL 卡片 +「仅保存 / 保存并启用」；独立「运行日志」面板 |
+| `autoNumber` / `ai` 字段 | **已完成** | autoNumber 真自增；AI 字段提示词/引用列 + 本地模板填充（可选 `AI_FIELD_URL`） |
 | OTel / K8s 完整度 | 骨架 | 无完整集群清单/Ingress/有状态组件 |
+| 单元格复制粘贴 / 填充柄 | **已完成** | Ctrl+C/V（含 TSV 多格）、Ctrl+D、选区右下角拖拽填充 |
+| 父记录字段 / 层级 | **已完成** | 表格设置可选关联字段；网格按父子缩进展示 |
+| 关联 / 公式 / lookup 配置 | **已完成** | FieldOptionsEditor；格子内关联选记录 |
+| 地理位置 / 条码 / 群聊格子 | **已完成** | 地址文本、条码输入、群聊多选成员 |
+| 自动化条件任意/全部 | **已完成** | 触发/查找 conjunction + 不包含运算符；失败运行可重试 |
 | 视觉像素级对齐 | 未完成 | 功能可用，未逐屏对照企微截图 |
+| 自动化变量树 / 消息按钮 | 部分 | 仍缺第N步变量树、自然时间、消息按钮/表情 |
+| 仪表盘图表全集 | 部分 | 缺条形/组合/词云/文本与堆积子类、更多轴配置 |
 
-### 明确不做（产品边界）
+### 产品目标与边界（2026-10-22 对齐）
 
-- CRDT 实时多人协作、可编辑公网外链、多区域多活、短信验证码、飞书/Airtable 对标。
+**目标：** 功能上**完全复刻企业微信网页版智能表格**（工作表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等），登录用本系统自有账号；在此之上可做更强能力（例：提交后用户页可见消息通知）。
+
+**不做 / 暂缓：**
+
+| 类别 | 说明 |
+|------|------|
+| 企微生态强绑定 | 企微登录、通讯录/联系人、企微群聊等（可用本系统消息/成员替代产品语义） |
+| **协同编辑（暂缓）** | 多人实时同表编辑、光标/OT/`NEW_CHANGES` 等**现阶段不考虑**；继续 REST + 乐观锁即可 |
+| 其它产品边界 | 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标 |
+
+**技术路径：** 继续当前 Vue Canvas + Nest REST 底座，不推倒；企微 HAR/`wecom-js` 用于能力与交互对照，**不要求**协议级复刻 Mutation/WS 提交。
 
 ---
 

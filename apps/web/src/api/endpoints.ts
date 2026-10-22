@@ -36,6 +36,7 @@ import type {
   DataSyncDto,
   DataSyncRunDto,
   SavedViewDto,
+  NotificationDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -262,8 +263,14 @@ export const endpoints = {
   listComments: (sheetId: string) =>
     api<CommentDto[]>(`/sheets/${sheetId}/comments`),
 
-  createComment: (sheetId: string, body: string) =>
-    api<CommentDto>(`/sheets/${sheetId}/comments`, { body: { body } }),
+  createComment: (
+    sheetId: string,
+    body: string,
+    mentionedUserIds: string[] = [],
+  ) =>
+    api<CommentDto>(`/sheets/${sheetId}/comments`, {
+      body: { body, mentionedUserIds },
+    }),
 
   listForms: (baseId: string) =>
     api<FormDto[]>(`/forms?baseId=${encodeURIComponent(baseId)}`),
@@ -676,4 +683,12 @@ export const endpoints = {
       method: 'POST',
       body: { code },
     }),
+
+  listNotifications: (limit = 50) =>
+    api<{ notifications: NotificationDto[] }>(
+      `/notifications?limit=${limit}`,
+    ),
+
+  markNotificationRead: (id: string) =>
+    api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
 };

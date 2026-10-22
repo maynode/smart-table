@@ -23,6 +23,9 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import type { CreateFieldDto } from './dto/create-field.dto';
 import type { ListRecordsQueryDto } from './dto/list-records.query';
 import type { UpdateFieldDto } from './dto/update-field.dto';
+import { applyAutoNumbers, stripAutoNumberInputs } from './auto-number';
+import { applyAiFields, stripAiFieldInputs } from './ai-field';
+import { seedBlankSheetStructure } from './blank-sheet';
 
 @Injectable()
 export class SheetsService {
@@ -95,8 +98,16 @@ export class SheetsService {
 
   async createSheet(baseId: string, userId: string, name: string) {
     await this.requireBase(baseId, userId, 'editor');
-    return this.prisma.sheet.create({
-      data: { baseId, name: name.trim() },
+    return this.prisma.$transaction(async (tx) => {
+      const sheet = await tx.sheet.create({
+        data: { baseId, name: name.trim() },
+      });
+      await seedBlankSheetStructure(tx, sheet.id, userId);
+      const fields = await tx.field.findMany({
+        where: { sheetId: sheet.id },
+        orderBy: { order: 'asc' },
+      });
+      return { ...sheet, fields };
     });
   }
 
@@ -265,15 +276,25 @@ export class SheetsService {
       'create',
       { changes: cells },
     );
-    const fields = await this.assertKnownFields(sheetId, cells);
+    await this.assertKnownFields(sheetId, cells);
 
-    const record = await this.prisma.recordRow.create({
-      data: {
-        sheetId,
-        cells: cells as Prisma.InputJsonValue,
-        claimStatus: this.claimStatusFor(fields, cells),
-        createdBy: userId,
-      },
+    const record = await this.prisma.$transaction(async (tx) => {
+      const strippedNumbers = await stripAutoNumberInputs(tx, sheetId, cells);
+      const stripped = await stripAiFieldInputs(tx, sheetId, strippedNumbers);
+      const withNumbers = await applyAutoNumbers(tx, sheetId, stripped);
+      const withAi = await applyAiFields(tx, sheetId, withNumbers);
+      const fields = await tx.field.findMany({
+        where: { sheetId },
+        select: { id: true, name: true, options: true },
+      });
+      return tx.recordRow.create({
+        data: {
+          sheetId,
+          cells: withAi as Prisma.InputJsonValue,
+          claimStatus: this.claimStatusFor(fields, withAi),
+          createdBy: userId,
+        },
+      });
     });
 
     try {
@@ -369,10 +390,25 @@ export class SheetsService {
         changes: cells,
       },
     );
-    const fields = await this.assertKnownFields(record.sheetId, cells);
+    const strippedNumbers = await stripAutoNumberInputs(
+      this.prisma,
+      record.sheetId,
+      cells,
+    );
+    const stripped = await stripAiFieldInputs(
+      this.prisma,
+      record.sheetId,
+      strippedNumbers,
+    );
+    const fields = await this.assertKnownFields(record.sheetId, stripped);
 
     const currentCells = (record.cells ?? {}) as Record<string, unknown>;
-    const mergedCells = { ...currentCells, ...cells };
+    const mergedCells = await applyAiFields(
+      this.prisma,
+      record.sheetId,
+      { ...currentCells, ...stripped },
+      currentCells,
+    );
     const claimStatus = this.claimStatusFor(fields, mergedCells);
 
     let updatedRecord;

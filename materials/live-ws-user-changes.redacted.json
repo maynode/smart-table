@@ -1,0 +1,136 @@
+{
+  "capturedAt": "2026-10-22T01:53:46Z",
+  "source": "Playwright live single-user session after QR login",
+  "note": "Secrets redacted. Live path: USER_CHANGES over WebSocket (Engine.IO), not HTTP commitchanges.",
+  "sequence": [
+    {
+      "step": 1,
+      "dir": "C→S",
+      "transport": "42[\"post\", header\\nbody]",
+      "type": "USER_CHANGES",
+      "header": {
+        "type": "USER_CHANGES",
+        "docs_type": "smartsheet",
+        "base_rev": 81,
+        "dver": "3.0.0",
+        "generalpacket": {
+          "rel_rev": "daily-20261020_smartsheet-7dc56f89",
+          "dver": "3.0.29874751",
+          "right_tag": 1
+        },
+        "apid": { "i": "<padId>", "r": 79, "s": "REDACTED", "g": "REDACTED", "t": "<ts>" }
+      },
+      "body": {
+        "type": "USER_CHANGES",
+        "baseRev": 81,
+        "changeSetCount": 1,
+        "changesetType": "smartsheet",
+        "subId": "tgY5a7",
+        "notCrossSheet": true,
+        "pver": 0,
+        "changeset_parsed": [
+          [
+            {
+              "t": 3017,
+              "v": 5,
+              "name": "SET_FIELD_ATTR_MUTATION",
+              "c": {
+                "1": "tgY5a7",
+                "3": "f9lAv9",
+                "note": "single-select field option list mutate (type 17)"
+              },
+              "r": 15,
+              "o": 0
+            }
+          ]
+        ]
+      },
+      "ack": { "onpost": { "result": 0, "heartbeat_interval": 15000 } }
+    },
+    {
+      "step": 2,
+      "dir": "S→C",
+      "transport": "42[\"get\", header\\nbody]",
+      "type": "ACCEPT_COMMIT",
+      "header": {
+        "type": "ACCEPT_COMMIT",
+        "base_rev": 81,
+        "new_rev": 82,
+        "docs_type": "smartsheet",
+        "dver": "3.0.0"
+      },
+      "body": {
+        "data": {
+          "changeset": "(echo of submitted changeset)",
+          "author": "p.<uid>",
+          "commitId": "<task_id>",
+          "subid": "tgY5a7",
+          "changesetType": "smartsheet",
+          "applyTime": 1792634025311
+        }
+      }
+    },
+    {
+      "step": 3,
+      "dir": "C→S",
+      "type": "USER_CHANGES",
+      "base_rev": 82,
+      "changeset_parsed": [
+        [
+          {
+            "t": 3013,
+            "v": 5,
+            "name": "SET_RECORD_MUTATION",
+            "c": {
+              "1": "tgY5a7",
+              "3": "rPznPv",
+              "4": {
+                "f9lAv9": {
+                  "17": ["oq4Vs9"],
+                  "30": 17,
+                  "31": "<uid>"
+                }
+              },
+              "note": "set single-select cell on record; field f9lAv9 option oq4Vs9"
+            },
+            "r": 9,
+            "o": 0
+          }
+        ]
+      ]
+    },
+    {
+      "step": 4,
+      "dir": "S→C",
+      "type": "ACCEPT_COMMIT",
+      "base_rev": 82,
+      "new_rev": 83,
+      "note": "server may enrich cell with timestamp key 32"
+    },
+    {
+      "step": 5,
+      "dir": "S→C",
+      "type": "COMM_NOTICE",
+      "notice": { "type": "DIRTY_AREA_CHANGE", "rev": 82, "payload": "{}" }
+    },
+    {
+      "step": 6,
+      "dir": "S→C",
+      "type": "COMM_NOTICE",
+      "notice": {
+        "type": "PROXY_FIELD_CHANGE",
+        "payload": {
+          "calcRev": 82,
+          "noticeMode": 2,
+          "formulaResZip": "H4sIAAAAAAAA/6quBQQAAP//Q7+mowIAAAA=",
+          "note": "zlib+b64 formula result blob (empty-ish in this sample)"
+        }
+      }
+    }
+  ],
+  "also_observed": [
+    "CURSOR_MESSAGE (presence/cursor over same WS post channel)",
+    "HEART_BEAT every ~15s",
+    "HTTP wedoc/editnotify still fires on edit (presence notify, not data commit)"
+  ]
+}

@@ -91,8 +91,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   const findStep = page.getByTestId('automation-step-findRecords');
   await findStep.getByTestId('step-sheet').selectOption(codeSheet.id);
   await findStep.getByTestId('step-filter-field').selectOption(codeStatus.id);
-  await findStep.locator('.condition-row select').nth(1).selectOption('equals');
-  await findStep.locator('.condition-row input').fill('unclaimed');
+  await findStep.getByTestId('step-filter-operator').selectOption('equals');
+  await findStep.getByTestId('step-filter-value').fill('unclaimed');
   await expect(findStep.locator('input[type="number"]')).toHaveValue('1');
 
   // Step 2: modify the found record and bind the prior find step.
@@ -119,7 +119,7 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     .getByTestId('step-message-text')
     .fill('领取成功 {{序列号}}');
 
-  await page.getByTestId('automation-save').click();
+  await page.getByTestId('automation-save-enable').click();
   await expect(page.getByTestId('automation-panel')).toBeVisible();
 
   let automation: any = null;
@@ -135,6 +135,7 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     })
     .toBe(true);
   expect(automation).toBeTruthy();
+  expect(automation.enabled).toBe(true);
   expect(
     automation.steps.map((step: { type: string }) => step.type),
   ).toEqual(['findRecords', 'modifyRecords', 'sendMessage']);
@@ -178,6 +179,7 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     .toBe(true);
 
   // Trigger the chain by creating a lead record through the real API.
+  // Blank-sheet seed rows sit ahead of our SN row — assert by serial, not [0].
   await api.post(`/sheets/${leadSheet.id}/records`, {
     headers,
     data: { cells: {} },
@@ -188,19 +190,25 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
         const records = await (
           await api.get(`/sheets/${codeSheet.id}/records`, { headers })
         ).json();
-        return records.records[0]?.cells?.[codeStatus.id];
+        const target = (records.records as Array<{ cells?: Record<string, unknown> }>).find(
+          (row) => row.cells?.[codeSerial.id] === 'SN-W3-001',
+        );
+        return target?.cells?.[codeStatus.id];
       },
       { timeout: 30_000 },
     )
     .toBe('claimed');
 
-  await page.getByTestId('automation-refresh').click();
+  await page.getByTestId('automation-runs-open').first().click();
+  await expect(page.getByTestId('automation-runs-panel')).toBeVisible();
   const runRow = page.getByTestId('automation-run-row').first();
   await expect(runRow).toHaveAttribute('data-status', 'success');
   await runRow.click();
-  await expect(page.locator('.run-steps')).toContainText('findRecords');
-  await expect(page.locator('.run-steps')).toContainText('modifyRecords');
-  await expect(page.locator('.run-steps')).toContainText('sendMessage');
+  await expect(page.locator('.run-steps')).toContainText('查找记录');
+  await expect(page.locator('.run-steps')).toContainText('修改记录');
+  await expect(page.locator('.run-steps')).toContainText('发送消息');
+
+  await page.getByTestId('automation-runs-back').click();
 
   // Edit and delete are real CRUD operations.
   await page.getByTestId('automation-edit').first().click();
@@ -216,8 +224,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
       );
     })
     .toBe(true);
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByTestId('automation-delete').first().click();
+  await page.getByTestId('app-dialog-confirm').click();
   await expect
     .poll(async () => {
       const list = await (

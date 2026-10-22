@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { MemberDto } from '../api/types';
+import { confirmDialog } from '../ui/dialog';
 
 const props = defineProps<{ workspaceId: string }>();
 const emit = defineEmits<{
@@ -84,7 +85,11 @@ async function changeRole(
 }
 
 async function remove(member: MemberDto): Promise<void> {
-  if (!window.confirm(`将「${member.name}」移出工作区？`)) return;
+  const ok = await confirmDialog(`将「${member.name}」移出工作区？`, {
+    title: '移除成员',
+    confirmLabel: '移除',
+  });
+  if (!ok) return;
   try {
     await endpoints.removeMember(props.workspaceId, member.userId);
     members.value = members.value.filter(

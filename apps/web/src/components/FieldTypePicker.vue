@@ -6,18 +6,35 @@ import {
   type FieldType,
 } from 'shared';
 
+interface ChoiceDraft {
+  id: string;
+  name: string;
+  color: string;
+}
+
+const COLORS = [
+  { id: 'blue', label: '蓝', bg: '#e8f3ff', color: '#1d6fdc' },
+  { id: 'green', label: '绿', bg: '#e8fff3', color: '#0f9d58' },
+  { id: 'yellow', label: '黄', bg: '#fff7e6', color: '#d46b08' },
+  { id: 'red', label: '红', bg: '#fff1f0', color: '#d4380d' },
+  { id: 'purple', label: '紫', bg: '#f5f0ff', color: '#7b3ff2' },
+  { id: 'gray', label: '灰', bg: '#f2f3f5', color: '#646a73' },
+];
+
 const props = withDefaults(
   defineProps<{
     open: boolean;
     anchor?: { top: number; left: number } | null;
     initialName?: string;
     initialType?: FieldType;
+    initialOptions?: Record<string, unknown> | null;
     mode?: 'create' | 'edit';
   }>(),
   {
     anchor: null,
     initialName: '',
     initialType: 'text',
+    initialOptions: null,
     mode: 'create',
   },
 );
@@ -31,9 +48,13 @@ const emit = defineEmits<{
 
 const name = ref(props.initialName);
 const selected = ref<FieldType>(props.initialType);
+/** create: pick type first; select types then configure. edit: config/type. */
+const phase = ref<'types' | 'config'>('types');
+const typeMenuOpen = ref(false);
+const choices = ref<ChoiceDraft[]>([]);
+const choiceError = ref('');
 const nameInput = ref<HTMLInputElement | null>(null);
 
-/** WeCom menu order: AI first, then two-column grid with separators. */
 const MENU_GROUPS: FieldType[][] = [
   ['ai'],
   [
@@ -53,6 +74,9 @@ const MENU_GROUPS: FieldType[][] = [
 ];
 
 const flatTypes = computed(() => MENU_GROUPS.flat());
+const isChoiceType = computed(
+  () => selected.value === 'select' || selected.value === 'multiSelect',
+);
 
 watch(
   () => props.open,
@@ -60,11 +84,36 @@ watch(
     if (!open) return;
     name.value = props.initialName;
     selected.value = props.initialType;
+    choiceError.value = '';
+    seedChoices(props.initialOptions);
+    if (props.mode === 'edit') {
+      phase.value = 'config';
+      typeMenuOpen.value = !isChoiceType.value;
+    } else {
+      phase.value = 'types';
+      typeMenuOpen.value = true;
+    }
     await nextTick();
     nameInput.value?.focus();
     nameInput.value?.select();
   },
 );
+
+function seedChoices(options: Record<string, unknown> | null | undefined): void {
+  const raw = (options?.choices as ChoiceDraft[] | undefined) ?? [];
+  choices.value = raw.map((choice) => ({
+    id: choice.id,
+    name: choice.name,
+    color: choice.color || 'blue',
+  }));
+  if (choices.value.length === 0) {
+    choices.value = [
+      { id: 'opt1', name: '选项一', color: 'yellow' },
+      { id: 'opt2', name: '选项二', color: 'green' },
+      { id: 'opt3', name: '选项三', color: 'blue' },
+    ];
+  }
+}
 
 function defaultNameFor(type: FieldType): string {
   if (name.value.trim()) return name.value.trim();
@@ -74,63 +123,131 @@ function defaultNameFor(type: FieldType): string {
 function defaultOptions(type: FieldType): Record<string, unknown> | undefined {
   if (type === 'select' || type === 'multiSelect') {
     return {
-      choices: [
-        { id: 'opt1', name: '选项一', color: 'yellow' },
-        { id: 'opt2', name: '选项二', color: 'green' },
-        { id: 'opt3', name: '选项三', color: 'blue' },
-      ],
+      choices: choices.value.map((choice) => ({
+        id: choice.id,
+        name: choice.name.trim(),
+        color: choice.color,
+      })),
     };
   }
-  if (type === 'currency') {
-    return { currency: 'CNY', precision: 2 };
+  if (type === 'currency') return { currency: 'CNY', precision: 2 };
+  if (type === 'formula') return { formula: '=1' };
+  if (type === 'relation') return { relation: { targetSheetId: '' } };
+  if (type === 'lookup') {
+    return {
+      lookup: {
+        relationFieldId: '',
+        targetFieldId: '',
+        aggregate: 'first',
+      },
+    };
   }
-  if (type === 'formula') {
-    return { formula: '1' };
+  if (type === 'autoNumber') return { prefix: '', padding: 4, start: 1 };
+  if (type === 'ai') {
+    return {
+      ai: { prompt: '', sourceFieldIds: [] as string[], provider: 'local' },
+    };
   }
-  if (type === 'autoNumber') {
-    return { prefix: '', padding: 4, start: 1 };
-  }
-  if (type === 'progress') {
-    return { min: 0, max: 100 };
-  }
+  if (type === 'progress') return { min: 0, max: 100 };
+  if (type === 'location') return { location: { mode: 'address' } };
+  if (type === 'barcode') return { barcode: { format: 'code128' } };
   return undefined;
 }
 
-function confirm(type: FieldType = selected.value): void {
+function pickType(type: FieldType): void {
+  selected.value = type;
+  if (type === 'select' || type === 'multiSelect') {
+    if (choices.value.length === 0) seedChoices(null);
+    phase.value = 'config';
+    typeMenuOpen.value = false;
+    return;
+  }
+  // Non-choice types: finish immediately (WeCom-like quick pick).
+  finish(type);
+}
+
+function finish(type: FieldType = selected.value): void {
   const fieldName = defaultNameFor(type);
   if (!fieldName) return;
-  selected.value = type;
+  if (type === 'select' || type === 'multiSelect') {
+    const names = choices.value.map((choice) => choice.name.trim());
+    if (names.some((item) => !item)) {
+      choiceError.value = '选项名称不能为空';
+      return;
+    }
+    if (new Set(names).size !== names.length) {
+      choiceError.value = '选项名称不能重复';
+      return;
+    }
+    if (choices.value.length === 0) {
+      choiceError.value = '至少保留一个选项';
+      return;
+    }
+  }
   const typeChanged = type !== props.initialType;
   emit('confirm', {
     name: fieldName,
     type,
-    // Create always seeds defaults; edit only when the type changes.
     options:
-      props.mode === 'create' || typeChanged
-        ? defaultOptions(type)
-        : undefined,
+      type === 'select' || type === 'multiSelect'
+        ? {
+            ...(props.initialOptions ?? {}),
+            ...defaultOptions(type),
+          }
+        : props.mode === 'create' || typeChanged
+          ? defaultOptions(type)
+          : undefined,
   });
+}
+
+function addChoice(): void {
+  choices.value = [
+    ...choices.value,
+    {
+      id: `opt-${crypto.randomUUID().slice(0, 8)}`,
+      name: `选项${choices.value.length + 1}`,
+      color: COLORS[choices.value.length % COLORS.length].id,
+    },
+  ];
+}
+
+function removeChoice(index: number): void {
+  if (choices.value.length <= 1) return;
+  choices.value = choices.value.filter((_, i) => i !== index);
+}
+
+function colorOf(id?: string) {
+  return COLORS.find((item) => item.id === id) ?? COLORS[0];
 }
 
 function onKeydown(event: KeyboardEvent): void {
   if (!props.open) return;
   if (event.key === 'Escape') {
     event.preventDefault();
+    if (typeMenuOpen.value && phase.value === 'config') {
+      typeMenuOpen.value = false;
+      return;
+    }
     emit('close');
     return;
   }
-  const types = flatTypes.value;
-  const index = types.indexOf(selected.value);
-  if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+  if (phase.value === 'types' || typeMenuOpen.value) {
+    const types = flatTypes.value;
+    const index = types.indexOf(selected.value);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      selected.value =
+        types[Math.min(index + 1, types.length - 1)] ?? selected.value;
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      selected.value = types[Math.max(index - 1, 0)] ?? selected.value;
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      pickType(selected.value);
+    }
+  } else if (event.key === 'Enter' && !(event.target instanceof HTMLInputElement)) {
     event.preventDefault();
-    selected.value =
-      types[Math.min(index + 1, types.length - 1)] ?? selected.value;
-  } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
-    event.preventDefault();
-    selected.value = types[Math.max(index - 1, 0)] ?? selected.value;
-  } else if (event.key === 'Enter') {
-    event.preventDefault();
-    confirm();
+    finish();
   }
 }
 
@@ -142,8 +259,8 @@ const style = computed(() => {
     return { top: '72px', left: '50%', transform: 'translateX(-50%)' };
   }
   return {
-    top: `${Math.min(props.anchor.top, window.innerHeight - 420)}px`,
-    left: `${Math.min(props.anchor.left, window.innerWidth - 340)}px`,
+    top: `${Math.min(props.anchor.top, window.innerHeight - 480)}px`,
+    left: `${Math.min(props.anchor.left, window.innerWidth - 360)}px`,
   };
 });
 
@@ -202,38 +319,112 @@ function iconFor(type: FieldType): string {
           data-testid="field-name-input"
           maxlength="100"
           placeholder="字段名称"
-          @keydown.enter.prevent="confirm()"
+          @keydown.enter.prevent="isChoiceType ? finish() : pickType(selected)"
         />
-        <p class="ftp-hint">选择字段类型</p>
 
-        <div
-          v-for="(group, groupIndex) in MENU_GROUPS"
-          :key="groupIndex"
-          class="ftp-group"
-          :class="{ 'ftp-group-ai': groupIndex === 0 && group[0] === 'ai' }"
-        >
+        <!-- WeCom: type chip opens type menu; select fields configure options here -->
+        <template v-if="phase === 'config'">
           <button
-            v-for="type in group"
-            :key="type"
             type="button"
-            class="ftp-item"
-            :class="{
-              active: selected === type,
-              'ftp-item-ai': type === 'ai',
-            }"
-            :data-testid="`field-type-${type}`"
-            @mouseenter="selected = type"
-            @click="confirm(type)"
+            class="ftp-type-chip"
+            data-testid="field-type-chip"
+            @click="typeMenuOpen = !typeMenuOpen"
           >
-            <span class="ftp-icon" aria-hidden="true">{{ iconFor(type) }}</span>
-            <span>{{ FIELD_TYPE_LABELS[type] }}</span>
+            <span class="ftp-icon">{{ iconFor(selected) }}</span>
+            <span>{{ FIELD_TYPE_LABELS[selected] }}</span>
+            <span class="ftp-caret">{{ typeMenuOpen ? '▴' : '▾' }}</span>
           </button>
-        </div>
 
-        <footer class="ftp-footer">
-          <span>↑↓ 选择</span>
-          <span>↵ 完成</span>
-        </footer>
+          <div v-if="isChoiceType && !typeMenuOpen" class="ftp-choices">
+            <div class="ftp-choices-title">选项</div>
+            <div
+              v-for="(choice, index) in choices"
+              :key="choice.id"
+              class="ftp-choice-row"
+              data-testid="field-option-row"
+            >
+              <span
+                class="ftp-choice-dot"
+                :style="{
+                  background: colorOf(choice.color).bg,
+                  color: colorOf(choice.color).color,
+                }"
+              >
+                ●
+              </span>
+              <input
+                v-model="choice.name"
+                :data-testid="`field-option-name-${index}`"
+                placeholder="选项名"
+              />
+              <select v-model="choice.color" class="ftp-color">
+                <option v-for="color in COLORS" :key="color.id" :value="color.id">
+                  {{ color.label }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="ftp-remove"
+                title="删除"
+                :disabled="choices.length <= 1"
+                @click="removeChoice(index)"
+              >
+                ×
+              </button>
+            </div>
+            <button
+              type="button"
+              class="ftp-add-choice"
+              data-testid="field-option-add"
+              @click="addChoice"
+            >
+              + 添加选项
+            </button>
+            <p v-if="choiceError" class="ftp-error">{{ choiceError }}</p>
+            <footer class="ftp-actions">
+              <button type="button" class="btn" @click="emit('close')">取消</button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                data-testid="field-config-save"
+                @click="finish()"
+              >
+                确定
+              </button>
+            </footer>
+          </div>
+        </template>
+
+        <template v-if="phase === 'types' || typeMenuOpen">
+          <p class="ftp-hint">选择字段类型</p>
+          <div
+            v-for="(group, groupIndex) in MENU_GROUPS"
+            :key="groupIndex"
+            class="ftp-group"
+            :class="{ 'ftp-group-ai': groupIndex === 0 && group[0] === 'ai' }"
+          >
+            <button
+              v-for="type in group"
+              :key="type"
+              type="button"
+              class="ftp-item"
+              :class="{
+                active: selected === type,
+                'ftp-item-ai': type === 'ai',
+              }"
+              :data-testid="`field-type-${type}`"
+              @mouseenter="selected = type"
+              @click="pickType(type)"
+            >
+              <span class="ftp-icon" aria-hidden="true">{{ iconFor(type) }}</span>
+              <span>{{ FIELD_TYPE_LABELS[type] }}</span>
+            </button>
+          </div>
+          <footer class="ftp-footer">
+            <span>↑↓ 选择</span>
+            <span>↵ 完成</span>
+          </footer>
+        </template>
       </div>
     </div>
   </Teleport>
@@ -248,8 +439,8 @@ function iconFor(type: FieldType): string {
 }
 .ftp-popover {
   position: fixed;
-  width: 320px;
-  max-height: min(520px, 80vh);
+  width: 340px;
+  max-height: min(560px, 84vh);
   overflow: auto;
   padding: 12px 12px 8px;
   background: #fff;
@@ -265,6 +456,29 @@ function iconFor(type: FieldType): string {
   border-radius: 6px;
   outline: none;
   font-size: 14px;
+  box-sizing: border-box;
+}
+.ftp-type-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  margin-top: 8px;
+  padding: 0 10px;
+  border: 1px solid #dee0e3;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #1f2329;
+}
+.ftp-type-chip:hover {
+  background: #f7f8fa;
+}
+.ftp-caret {
+  margin-left: auto;
+  color: #8f959e;
 }
 .ftp-hint {
   margin: 10px 2px 6px;
@@ -312,6 +526,97 @@ function iconFor(type: FieldType): string {
   font-size: 12px;
   opacity: 0.85;
   flex: none;
+}
+.ftp-choices {
+  margin-top: 10px;
+}
+.ftp-choices-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #8f959e;
+}
+.ftp-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.ftp-choice-dot {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 9px;
+  flex: none;
+}
+.ftp-choice-row input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d0d3d9;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.ftp-choice-row input:focus {
+  outline: none;
+  border-color: #3370ff;
+}
+.ftp-color {
+  width: 52px;
+  height: 30px;
+  border: 1px solid #d0d3d9;
+  border-radius: 6px;
+  background: #fff;
+}
+.ftp-remove {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #8f959e;
+  cursor: pointer;
+  font-size: 16px;
+}
+.ftp-remove:hover:not(:disabled) {
+  color: #d4380d;
+  background: #fff1f0;
+}
+.ftp-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ftp-add-choice {
+  width: 100%;
+  height: 32px;
+  margin-top: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #1d6fdc;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ftp-add-choice:hover {
+  background: #f0f7ff;
+}
+.ftp-error {
+  margin: 6px 0 0;
+  color: #d92d20;
+  font-size: 12px;
+}
+.ftp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #eef0f3;
 }
 .ftp-footer {
   display: flex;

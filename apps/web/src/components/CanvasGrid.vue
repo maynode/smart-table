@@ -14,7 +14,8 @@ import {
   type GridColumn,
   type GridStats,
 } from '../grid-canvas/engine';
-import type { FieldDto, RecordDto } from '../api/types';
+import { endpoints } from '../api/endpoints';
+import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
 
 const props = withDefaults(
@@ -26,8 +27,13 @@ const props = withDefaults(
     editable?: boolean;
     showAddColumn?: boolean;
     rowHeight?: number;
+    freezeColumnCount?: number;
     rowColors?: Record<string, string>;
+    /** Hierarchy indent depth keyed by record id (父记录字段). */
+    rowDepths?: Record<string, number>;
     personNames?: Record<string, string>;
+    members?: MemberDto[];
+    sheets?: SheetDto[];
     uploadAttachment?: (file: File) => Promise<{
       url: string;
       name: string;
@@ -42,14 +48,25 @@ const props = withDefaults(
     editable: true,
     showAddColumn: true,
     rowHeight: 36,
+    freezeColumnCount: 0,
     rowColors: () => ({}),
+    rowDepths: () => ({}),
     personNames: () => ({}),
+    members: () => [],
+    sheets: () => [],
     uploadAttachment: undefined,
   },
 );
 
 const emit = defineEmits<{
-  commit: [payload: { record: RecordDto; field: FieldDto; value: unknown }];
+  commit: [
+    payload: {
+      record: RecordDto;
+      field: FieldDto;
+      value: unknown;
+      previous?: unknown;
+    },
+  ];
   viewport: [stats: GridStats];
   addColumn: [anchor: { top: number; left: number }];
   headerClick: [
@@ -66,6 +83,8 @@ const pendingUpload = ref<{ record: RecordDto; field: FieldDto } | null>(null);
 const uploading = ref(false);
 const selectedRows = ref<number[]>([]);
 let rowAnchor: number | null = null;
+/** Active cell selection (WeCom: click selects; edit via 2nd click / Enter / type). */
+const selectedCell = ref<{ row: number; col: number } | null>(null);
 const editing = ref<{
   recordId: string;
   row: number;
@@ -74,10 +93,11 @@ const editing = ref<{
   value: string;
   style: Record<string, string>;
 } | null>(null);
-
 let engine: CanvasGridEngine | null = null;
 const resizedWidths = new Map<string, number>();
 let lastViewportEnd = -1;
+/** Same-tab clipboard for raw cell values (system clipboard carries display text / TSV). */
+let appClipboard: { values: unknown[][]; texts: string[][] } | null = null;
 
 const visibleFields = computed(() =>
   props.fields.filter((field) => !field.hidden),
@@ -102,14 +122,14 @@ const editorKind = computed(() => {
   if (type === 'select') return 'select';
   if (type === 'multiSelect') return 'multiSelect';
   if (type === 'person') return 'person';
+  if (type === 'groupChat') return 'groupChat';
+  if (type === 'relation') return 'relation';
+  if (type === 'location') return 'location';
+  if (type === 'barcode') return 'barcode';
   if (type === 'checkbox') return 'checkbox';
   if (type === 'date') return 'date';
-  if (
-    type === 'number' ||
-    type === 'currency' ||
-    type === 'percent' ||
-    type === 'progress'
-  ) {
+  if (type === 'progress') return 'progress';
+  if (type === 'number' || type === 'currency' || type === 'percent') {
     return 'number';
   }
   if (type === 'email') return 'email';
@@ -117,6 +137,40 @@ const editorKind = computed(() => {
   if (type === 'url') return 'url';
   return 'text';
 });
+
+const relationChoices = ref<Array<{ id: string; label: string }>>([]);
+const relationLoading = ref(false);
+
+async function loadRelationChoices(field: FieldDto): Promise<void> {
+  const targetSheetId = (
+    field.options as { relation?: { targetSheetId?: string } } | null
+  )?.relation?.targetSheetId;
+  if (!targetSheetId) {
+    relationChoices.value = [];
+    return;
+  }
+  relationLoading.value = true;
+  try {
+    const sheet = await endpoints.getSheet(targetSheetId);
+    const page = await endpoints.listRecords(targetSheetId, null, 100);
+    const titleField =
+      sheet.fields?.find((item) => item.type === 'text') ??
+      sheet.fields?.[0] ??
+      null;
+    relationChoices.value = page.records.map((record) => {
+      const raw = titleField ? record.cells[titleField.id] : null;
+      const label =
+        raw === null || raw === undefined || raw === ''
+          ? record.id.slice(0, 8)
+          : String(raw);
+      return { id: record.id, label };
+    });
+  } catch {
+    relationChoices.value = [];
+  } finally {
+    relationLoading.value = false;
+  }
+}
 
 const selectChoices = computed(
   () => editing.value?.field.options?.choices ?? [],
@@ -272,6 +326,34 @@ function formatCell(field: FieldDto, value: unknown): CellRender | null {
     if (Number.isFinite(num)) return { text: `¥${num}` };
   }
 
+  if (field.type === 'relation') {
+    const ids = Array.isArray(value) ? value.map(String) : [String(value)];
+    return { text: ids.filter(Boolean).join(', ') };
+  }
+
+  if (field.type === 'location') {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const loc = value as { address?: string; lat?: number; lng?: number };
+      if (loc.address) return { text: loc.address };
+      if (loc.lat != null && loc.lng != null) {
+        return { text: `${loc.lat}, ${loc.lng}` };
+      }
+    }
+    return { text: textOf(value) };
+  }
+
+  if (field.type === 'barcode') {
+    return { text: textOf(value) };
+  }
+
+  if (field.type === 'groupChat') {
+    const ids = Array.isArray(value) ? value.map(String) : [String(value ?? '')];
+    const names = ids
+      .filter(Boolean)
+      .map((id) => props.personNames[id] ?? id);
+    return { text: names.join(', ') };
+  }
+
   return { text: textOf(value) };
 }
 
@@ -281,7 +363,19 @@ function renderCell(row: number, col: number): CellRender | null {
   if (!field) return null;
   const record = props.records[row];
   if (!record) return null;
-  return formatCell(field, record.cells[field.id]);
+  const cell = formatCell(field, record.cells[field.id]);
+  if (!cell) return null;
+  // Indent first visible column for hierarchy (父记录字段).
+  if (col === 0) {
+    const depth = props.rowDepths[record.id] ?? 0;
+    if (depth > 0) {
+      return {
+        ...cell,
+        text: `${'　'.repeat(depth)}↳ ${cell.text ?? ''}`,
+      };
+    }
+  }
+  return cell;
 }
 
 function beginEdit(row: number, col: number): void {
@@ -299,7 +393,8 @@ function beginEdit(row: number, col: number): void {
     field.type === 'lastEditedBy' ||
     field.type === 'createdAt' ||
     field.type === 'lastEditedAt' ||
-    field.type === 'autoNumber'
+    field.type === 'autoNumber' ||
+    field.type === 'ai'
   ) {
     return;
   }
@@ -334,6 +429,83 @@ function beginEdit(row: number, col: number): void {
     return;
   }
 
+  if (field.type === 'groupChat') {
+    const current = record.cells[field.id];
+    const value = Array.isArray(current)
+      ? JSON.stringify(current)
+      : current
+        ? JSON.stringify([String(current)])
+        : '[]';
+    engine.ensureCellVisible(row, col);
+    const groupRect = engine.cellRect(row, col);
+    editing.value = {
+      recordId: record.id,
+      row,
+      col,
+      field,
+      value,
+      style: {
+        left: `${groupRect.x}px`,
+        top: `${groupRect.y}px`,
+        width: `${Math.max(groupRect.width, 180)}px`,
+        height: `${Math.max(groupRect.height, 72)}px`,
+      },
+    };
+    return;
+  }
+
+  if (field.type === 'relation') {
+    void loadRelationChoices(field);
+    const current = record.cells[field.id];
+    const value = Array.isArray(current)
+      ? String(current[0] ?? '')
+      : String(current ?? '');
+    engine.ensureCellVisible(row, col);
+    const relRect = engine.cellRect(row, col);
+    editing.value = {
+      recordId: record.id,
+      row,
+      col,
+      field,
+      value,
+      style: {
+        left: `${relRect.x}px`,
+        top: `${relRect.y}px`,
+        width: `${Math.max(relRect.width, 180)}px`,
+        height: `${relRect.height}px`,
+      },
+    };
+    nextTick(() => editorInput.value?.focus());
+    return;
+  }
+
+  if (field.type === 'location') {
+    const current = record.cells[field.id];
+    let value = '';
+    if (current && typeof current === 'object' && !Array.isArray(current)) {
+      value = String((current as { address?: string }).address ?? '');
+    } else {
+      value = textOf(current);
+    }
+    engine.ensureCellVisible(row, col);
+    const locRect = engine.cellRect(row, col);
+    editing.value = {
+      recordId: record.id,
+      row,
+      col,
+      field,
+      value,
+      style: {
+        left: `${locRect.x}px`,
+        top: `${locRect.y}px`,
+        width: `${Math.max(locRect.width, 200)}px`,
+        height: `${locRect.height}px`,
+      },
+    };
+    nextTick(() => editorInput.value?.focus());
+    return;
+  }
+
   engine.ensureCellVisible(row, col);
   const rect = engine.cellRect(row, col);
   let value = textOf(record.cells[field.id]);
@@ -345,6 +517,10 @@ function beginEdit(row: number, col: number): void {
   }
   if (field.type === 'multiSelect' && Array.isArray(record.cells[field.id])) {
     value = JSON.stringify(record.cells[field.id]);
+  }
+  if (field.type === 'progress') {
+    const num = Number(record.cells[field.id]);
+    value = Number.isFinite(num) ? String(num) : '0';
   }
 
   editing.value = {
@@ -374,51 +550,425 @@ function toggleCheckbox(row: number, col: number): void {
   const record = props.records[row];
   const field = visibleFields.value[col];
   if (!record || !field || field.type !== 'checkbox') return;
-  const current = record.cells[field.id];
-  const next = !(current === true || current === 'true');
+  const previous = record.cells[field.id];
+  const next = !(previous === true || previous === 'true');
   emit('commit', {
     record,
     field,
     value: next ? 'true' : 'false',
+    previous,
   });
 }
 
+/** WeCom: first click selects; second click on same cell enters edit. */
 function onCellClick(selection: { row: number; col: number }): void {
+  // Keep keyboard focus on the grid wrap for Enter / arrows / typing.
+  const wrap = host.value?.parentElement;
+  wrap?.focus({ preventScroll: true });
+
   const field = visibleFields.value[selection.col];
   if (field?.type === 'checkbox') {
     toggleCheckbox(selection.row, selection.col);
+    return;
+  }
+  const prev = selectedCell.value;
+  selectedCell.value = { row: selection.row, col: selection.col };
+  if (
+    prev &&
+    prev.row === selection.row &&
+    prev.col === selection.col &&
+    !editing.value
+  ) {
+    beginEdit(selection.row, selection.col);
   }
 }
 
-function commitEdit(save: boolean): void {
+function moveSelection(dRow: number, dCol: number): void {
+  if (!engine || editing.value) return;
+  const current = selectedCell.value ?? engine.getSelection();
+  if (!current) return;
+  const maxRow = (props.rowCount ?? props.records.length) - 1;
+  const maxCol = visibleFields.value.length - 1;
+  if (maxRow < 0 || maxCol < 0) return;
+  const next = {
+    row: Math.min(maxRow, Math.max(0, current.row + dRow)),
+    col: Math.min(maxCol, Math.max(0, current.col + dCol)),
+  };
+  selectedCell.value = next;
+  engine.setSelection(next);
+  engine.ensureCellVisible(next.row, next.col);
+}
+
+function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): void {
   const current = editing.value;
   editing.value = null;
-  if (!save || !current) return;
+  if (!save || !current) {
+    if (navigate) {
+      const dCol = navigate === 'tab' ? 1 : navigate === 'shift-tab' ? -1 : 0;
+      const dRow = navigate === 'enter' ? 1 : 0;
+      moveSelection(dRow, dCol);
+      void nextTick(() => {
+        const sel = selectedCell.value;
+        if (sel) beginEdit(sel.row, sel.col);
+      });
+    }
+    return;
+  }
 
   const record = props.records.find((item) => item.id === current.recordId);
   if (!record) return;
 
-  let nextValue = current.value;
+  let nextValue: unknown = current.value;
   if (current.field.type === 'checkbox') {
     nextValue =
       current.value === 'true' || current.value === '1' ? 'true' : 'false';
+  } else if (
+    current.field.type === 'multiSelect' ||
+    current.field.type === 'groupChat'
+  ) {
+    try {
+      nextValue = JSON.parse(current.value) as string[];
+    } catch {
+      nextValue = [];
+    }
+  } else if (current.field.type === 'location') {
+    const address = current.value.trim();
+    nextValue = address ? { address } : null;
+  } else if (current.field.type === 'progress') {
+    const num = Number(current.value);
+    nextValue = Number.isFinite(num) ? num : 0;
+  } else if (current.field.type === 'relation') {
+    nextValue = current.value.trim() || null;
   }
 
-  const previous = textOf(record.cells[current.field.id]);
+  const previous = record.cells[current.field.id];
+  const previousText = textOf(previous);
   if (current.field.type === 'checkbox') {
     const prevBool =
-      record.cells[current.field.id] === true ||
-      record.cells[current.field.id] === 'true'
-        ? 'true'
-        : 'false';
-    if (nextValue === prevBool) return;
-  } else if (nextValue === previous) {
+      previous === true || previous === 'true' ? 'true' : 'false';
+    if (nextValue === prevBool) {
+      /* unchanged */
+    } else {
+      emit('commit', {
+        record,
+        field: current.field,
+        value: nextValue,
+        previous,
+      });
+    }
+  } else if (
+    current.field.type === 'location' ||
+    current.field.type === 'groupChat' ||
+    current.field.type === 'multiSelect'
+  ) {
+    if (JSON.stringify(previous ?? null) !== JSON.stringify(nextValue ?? null)) {
+      emit('commit', {
+        record,
+        field: current.field,
+        value: nextValue,
+        previous,
+      });
+    }
+  } else if (String(nextValue ?? '') !== previousText) {
+    emit('commit', {
+      record,
+      field: current.field,
+      value: nextValue,
+      previous,
+    });
+  }
+
+  if (navigate) {
+    const dCol = navigate === 'tab' ? 1 : navigate === 'shift-tab' ? -1 : 0;
+    const dRow = navigate === 'enter' ? 1 : 0;
+    void nextTick(() => {
+      moveSelection(dRow, dCol);
+      const sel = selectedCell.value;
+      if (sel) beginEdit(sel.row, sel.col);
+    });
+  }
+}
+
+function isReadonlyField(field: FieldDto): boolean {
+  return (
+    field.type === 'formula' ||
+    field.type === 'lookup' ||
+    field.type === 'autoNumber' ||
+    field.type === 'ai' ||
+    field.type === 'createdBy' ||
+    field.type === 'lastEditedBy' ||
+    field.type === 'createdAt' ||
+    field.type === 'lastEditedAt' ||
+    field.type === 'image' ||
+    field.type === 'file'
+  );
+}
+
+function displayTextOf(field: FieldDto, value: unknown): string {
+  return formatCell(field, value)?.text ?? textOf(value);
+}
+
+function coercePasteValue(field: FieldDto, text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  switch (field.type) {
+    case 'number':
+    case 'currency':
+    case 'percent':
+    case 'progress':
+    case 'rating': {
+      const num = Number(trimmed.replace(/[%¥￥,\s]/g, ''));
+      return Number.isFinite(num) ? num : trimmed;
+    }
+    case 'checkbox':
+      return /^(1|true|yes|y|是|✓|☑|选中)$/i.test(trimmed) ? 'true' : 'false';
+    case 'select': {
+      const choice = field.options?.choices?.find(
+        (item) => item.id === trimmed || item.name === trimmed,
+      );
+      return choice?.id ?? trimmed;
+    }
+    case 'multiSelect': {
+      const parts = trimmed
+        .split(/[,，;；、]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return parts.map((part) => {
+        const choice = field.options?.choices?.find(
+          (item) => item.id === part || item.name === part,
+        );
+        return choice?.id ?? part;
+      });
+    }
+    case 'person': {
+      const byName = Object.entries(props.personNames).find(
+        ([, label]) => label === trimmed,
+      );
+      return byName?.[0] ?? trimmed;
+    }
+    default:
+      return trimmed;
+  }
+}
+
+function parseTsv(text: string): string[][] {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines.map((line) => line.split('\t'));
+}
+
+function copySelection(): void {
+  const sel = selectedCell.value ?? engine?.getSelection() ?? null;
+  if (!sel) return;
+  const record = props.records[sel.row];
+  const field = visibleFields.value[sel.col];
+  if (!record || !field) return;
+  const raw = record.cells[field.id] ?? null;
+  const text = displayTextOf(field, raw);
+  appClipboard = { values: [[raw]], texts: [[text]] };
+  void navigator.clipboard?.writeText(text).catch(() => undefined);
+}
+
+function applyPasteGrid(grid: string[][], rawValues?: unknown[][]): void {
+  const sel = selectedCell.value ?? engine?.getSelection() ?? null;
+  if (!sel || !props.editable || grid.length === 0) return;
+  const maxRows = props.records.length;
+  const maxCols = visibleFields.value.length;
+  for (let r = 0; r < grid.length; r += 1) {
+    const rowIndex = sel.row + r;
+    if (rowIndex >= maxRows) break;
+    const record = props.records[rowIndex];
+    if (!record) continue;
+    const rowTexts = grid[r] ?? [];
+    const rowRaws = rawValues?.[r];
+    for (let c = 0; c < rowTexts.length; c += 1) {
+      const colIndex = sel.col + c;
+      if (colIndex >= maxCols) break;
+      const field = visibleFields.value[colIndex];
+      if (!field || isReadonlyField(field)) continue;
+      const text = rowTexts[c] ?? '';
+      const nextValue =
+        rowRaws && c < (rowRaws.length ?? 0)
+          ? rowRaws[c]
+          : coercePasteValue(field, text);
+      const previous = record.cells[field.id];
+      if (JSON.stringify(previous ?? null) === JSON.stringify(nextValue ?? null)) {
+        continue;
+      }
+      emit('commit', { record, field, value: nextValue, previous });
+    }
+  }
+}
+
+async function pasteSelection(event?: ClipboardEvent): Promise<void> {
+  if (!props.editable) return;
+  let text = event?.clipboardData?.getData('text/plain') ?? '';
+  if (!text && appClipboard) {
+    applyPasteGrid(appClipboard.texts, appClipboard.values);
+    return;
+  }
+  if (!text) {
+    try {
+      text = (await navigator.clipboard.readText()) ?? '';
+    } catch {
+      text = '';
+    }
+  }
+  if (!text) {
+    if (appClipboard) applyPasteGrid(appClipboard.texts, appClipboard.values);
+    return;
+  }
+  // Prefer same-app raw values when clipboard text still matches last copy.
+  if (
+    appClipboard &&
+    appClipboard.texts.map((row) => row.join('\t')).join('\n') ===
+      text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n$/, '')
+  ) {
+    applyPasteGrid(appClipboard.texts, appClipboard.values);
+    return;
+  }
+  applyPasteGrid(parseTsv(text));
+}
+
+/** Ctrl+D：用上一行同列值向下填充（企微/表格常见快捷键）。 */
+function fillDownFromAbove(): void {
+  const sel = selectedCell.value ?? engine?.getSelection() ?? null;
+  if (!sel || sel.row <= 0 || !props.editable) return;
+  fillColumnRange(sel.col, sel.row - 1, sel.row);
+}
+
+/** Fill-handle / Ctrl+D：以 fromRow 的值覆盖 [fromRow+dir … toRow]。 */
+function fillColumnRange(col: number, fromRow: number, toRow: number): void {
+  if (!props.editable) return;
+  const field = visibleFields.value[col];
+  const source = props.records[fromRow];
+  if (!field || !source || isReadonlyField(field)) return;
+  const nextValue = source.cells[field.id] ?? null;
+  const start = Math.min(fromRow, toRow);
+  const end = Math.max(fromRow, toRow);
+  for (let row = start; row <= end; row += 1) {
+    if (row === fromRow) continue;
+    const record = props.records[row];
+    if (!record) continue;
+    const previous = record.cells[field.id];
+    if (JSON.stringify(previous ?? null) === JSON.stringify(nextValue ?? null)) {
+      continue;
+    }
+    emit('commit', { record, field, value: nextValue, previous });
+  }
+}
+
+function onHostPaste(event: ClipboardEvent): void {
+  if (!props.editable || editing.value) return;
+  const target = event.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  void pasteSelection(event);
+}
+
+function onHostKeydown(event: KeyboardEvent): void {
+  if (!props.editable || !engine) return;
+  if (editing.value) return;
+  const target = event.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
+      target.isContentEditable)
+  ) {
     return;
   }
 
-  emit('commit', { record, field: current.field, value: nextValue });
-}
+  const sel = selectedCell.value ?? engine.getSelection();
+  if (!sel) return;
 
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod && event.key.toLowerCase() === 'c') {
+    event.preventDefault();
+    copySelection();
+    return;
+  }
+  if (mod && event.key.toLowerCase() === 'v') {
+    event.preventDefault();
+    void pasteSelection();
+    return;
+  }
+  if (mod && event.key.toLowerCase() === 'd') {
+    event.preventDefault();
+    fillDownFromAbove();
+    return;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    beginEdit(sel.row, sel.col);
+    return;
+  }
+  if (event.key === 'F2') {
+    event.preventDefault();
+    beginEdit(sel.row, sel.col);
+    return;
+  }
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    moveSelection(0, event.shiftKey ? -1 : 1);
+    return;
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveSelection(-1, 0);
+    return;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveSelection(1, 0);
+    return;
+  }
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    moveSelection(0, -1);
+    return;
+  }
+  if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    moveSelection(0, 1);
+    return;
+  }
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    event.preventDefault();
+    const record = props.records[sel.row];
+    const field = visibleFields.value[sel.col];
+    if (!record || !field || isReadonlyField(field)) return;
+    const previous = record.cells[field.id];
+    emit('commit', { record, field, value: null, previous });
+    return;
+  }
+  // Start typing → open editor with first character (WeCom overwrite feel).
+  if (
+    event.key.length === 1 &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    event.preventDefault();
+    beginEdit(sel.row, sel.col);
+    void nextTick(() => {
+      if (editing.value && editorKind.value === 'text') {
+        editing.value = { ...editing.value, value: event.key };
+      }
+    });
+  }
+}
 async function onUploadFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -429,7 +979,12 @@ async function onUploadFile(event: Event): Promise<void> {
   uploading.value = true;
   try {
     const uploaded = await props.uploadAttachment(file);
-    emit('commit', { record: target.record, field: target.field, value: uploaded });
+    emit('commit', {
+      record: target.record,
+      field: target.field,
+      value: uploaded,
+      previous: target.record.cells[target.field.id],
+    });
   } finally {
     uploading.value = false;
   }
@@ -491,13 +1046,20 @@ function createEngine(): void {
     columns: columns.value,
     rowCount: props.rowCount ?? props.records.length,
     rowHeight: props.rowHeight,
+    freezeColumnCount: props.freezeColumnCount,
     getCell: renderCell,
     getRowColor: (row) => {
       const record = props.records[row];
       return record ? (props.rowColors[record.id] ?? null) : null;
     },
     onCellClick: onCellClick,
-    onCellDoubleClick: (selection) => beginEdit(selection.row, selection.col),
+    onSelectionChange: (selection) => {
+      selectedCell.value = selection;
+    },
+    onCellDoubleClick: (selection) => {
+      selectedCell.value = selection;
+      beginEdit(selection.row, selection.col);
+    },
     onColumnResize: (columnIndex, width) => {
       const field = visibleFields.value[columnIndex];
       if (!field) return;
@@ -509,6 +1071,9 @@ function createEngine(): void {
     onHeaderClick: (columnIndex, anchor) => {
       const field = visibleFields.value[columnIndex];
       if (field) emit('headerClick', { field, anchor });
+    },
+    onFillExtend: ({ col, fromRow, toRow }) => {
+      fillColumnRange(col, fromRow, toRow);
     },
     onViewportChange: handleViewport,
   });
@@ -538,7 +1103,20 @@ watch(
 );
 
 watch(
+  () => props.freezeColumnCount,
+  (count) => {
+    engine?.setFreezeColumnCount(count ?? 0);
+  },
+);
+
+watch(
   () => props.rowColors,
+  () => engine?.invalidate(),
+  { deep: true },
+);
+
+watch(
+  () => props.rowDepths,
   () => engine?.invalidate(),
   { deep: true },
 );
@@ -551,11 +1129,18 @@ onBeforeUnmount(() => {
 defineExpose({
   getEngine: () => engine,
   clearRowSelection,
+  getSelection: () => selectedCell.value,
 });
 </script>
 
 <template>
-  <div class="canvas-grid-wrap">
+  <div
+    class="canvas-grid-wrap"
+    tabindex="0"
+    data-testid="canvas-grid-wrap"
+    @keydown="onHostKeydown"
+    @paste="onHostPaste"
+  >
     <div ref="host" class="canvas-grid-host" data-testid="canvas-grid"></div>
     <input
       ref="uploadInput"
@@ -591,6 +1176,50 @@ defineExpose({
         {{ memberName }}
       </option>
     </select>
+
+    <select
+      v-else-if="editing && editorKind === 'relation'"
+      ref="editorInput"
+      v-model="editing.value"
+      class="cell-editor"
+      :style="editing.style"
+      data-testid="cell-editor-relation"
+      @change="commitEdit(true)"
+      @blur="commitEdit(true)"
+      @keydown.esc.prevent="commitEdit(false)"
+    >
+      <option value="">{{ relationLoading ? '加载中…' : '选择关联记录' }}</option>
+      <option
+        v-for="choice in relationChoices"
+        :key="choice.id"
+        :value="choice.id"
+      >
+        {{ choice.label }}
+      </option>
+    </select>
+
+    <div
+      v-else-if="editing && editorKind === 'groupChat'"
+      class="cell-editor multi-editor"
+      :style="editing.style"
+      data-testid="cell-editor-group"
+    >
+      <label
+        v-for="member in members"
+        :key="member.userId"
+        class="multi-option"
+      >
+        <input
+          type="checkbox"
+          :checked="multiSelected.includes(member.userId)"
+          @change="toggleMultiChoice(member.userId)"
+        />
+        {{ member.name }}
+      </label>
+      <button class="btn btn-primary multi-done" type="button" @click="commitEdit(true)">
+        完成
+      </button>
+    </div>
 
     <select
       v-else-if="editing && editorKind === 'select'"
@@ -651,6 +1280,25 @@ defineExpose({
       <option value="false">未勾选</option>
     </select>
 
+    <div
+      v-else-if="editing && editorKind === 'progress'"
+      class="cell-editor progress-editor"
+      :style="editing.style"
+      data-testid="cell-editor-progress"
+    >
+      <input
+        ref="editorInput"
+        v-model="editing.value"
+        type="range"
+        min="0"
+        max="100"
+        @keydown.enter.prevent="commitEdit(true)"
+        @keydown.esc.prevent="commitEdit(false)"
+      />
+      <span>{{ editing.value }}%</span>
+      <button type="button" class="btn small" @click="commitEdit(true)">确定</button>
+    </div>
+
     <input
       v-else-if="editing"
       ref="editorInput"
@@ -670,8 +1318,16 @@ defineExpose({
                   ? 'url'
                   : 'text'
       "
+      :placeholder="
+        editorKind === 'location'
+          ? '输入地址'
+          : editorKind === 'barcode'
+            ? '扫描或输入条码'
+            : undefined
+      "
       data-testid="cell-editor"
-      @keydown.enter.prevent="commitEdit(true)"
+      @keydown.enter.prevent="commitEdit(true, 'enter')"
+      @keydown.tab.prevent="commitEdit(true, $event.shiftKey ? 'shift-tab' : 'tab')"
       @keydown.esc.prevent="commitEdit(false)"
       @blur="commitEdit(true)"
     />
@@ -679,6 +1335,13 @@ defineExpose({
 </template>
 
 <style scoped>
+.canvas-grid-wrap {
+  outline: none;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
 .hidden-upload {
   display: none;
 }
@@ -707,6 +1370,19 @@ defineExpose({
   align-items: center;
   gap: 6px;
   font-size: 13px;
+}
+.progress-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px !important;
+  height: auto !important;
+  min-height: 36px !important;
+  background: #fff;
+}
+.progress-editor input[type='range'] {
+  flex: 1;
+  min-width: 0;
 }
 .multi-done {
   align-self: flex-end;

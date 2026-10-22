@@ -17,3 +17,7 @@ test-results/
 .perf-env.json
 artifacts/perf/
 .data/
+
+# 企微抓包 / CDN 反编译材料（可能含会话与大体量第三方 JS）
+materials/**/*.har
+materials/wecom-js/

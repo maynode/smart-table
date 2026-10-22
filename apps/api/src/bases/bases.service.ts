@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharingService } from '../sharing/sharing.service';
+import { seedBlankSheetStructure } from '../sheets/blank-sheet';
 
 @Injectable()
 export class BasesService {
@@ -13,8 +14,15 @@ export class BasesService {
 
   async create(workspaceId: string, userId: string, name: string) {
     await this.workspacesService.requireMember(workspaceId, userId, 'editor');
-    return this.prisma.base.create({
-      data: { workspaceId, name: name.trim() },
+    return this.prisma.$transaction(async (tx) => {
+      const base = await tx.base.create({
+        data: { workspaceId, name: name.trim() },
+      });
+      const sheet = await tx.sheet.create({
+        data: { baseId: base.id, name: '表格' },
+      });
+      await seedBlankSheetStructure(tx, sheet.id, userId);
+      return base;
     });
   }
 

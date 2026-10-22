@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import CanvasGrid from './CanvasGrid.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FieldOptionsEditor from './FieldOptionsEditor.vue';
 import { toast } from '../ui/toast';
-import type { FieldDto, MemberDto, RecordDto } from '../api/types';
+import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import type { GridStats } from '../grid-canvas/engine';
 import type {
   ColorRule,
@@ -18,6 +18,13 @@ import type {
 } from 'shared';
 import { evaluateFormulaRows, VALUELESS_FILTER_OPERATORS } from 'shared';
 import { fieldTypeIcon } from '../ui/field-icons';
+import {
+  canRedo,
+  canUndo,
+  getUndoStack,
+  subscribeEditHistory,
+  type EditHistoryEntry,
+} from '../ui/edit-history';
 
 const props = defineProps<{
   sheetId: string;
@@ -30,6 +37,8 @@ const props = defineProps<{
   rowHeight?: number;
   groups?: Array<{ fieldId: string; key: string; label: string; count: number }>;
   members?: MemberDto[];
+  /** Other sheets in the same base (relation target picker). */
+  sheets?: SheetDto[];
   uploadAttachment?: (file: File) => Promise<{
     url: string;
     name: string;
@@ -41,7 +50,17 @@ const props = defineProps<{
 const emit = defineEmits<{
   addRow: [];
   loadMore: [];
-  commit: [payload: { record: RecordDto; field: FieldDto; value: unknown }];
+  refresh: [];
+  undo: [];
+  redo: [];
+  commit: [
+    payload: {
+      record: RecordDto;
+      field: FieldDto;
+      value: unknown;
+      previous?: unknown;
+    },
+  ];
   toggleField: [payload: { field: FieldDto; hidden: boolean }];
   query: [query: ViewQuery];
   queryChange: [query: ViewQuery];
@@ -68,11 +87,33 @@ const fieldPickerAnchor = ref<{ top: number; left: number } | null>(null);
 const editingField = ref<FieldDto | null>(null);
 const addFieldBtn = ref<HTMLButtonElement | null>(null);
 const activePanel = ref<
-  'filter' | 'sort' | 'group' | 'rowHeight' | 'color' | null
+  'filter' | 'sort' | 'group' | 'rowHeight' | 'freeze' | 'color' | null
 >(null);
 const optionsField = ref<FieldDto | null>(null);
 const deletingField = ref<FieldDto | null>(null);
 const selectedRecordIds = ref<string[]>([]);
+const searchOpen = ref(false);
+const searchQuery = ref('');
+const historyOpen = ref(false);
+const fieldMenuId = ref<string | null>(null);
+const undoAvailable = ref(false);
+const redoAvailable = ref(false);
+const historyEntries = ref<EditHistoryEntry[]>([]);
+
+function syncHistoryState(): void {
+  undoAvailable.value = canUndo();
+  redoAvailable.value = canRedo();
+  historyEntries.value = [...getUndoStack()].reverse().slice(0, 40);
+}
+
+let unsubscribeHistory: (() => void) | null = null;
+onMounted(() => {
+  syncHistoryState();
+  unsubscribeHistory = subscribeEditHistory(syncHistoryState);
+});
+onBeforeUnmount(() => {
+  unsubscribeHistory?.();
+});
 
 const filterConjunction = ref<'and' | 'or'>('and');
 const filters = ref<FilterCondition[]>([
@@ -92,6 +133,7 @@ const colorRules = ref<ColorRule[]>([
   },
 ]);
 const rowHeightChoice = ref<'short' | 'medium' | 'tall'>('medium');
+const freezeColumnCount = ref(0);
 const colorField = ref('');
 const colorOperator = ref<FilterOperator>('equals');
 const colorValue = ref('');
@@ -139,7 +181,7 @@ const groupLabels = computed(() => {
   }));
 });
 
-const displayRecords = computed<RecordDto[]>(() => {
+const formulaRecords = computed<RecordDto[]>(() => {
   if (!props.fields.some((field) => field.type === 'formula')) {
     return props.records;
   }
@@ -157,6 +199,113 @@ const displayRecords = computed<RecordDto[]>(() => {
     cells: { ...record.cells, ...(values[index] ?? {}) },
   }));
 });
+
+const parentField = computed(() =>
+  props.fields.find(
+    (field) =>
+      field.type === 'relation' &&
+      Boolean((field.options as { asParentField?: boolean } | null)?.asParentField),
+  ) ?? null,
+);
+
+const parentFieldId = computed(() => parentField.value?.id ?? '');
+
+const relationFields = computed(() =>
+  props.fields.filter((field) => field.type === 'relation'),
+);
+
+/** Flatten records into parent→child order when 父记录字段 is set. */
+function hierarchyOrder(records: RecordDto[], fieldId: string): {
+  records: RecordDto[];
+  depths: Record<string, number>;
+} {
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const children = new Map<string, string[]>();
+  const roots: string[] = [];
+  const depths: Record<string, number> = {};
+
+  for (const record of records) {
+    const raw = record.cells[fieldId];
+    const parentId = Array.isArray(raw) ? String(raw[0] ?? '') : String(raw ?? '');
+    if (parentId && byId.has(parentId) && parentId !== record.id) {
+      const list = children.get(parentId) ?? [];
+      list.push(record.id);
+      children.set(parentId, list);
+    } else {
+      roots.push(record.id);
+    }
+  }
+
+  const ordered: RecordDto[] = [];
+  const visit = (id: string, depth: number) => {
+    const record = byId.get(id);
+    if (!record || depths[id] !== undefined) return;
+    depths[id] = depth;
+    ordered.push(record);
+    for (const childId of children.get(id) ?? []) visit(childId, depth + 1);
+  };
+  for (const id of roots) visit(id, 0);
+  for (const record of records) {
+    if (depths[record.id] === undefined) visit(record.id, 0);
+  }
+  return { records: ordered, depths };
+}
+
+const hierarchy = computed(() => {
+  if (!parentFieldId.value) {
+    return { records: formulaRecords.value, depths: {} as Record<string, number> };
+  }
+  return hierarchyOrder(formulaRecords.value, parentFieldId.value);
+});
+
+const displayRecords = computed<RecordDto[]>(() => {
+  const base = hierarchy.value.records;
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return base;
+  return base.filter((record) =>
+    Object.values(record.cells).some((value) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === 'string') return value.toLowerCase().includes(q);
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).toLowerCase().includes(q);
+      }
+      try {
+        return JSON.stringify(value).toLowerCase().includes(q);
+      } catch {
+        return false;
+      }
+    }),
+  );
+});
+
+const rowDepths = computed(() => hierarchy.value.depths);
+
+function setParentField(fieldId: string): void {
+  const previous = parentField.value;
+  if (previous && previous.id !== fieldId) {
+    emit('updateField', {
+      field: previous,
+      name: previous.name,
+      type: previous.type as FieldType,
+      options: {
+        ...(previous.options ?? {}),
+        asParentField: false,
+      },
+    });
+  }
+  if (!fieldId) return;
+  const next = props.fields.find((field) => field.id === fieldId);
+  if (!next) return;
+  emit('updateField', {
+    field: next,
+    name: next.name,
+    type: next.type as FieldType,
+    options: {
+      ...(next.options ?? {}),
+      asParentField: true,
+    },
+  });
+}
 
 const activeFilterCount = computed(
   () => filters.value.filter((row) => row.fieldId).length,
@@ -176,6 +325,9 @@ const activeConditionLabel = computed(() => {
   if (activeGroupCount.value) parts.push(`分组 ${activeGroupCount.value}`);
   if (activeSortCount.value) parts.push(`排序 ${activeSortCount.value}`);
   if (activeColorCount.value) parts.push(`填色 ${activeColorCount.value}`);
+  if (freezeColumnCount.value > 0) {
+    parts.push(`冻结 ${freezeColumnCount.value}`);
+  }
   return parts.join(' · ');
 });
 
@@ -226,6 +378,9 @@ function buildQuery(): ViewQuery {
   }
   if (rowHeightChoice.value !== 'medium') {
     query.rowHeight = rowHeightChoice.value as RowHeight;
+  }
+  if (freezeColumnCount.value > 0) {
+    query.freezeColumnCount = freezeColumnCount.value;
   }
   return query;
 }
@@ -316,6 +471,11 @@ function setRowHeight(height: 'short' | 'medium' | 'tall'): void {
   emitQuery();
 }
 
+function setFreezeColumnCount(count: number): void {
+  freezeColumnCount.value = Math.max(0, Math.min(3, Math.floor(count)));
+  emitQuery();
+}
+
 function clearView(): void {
   filterConjunction.value = 'and';
   filters.value = [{ fieldId: '', operator: 'equals', value: '' }];
@@ -331,6 +491,7 @@ function clearView(): void {
     },
   ];
   rowHeightChoice.value = 'medium';
+  freezeColumnCount.value = 0;
   emitQuery();
 }
 
@@ -366,6 +527,10 @@ function applySavedQuery(query: ViewQuery): void {
   ) {
     rowHeightChoice.value = cloned.rowHeight;
   }
+  freezeColumnCount.value = Math.max(
+    0,
+    Math.min(3, Number(cloned.freezeColumnCount) || 0),
+  );
   emitQuery();
 }
 
@@ -502,7 +667,16 @@ function cancelSelection(): void {
   gridRef.value?.clearRowSelection();
 }
 
-defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.value?.clearRowSelection() });
+function openFieldOptions(field: FieldDto): void {
+  optionsField.value = field;
+}
+
+defineExpose({
+  applySavedQuery,
+  currentQuery,
+  openFieldOptions,
+  clearRowSelection: () => gridRef.value?.clearRowSelection(),
+});
 </script>
 
 <template>
@@ -561,6 +735,14 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
       </button>
       <button
         class="btn btn-ghost"
+        :class="{ 'btn-active': activePanel === 'freeze' || freezeColumnCount > 0 }"
+        data-testid="freeze-open"
+        @click="togglePanel('freeze')"
+      >
+        冻结<em v-if="freezeColumnCount">{{ freezeColumnCount }}</em>
+      </button>
+      <button
+        class="btn btn-ghost"
         :class="{ 'btn-active': activePanel === 'color' }"
         data-testid="color-open"
         @click="togglePanel('color')"
@@ -576,9 +758,86 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
         清除
       </button>
       <span class="toolbar-spacer" />
-      <span class="record-count" data-testid="record-count">
-        记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
-      </span>
+      <div class="toolbar-right">
+        <button
+          class="btn btn-ghost icon-tool"
+          title="历史"
+          data-testid="grid-history"
+          @click="historyOpen = !historyOpen; searchOpen = false"
+        >
+          历史
+        </button>
+        <button
+          class="btn btn-ghost icon-tool"
+          title="刷新"
+          data-testid="grid-refresh"
+          @click="emit('refresh')"
+        >
+          刷新
+        </button>
+        <button
+          class="btn btn-ghost icon-tool"
+          :class="{ 'btn-active': searchOpen }"
+          title="搜索"
+          data-testid="grid-search"
+          @click="searchOpen = !searchOpen; historyOpen = false"
+        >
+          搜索
+        </button>
+        <button
+          class="btn btn-ghost icon-tool"
+          title="撤销 (Ctrl+Z)"
+          data-testid="grid-undo"
+          :disabled="!undoAvailable"
+          @click="emit('undo')"
+        >
+          撤销
+        </button>
+        <button
+          class="btn btn-ghost icon-tool"
+          title="重做 (Ctrl+Y)"
+          data-testid="grid-redo"
+          :disabled="!redoAvailable"
+          @click="emit('redo')"
+        >
+          重做
+        </button>
+        <span class="record-count" data-testid="record-count">
+          记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
+        </span>
+      </div>
+    </div>
+
+    <div v-if="searchOpen" class="search-bar" data-testid="grid-search-bar">
+      <input
+        v-model="searchQuery"
+        type="search"
+        placeholder="搜索当前表格内容…"
+        data-testid="grid-search-input"
+        autofocus
+      />
+      <button
+        class="btn btn-ghost small"
+        @click="searchQuery = ''; searchOpen = false"
+      >
+        关闭
+      </button>
+    </div>
+
+    <div v-if="historyOpen" class="history-panel" data-testid="grid-history-panel">
+      <header>
+        <strong>编辑历史</strong>
+        <button class="icon-btn" @click="historyOpen = false">×</button>
+      </header>
+      <ul v-if="historyEntries.length">
+        <li v-for="entry in historyEntries" :key="entry.id">
+          <span class="history-label">{{ entry.label }}</span>
+          <span class="history-time">{{
+            new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false })
+          }}</span>
+        </li>
+      </ul>
+      <p v-else class="muted">暂无编辑记录。修改单元格后会出现在这里。</p>
     </div>
 
     <div v-if="selectedRecordIds.length" class="selection-bar">
@@ -595,6 +854,9 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
       :mode="fieldPickerMode"
       :initial-name="editingField?.name ?? ''"
       :initial-type="(editingField?.type as FieldType) ?? 'text'"
+      :initial-options="
+        (editingField?.options as Record<string, unknown> | null) ?? null
+      "
       @close="closeFieldPicker"
       @confirm="onFieldConfirm"
     />
@@ -602,6 +864,9 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
     <FieldOptionsEditor
       :open="Boolean(optionsField)"
       :field="optionsField"
+      :fields="fields"
+      :sheets="sheets"
+      :base-id="sheetId"
       @close="optionsField = null"
       @save="saveOptions"
     />
@@ -628,30 +893,102 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
             :title="field.hidden ? '显示字段' : '隐藏字段'"
             @click="toggleField(field)"
           >
-            {{ field.hidden ? '🙈' : '👁' }}
+            {{ field.hidden ? '隐藏' : '显' }}
           </button>
-          <button
-            v-if="field.type === 'select' || field.type === 'multiSelect'"
-            class="icon-btn"
-            title="编辑选项"
-            :data-testid="`edit-options-${field.name}`"
-            @click="openOptions(field)"
-          >
-            ⚙
-          </button>
-          <button
-            class="icon-btn danger"
-            title="删除字段"
-            :data-testid="`delete-field-${field.name}`"
-            @click="deletingField = field"
-          >
-            🗑
-          </button>
+          <div class="field-more-wrap">
+            <button
+              class="icon-btn"
+              title="更多"
+              :data-testid="`field-more-${field.name}`"
+              @click.stop="fieldMenuId = fieldMenuId === field.id ? null : field.id"
+            >
+              ···
+            </button>
+            <div
+              v-if="fieldMenuId === field.id"
+              class="field-more-menu"
+              :data-testid="`field-more-menu-${field.name}`"
+            >
+              <button
+                @click="
+                  openFieldEditorFromSettings(field);
+                  fieldMenuId = null;
+                "
+              >
+                编辑字段
+              </button>
+              <button
+                v-if="
+                  field.type === 'select' ||
+                  field.type === 'multiSelect' ||
+                  field.type === 'ai' ||
+                  field.type === 'formula' ||
+                  field.type === 'relation' ||
+                  field.type === 'lookup'
+                "
+                :data-testid="`edit-options-${field.name}`"
+                @click="
+                  openOptions(field);
+                  fieldMenuId = null;
+                "
+              >
+                {{
+                  field.type === 'ai'
+                    ? '编辑 AI 配置'
+                    : field.type === 'formula'
+                      ? '编辑公式'
+                      : field.type === 'relation'
+                        ? '编辑关联'
+                        : field.type === 'lookup'
+                          ? '编辑查找引用'
+                          : '编辑选项'
+                }}
+              </button>
+              <button
+                @click="
+                  toggleField(field);
+                  fieldMenuId = null;
+                "
+              >
+                {{ field.hidden ? '显示字段' : '隐藏字段' }}
+              </button>
+              <button
+                class="danger"
+                :data-testid="`delete-field-${field.name}`"
+                @click="
+                  deletingField = field;
+                  fieldMenuId = null;
+                "
+              >
+                删除字段
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       <button class="btn settings-add-field" data-testid="settings-add-field" @click="openFieldPicker">
         + 新增字段
       </button>
+      <div class="settings-footer">
+        <span class="settings-footer-label" title="选择关联字段作为父子层级依据">
+          父记录字段
+        </span>
+        <select
+          class="settings-footer-select"
+          data-testid="parent-field-select"
+          :value="parentFieldId"
+          @change="setParentField(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">请选择</option>
+          <option
+            v-for="field in relationFields"
+            :key="field.id"
+            :value="field.id"
+          >
+            {{ field.name }}
+          </option>
+        </select>
+      </div>
     </div>
 
     <div
@@ -669,7 +1006,9 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
                 ? '分组'
                 : activePanel === 'rowHeight'
                   ? '行高'
-                  : '填色'
+                  : activePanel === 'freeze'
+                    ? '冻结列'
+                    : '填色'
         }}
         <button class="icon-btn" type="button" @click="activePanel = null">×</button>
       </header>
@@ -799,6 +1138,26 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
         </div>
       </div>
 
+      <div v-else-if="activePanel === 'freeze'" class="view-panel-body">
+        <div class="row-height-options" data-testid="freeze-options">
+          <button
+            v-for="option in [
+              { value: 0, label: '不冻结' },
+              { value: 1, label: '冻结 1 列' },
+              { value: 2, label: '冻结 2 列' },
+              { value: 3, label: '冻结 3 列' },
+            ]"
+            :key="option.value"
+            class="height-option"
+            :class="{ active: freezeColumnCount === option.value }"
+            :data-testid="`freeze-col-${option.value}`"
+            @click="setFreezeColumnCount(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+
       <div v-else class="view-panel-body">
         <div
           v-for="(row, index) in colorRules"
@@ -857,8 +1216,12 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
         :fields="fields"
         :records="displayRecords"
         :row-height="rowHeight ?? 36"
+        :freeze-column-count="freezeColumnCount"
         :row-colors="rowColors"
+        :row-depths="rowDepths"
         :person-names="personNames"
+        :members="members"
+        :sheets="sheets"
         :upload-attachment="uploadAttachment"
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
@@ -911,6 +1274,137 @@ defineExpose({ applySavedQuery, currentQuery, clearRowSelection: () => gridRef.v
 }
 .toolbar-spacer {
   flex: 1;
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.icon-tool {
+  padding: 0 8px;
+  height: 28px;
+  font-size: 12px;
+}
+.icon-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #eef0f3;
+  background: #fafbfc;
+}
+.search-bar input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #3370ff;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.history-panel {
+  position: absolute;
+  right: 12px;
+  top: 48px;
+  z-index: 30;
+  width: 280px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(31, 35, 41, 0.14);
+}
+.history-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.history-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.history-panel li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f2f3f5;
+  font-size: 12px;
+}
+.history-label {
+  color: #1f2329;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-time {
+  color: #8f959e;
+  flex: none;
+}
+.field-more-wrap {
+  position: relative;
+}
+.field-more-menu {
+  position: absolute;
+  right: 0;
+  top: 28px;
+  z-index: 40;
+  min-width: 140px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
+}
+.field-more-menu button {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  color: #1f2329;
+}
+.field-more-menu button:hover {
+  background: #f5f6f7;
+}
+.field-more-menu button.danger {
+  color: #d4380d;
+}
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef0f3;
+}
+.settings-footer-label {
+  font-size: 12px;
+  color: #8f959e;
+}
+.settings-footer-select {
+  height: 28px;
+  min-width: 120px;
+  border: 1px solid #dee0e3;
+  border-radius: 6px;
+  background: #f7f8fa;
+  color: #8f959e;
+  font-size: 12px;
 }
 .btn-active {
   background: #e8f3ff;

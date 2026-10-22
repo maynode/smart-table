@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import DashboardChart from './DashboardChart.vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import type {
   DashboardDataDto,
@@ -80,7 +81,12 @@ async function resizeWidget(
 }
 
 async function deleteWidget(widget: DashboardWidgetData): Promise<void> {
-  if (!active.value || !window.confirm(`删除图表「${widget.title}」？`)) return;
+  if (!active.value) return;
+  const ok = await confirmDialog(`删除图表「${widget.title}」？`, {
+    title: '删除图表',
+    confirmLabel: '删除',
+  });
+  if (!ok) return;
   try {
     await endpoints.deleteDashboardWidget(active.value.id, widget.id);
     data.value = await endpoints.getDashboardData(active.value.id);

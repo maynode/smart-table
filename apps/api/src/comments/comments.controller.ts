@@ -30,6 +30,11 @@ export class CommentsController {
     @Param('sheetId') sheetId: string,
     @Body() dto: CreateCommentDto,
   ) {
-    return this.commentsService.create(sheetId, user.sub, dto.body);
+    return this.commentsService.create(
+      sheetId,
+      user.sub,
+      dto.body,
+      dto.mentionedUserIds ?? [],
+    );
   }
 }

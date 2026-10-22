@@ -61,8 +61,19 @@ export interface CanvasGridOptions {
   ) => void;
   /** Fired when the trailing "+" header (id `__add_field__`) is clicked. */
   onAddColumnClick?: (anchor: { top: number; left: number }) => void;
+  /**
+   * Drag the selection fill-handle (bottom-right square) to extend a value
+   * across rows in the same column — WeCom / spreadsheet fill gesture.
+   */
+  onFillExtend?: (payload: {
+    col: number;
+    fromRow: number;
+    toRow: number;
+  }) => void;
   /** Left sticky row-number gutter width; 0 disables. */
   rowGutterWidth?: number;
+  /** Leading data columns that stay fixed during horizontal scroll. */
+  freezeColumnCount?: number;
   offscreenFactory?: () => OffscreenCanvas | null;
 }
 
@@ -105,6 +116,7 @@ export class CanvasGridEngine {
   private readonly headerHeight: number;
   private readonly overscan: number;
   private readonly rowGutterWidth: number;
+  private frozenColumnCount = 0;
   private readonly offscreen: OffscreenCanvas | null;
   private readonly offscreenContext: OffscreenCanvasRenderingContext2D | null;
 
@@ -129,6 +141,12 @@ export class CanvasGridEngine {
     startX: number;
     startWidth: number;
   } | null = null;
+  private fillState: {
+    col: number;
+    fromRow: number;
+    toRow: number;
+  } | null = null;
+  private static readonly FILL_HANDLE_SIZE = 8;
 
   private stats: GridStats = {
     cellsDrawn: 0,
@@ -153,6 +171,7 @@ export class CanvasGridEngine {
       0,
       options.rowGutterWidth ?? DEFAULT_ROW_GUTTER,
     );
+    this.frozenColumnCount = Math.max(0, options.freezeColumnCount ?? 0);
     this.getCell = options.getCell ?? (() => null);
     this.getRowColor = options.getRowColor ?? (() => null);
 
@@ -209,6 +228,7 @@ export class CanvasGridEngine {
       return column.width ?? COLUMN_WIDTH;
     });
     this.columnAxis = new AxisLayout(this.columnWidths);
+    this.clampFrozenColumnCount();
 
     this.scroller.addEventListener('scroll', this.onScroll, { passive: true });
     host.addEventListener('pointerdown', this.onPointerDown);
@@ -260,7 +280,14 @@ export class CanvasGridEngine {
     this.columns.splice(0, this.columns.length, ...columns);
     this.columnWidths = columns.map((column) => column.width ?? COLUMN_WIDTH);
     this.columnAxis = new AxisLayout(this.columnWidths);
+    this.clampFrozenColumnCount();
     this.updateSpacer();
+    this.invalidate();
+  }
+
+  setFreezeColumnCount(count: number): void {
+    this.frozenColumnCount = Math.max(0, Math.floor(count));
+    this.clampFrozenColumnCount();
     this.invalidate();
   }
 
@@ -284,18 +311,21 @@ export class CanvasGridEngine {
       this.scroller.scrollTop = bottom - viewportHeight;
     }
 
-    const left = this.columnAxis.offset(col);
-    const right = left + this.columnAxis.size(col);
-    const scrollLeft = this.scroller.scrollLeft;
-    const viewportWidth = Math.max(
-      0,
-      this.host.clientWidth - this.rowGutterWidth,
-    );
+    if (col >= this.frozenColumnCount) {
+      const frozenW = this.frozenWidth();
+      const left = this.columnAxis.offset(col);
+      const right = left + this.columnAxis.size(col);
+      const scrollLeft = this.scroller.scrollLeft;
+      const viewportWidth = Math.max(
+        0,
+        this.host.clientWidth - this.rowGutterWidth - frozenW,
+      );
 
-    if (left < scrollLeft) {
-      this.scroller.scrollLeft = left;
-    } else if (right > scrollLeft + viewportWidth) {
-      this.scroller.scrollLeft = right - viewportWidth;
+      if (left < scrollLeft + frozenW) {
+        this.scroller.scrollLeft = Math.max(0, left - frozenW);
+      } else if (right > scrollLeft + frozenW + viewportWidth) {
+        this.scroller.scrollLeft = right - frozenW - viewportWidth;
+      }
     }
 
     this.syncScrollPosition();
@@ -316,8 +346,34 @@ export class CanvasGridEngine {
     };
   }
 
+  private clampFrozenColumnCount(): void {
+    const maxFreezeable = this.columns.filter(
+      (column) => column.id !== ADD_FIELD_COLUMN_ID,
+    ).length;
+    this.frozenColumnCount = Math.min(this.frozenColumnCount, maxFreezeable);
+  }
+
+  private frozenWidth(): number {
+    if (this.frozenColumnCount <= 0) return 0;
+    return this.columnAxis.offset(
+      Math.min(this.frozenColumnCount, this.columns.length),
+    );
+  }
+
   private columnScreenX(col: number): number {
-    return this.rowGutterWidth + this.columnAxis.offset(col) - this.scrollX;
+    const base = this.rowGutterWidth + this.columnAxis.offset(col);
+    if (col < this.frozenColumnCount) return base;
+    return base - this.scrollX;
+  }
+
+  private columnIndexAtScreenX(screenX: number): number {
+    const local = screenX - this.rowGutterWidth;
+    if (local < 0) return -1;
+    const frozenW = this.frozenWidth();
+    if (local < frozenW) {
+      return this.columnAxis.indexAt(local);
+    }
+    return this.columnAxis.indexAt(local + this.scrollX);
   }
 
   private contentViewportWidth(width: number): number {
@@ -354,21 +410,30 @@ export class CanvasGridEngine {
       bodyHeight,
       this.overscan,
     );
-    const columns = computeVisibleRange(
+    const scrollColumns = computeVisibleRange(
       this.columnAxis,
       this.scrollX,
       this.contentViewportWidth(width),
       this.overscan,
     );
+    const bodyColumnStart = Math.max(
+      this.frozenColumnCount,
+      scrollColumns.start,
+    );
+    const columns: VisibleRange = {
+      start: this.frozenColumnCount > 0 ? 0 : scrollColumns.start,
+      end: scrollColumns.end,
+    };
 
-    this.drawGrid(width, height, rows, columns);
-    this.drawContent(width, height, rows, columns);
+    this.drawGrid(width, height, rows, columns, bodyColumnStart);
+    this.drawContent(width, height, rows, columns, bodyColumnStart);
     this.drawSelection(width, height);
 
     this.stats = {
       cellsDrawn:
         Math.max(0, rows.end - rows.start) *
-        Math.max(0, columns.end - columns.start),
+        (this.frozenColumnCount +
+          Math.max(0, scrollColumns.end - bodyColumnStart)),
       rows,
       columns,
       usedOffscreen: this.usingOffscreenPath,
@@ -420,10 +485,8 @@ export class CanvasGridEngine {
       return;
     }
 
-    const worldX = point.x - this.rowGutterWidth + this.scrollX;
-
     if (point.y < this.headerHeight) {
-      const col = this.columnAxis.indexAt(worldX);
+      const col = this.columnIndexAtScreenX(point.x);
       const column = this.columns[col];
       if (column?.id === ADD_FIELD_COLUMN_ID) {
         const rect = this.host.getBoundingClientRect();
@@ -434,7 +497,7 @@ export class CanvasGridEngine {
         });
         return;
       }
-      const boundary = this.columnBoundaryAt(worldX);
+      const boundary = this.columnBoundaryAtScreenX(point.x);
       if (boundary !== null) {
         const boundaryCol = this.columns[boundary];
         if (boundaryCol?.id === ADD_FIELD_COLUMN_ID) return;
@@ -451,8 +514,20 @@ export class CanvasGridEngine {
       return;
     }
 
+    if (this.hitFillHandle(point) && this.selection) {
+      this.fillState = {
+        col: this.selection.col,
+        fromRow: this.selection.row,
+        toRow: this.selection.row,
+      };
+      this.host.style.cursor = 'crosshair';
+      event.preventDefault();
+      this.invalidate();
+      return;
+    }
+
     const row = this.rowAxis.indexAt(point.y - this.headerHeight + this.scrollY);
-    const col = this.columnAxis.indexAt(worldX);
+    const col = this.columnIndexAtScreenX(point.x);
     if (
       row < 0 ||
       row >= this.rowAxis.count ||
@@ -474,9 +549,7 @@ export class CanvasGridEngine {
     if (point.y < this.headerHeight || point.x < this.rowGutterWidth) return;
 
     const row = this.rowAxis.indexAt(point.y - this.headerHeight + this.scrollY);
-    const col = this.columnAxis.indexAt(
-      point.x - this.rowGutterWidth + this.scrollX,
-    );
+    const col = this.columnIndexAtScreenX(point.x);
     if (
       row < 0 ||
       row >= this.rowAxis.count ||
@@ -503,6 +576,17 @@ export class CanvasGridEngine {
   }
 
   private readonly onResizeMove = (event: PointerEvent): void => {
+    if (this.fillState) {
+      const point = this.localPoint(event);
+      const row = this.rowAxis.indexAt(
+        point.y - this.headerHeight + this.scrollY,
+      );
+      if (row >= 0 && row < this.rowAxis.count) {
+        this.fillState = { ...this.fillState, toRow: row };
+        this.invalidate();
+      }
+      return;
+    }
     if (!this.resizeState) return;
     const width = Math.max(
       MIN_COLUMN_WIDTH,
@@ -515,6 +599,16 @@ export class CanvasGridEngine {
   };
 
   private readonly onResizeEnd = (): void => {
+    if (this.fillState) {
+      const { col, fromRow, toRow } = this.fillState;
+      this.fillState = null;
+      this.host.style.cursor = '';
+      if (toRow !== fromRow) {
+        this.options.onFillExtend?.({ col, fromRow, toRow });
+      }
+      this.invalidate();
+      return;
+    }
     if (!this.resizeState) return;
     const { col } = this.resizeState;
     this.resizeState = null;
@@ -522,10 +616,33 @@ export class CanvasGridEngine {
     this.options.onColumnResize?.(col, this.columnWidths[col]);
   };
 
-  private columnBoundaryAt(worldX: number): number | null {
+  private hitFillHandle(point: { x: number; y: number }): boolean {
+    if (!this.selection || !this.options.onFillExtend) return false;
+    const handle = this.fillHandleRect();
+    if (!handle) return false;
+    return (
+      point.x >= handle.x &&
+      point.x <= handle.x + handle.size &&
+      point.y >= handle.y &&
+      point.y <= handle.y + handle.size
+    );
+  }
+
+  private fillHandleRect(): { x: number; y: number; size: number } | null {
+    if (!this.selection) return null;
+    const rect = this.cellRect(this.selection.row, this.selection.col);
+    const size = CanvasGridEngine.FILL_HANDLE_SIZE;
+    return {
+      x: rect.x + rect.width - size / 2,
+      y: rect.y + rect.height - size / 2,
+      size,
+    };
+  }
+
+  private columnBoundaryAtScreenX(screenX: number): number | null {
     for (let i = 0; i < this.columnWidths.length; i += 1) {
-      const boundary = this.columnAxis.offset(i + 1);
-      if (Math.abs(boundary - worldX) <= RESIZE_HIT_WIDTH) return i;
+      const boundaryX = this.columnScreenX(i) + this.columnAxis.size(i);
+      if (Math.abs(boundaryX - screenX) <= RESIZE_HIT_WIDTH) return i;
     }
     return null;
   }
@@ -566,20 +683,58 @@ export class CanvasGridEngine {
     if (clear) context.clearRect(0, 0, width, height);
   }
 
+  private drawColumnHeader(
+    context: CanvasRenderingContext2D,
+    col: number,
+  ): void {
+    const column = this.columns[col];
+    if (!column) return;
+    const x = this.columnScreenX(col);
+    const columnWidth = this.columnAxis.size(col);
+    const gutter = this.rowGutterWidth;
+    if (x + columnWidth < gutter || x > this.host.clientWidth) return;
+
+    context.save();
+    context.beginPath();
+    context.rect(x, 0, columnWidth, this.headerHeight);
+    context.clip();
+    if (column.id === ADD_FIELD_COLUMN_ID) {
+      context.fillStyle = COLORS.selectionBorder;
+      context.font = `600 16px ${FONT_STACK}`;
+      context.textAlign = 'center';
+      context.fillText('+', x + columnWidth / 2, this.headerHeight / 2);
+      context.textAlign = 'start';
+      context.fillStyle = COLORS.headerText;
+      context.font = `600 12px ${FONT_STACK}`;
+    } else {
+      let textX = x + 12;
+      if (column.icon) {
+        context.fillStyle = COLORS.emptyText;
+        context.fillText(column.icon, x + 10, this.headerHeight / 2);
+        textX = x + 28;
+        context.fillStyle = COLORS.headerText;
+      }
+      context.fillText(column.name, textX, this.headerHeight / 2);
+    }
+    context.restore();
+  }
+
   private drawGrid(
     width: number,
     height: number,
     rows: VisibleRange,
     columns: VisibleRange,
+    bodyColumnStart: number,
   ): void {
     const context = this.contexts.grid;
     this.prepareContext(context, width, height, true);
     const gutter = this.rowGutterWidth;
+    const frozenW = this.frozenWidth();
+    const scrollLeft = gutter + frozenW;
 
     context.fillStyle = COLORS.background;
     context.fillRect(0, 0, width, height);
 
-    // Header band.
     context.fillStyle = COLORS.headerBackground;
     context.fillRect(0, 0, width, this.headerHeight);
     context.strokeStyle = COLORS.border;
@@ -589,55 +744,47 @@ export class CanvasGridEngine {
     context.lineTo(width, this.headerHeight - 0.5);
     context.stroke();
 
-    // Column headers (clipped to the right of the sticky gutter).
     context.font = `600 12px ${FONT_STACK}`;
     context.textBaseline = 'middle';
     context.fillStyle = COLORS.headerText;
 
-    context.save();
-    context.beginPath();
-    context.rect(gutter, 0, Math.max(0, width - gutter), this.headerHeight);
-    context.clip();
-    for (let col = columns.start; col < columns.end; col += 1) {
-      const column = this.columns[col];
-      if (!column) continue;
-      const x = this.columnScreenX(col);
-      const columnWidth = this.columnAxis.size(col);
-      if (x + columnWidth < gutter || x > width) continue;
-
-      context.save();
-      context.beginPath();
-      context.rect(x, 0, columnWidth, this.headerHeight);
-      context.clip();
-      if (column.id === ADD_FIELD_COLUMN_ID) {
-        context.fillStyle = COLORS.selectionBorder;
-        context.font = `600 16px ${FONT_STACK}`;
-        context.textAlign = 'center';
-        context.fillText('+', x + columnWidth / 2, this.headerHeight / 2);
-        context.textAlign = 'start';
-        context.fillStyle = COLORS.headerText;
-        context.font = `600 12px ${FONT_STACK}`;
-      } else {
-        let textX = x + 12;
-        if (column.icon) {
-          context.fillStyle = COLORS.emptyText;
-          context.fillText(column.icon, x + 10, this.headerHeight / 2);
-          textX = x + 28;
-          context.fillStyle = COLORS.headerText;
-        }
-        context.fillText(column.name, textX, this.headerHeight / 2);
-      }
-      context.restore();
-    }
-    context.restore();
-
-    // Body grid lines (viewport-only, right of gutter).
+    // Scrolling headers (clipped so they slide under the freeze pane).
     context.save();
     context.beginPath();
     context.rect(
-      gutter,
+      scrollLeft,
+      0,
+      Math.max(0, width - scrollLeft),
       this.headerHeight,
-      Math.max(0, width - gutter),
+    );
+    context.clip();
+    for (let col = bodyColumnStart; col < columns.end; col += 1) {
+      this.drawColumnHeader(context, col);
+    }
+    context.restore();
+
+    // Frozen headers drawn on top.
+    if (this.frozenColumnCount > 0) {
+      context.save();
+      context.beginPath();
+      context.rect(gutter, 0, frozenW, this.headerHeight);
+      context.clip();
+      context.fillStyle = COLORS.headerBackground;
+      context.fillRect(gutter, 0, frozenW, this.headerHeight);
+      context.fillStyle = COLORS.headerText;
+      for (let col = 0; col < this.frozenColumnCount; col += 1) {
+        this.drawColumnHeader(context, col);
+      }
+      context.restore();
+    }
+
+    // Body grid lines.
+    context.save();
+    context.beginPath();
+    context.rect(
+      scrollLeft,
+      this.headerHeight,
+      Math.max(0, width - scrollLeft),
       height - this.headerHeight,
     );
     context.clip();
@@ -647,10 +794,10 @@ export class CanvasGridEngine {
     for (let row = rows.start; row < rows.end; row += 1) {
       const y =
         this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
-      context.moveTo(gutter, y);
+      context.moveTo(scrollLeft, y);
       context.lineTo(width, y);
     }
-    for (let col = columns.start; col < columns.end; col += 1) {
+    for (let col = bodyColumnStart; col < columns.end; col += 1) {
       const x = this.columnScreenX(col + 1) - 0.5;
       context.moveTo(x, this.headerHeight);
       context.lineTo(x, height);
@@ -658,17 +805,74 @@ export class CanvasGridEngine {
     context.stroke();
 
     if (this.rowAxis.count === 0) {
+      const dataColumns = this.columns.filter(
+        (column) => column.id !== ADD_FIELD_COLUMN_ID,
+      );
+      // Draw a few empty row skeletons so an empty sheet still reads as a table.
+      const ghostRows = 8;
+      context.strokeStyle = COLORS.border;
+      context.beginPath();
+      for (let row = 0; row < ghostRows; row += 1) {
+        const y = this.headerHeight + (row + 1) * this.rowHeight - 0.5;
+        if (y > height) break;
+        context.moveTo(scrollLeft, y);
+        context.lineTo(width, y);
+      }
+      context.stroke();
+
       context.fillStyle = COLORS.emptyText;
       context.font = `13px ${FONT_STACK}`;
       context.textAlign = 'center';
       context.fillText(
-        '暂无记录',
-        gutter + Math.max(0, width - gutter) / 2,
-        height / 2,
+        dataColumns.length === 0
+          ? '点击「+ 添加字段」开始建表'
+          : '暂无记录，点击「+ 添加一行」',
+        scrollLeft + Math.max(0, width - scrollLeft) / 2,
+        this.headerHeight + this.rowHeight * 2,
       );
       context.textAlign = 'start';
     }
     context.restore();
+
+    if (this.frozenColumnCount > 0) {
+      context.save();
+      context.beginPath();
+      context.rect(
+        gutter,
+        this.headerHeight,
+        frozenW,
+        height - this.headerHeight,
+      );
+      context.clip();
+      context.fillStyle = COLORS.background;
+      context.fillRect(
+        gutter,
+        this.headerHeight,
+        frozenW,
+        height - this.headerHeight,
+      );
+      context.strokeStyle = COLORS.border;
+      context.beginPath();
+      for (let row = rows.start; row < rows.end; row += 1) {
+        const y =
+          this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
+        context.moveTo(gutter, y);
+        context.lineTo(gutter + frozenW, y);
+      }
+      for (let col = 0; col < this.frozenColumnCount; col += 1) {
+        const x = this.columnScreenX(col + 1) - 0.5;
+        context.moveTo(x, this.headerHeight);
+        context.lineTo(x, height);
+      }
+      context.stroke();
+      context.restore();
+
+      context.strokeStyle = COLORS.border;
+      context.beginPath();
+      context.moveTo(gutter + frozenW - 0.5, 0);
+      context.lineTo(gutter + frozenW - 0.5, height);
+      context.stroke();
+    }
 
     this.drawRowGutter(context, width, height, rows);
   }
@@ -719,11 +923,75 @@ export class CanvasGridEngine {
     context.textAlign = 'start';
   }
 
+  private paintCellContent(
+    target: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    row: number,
+    col: number,
+    y: number,
+    rowHeight: number,
+    width: number,
+  ): void {
+    const cell = this.getCell(row, col);
+    if (!cell || (!cell.text && !cell.image)) return;
+
+    const gutter = this.rowGutterWidth;
+    const x = this.columnScreenX(col);
+    const columnWidth = this.columnAxis.size(col);
+    if (x + columnWidth < gutter || x > width) return;
+
+    target.save();
+    target.beginPath();
+    target.rect(x + 1, y, columnWidth - 2, rowHeight);
+    target.clip();
+
+    if (cell.image) {
+      const image = this.imageFor(cell.image);
+      const size = Math.max(16, rowHeight - 8);
+      if (image) {
+        target.drawImage(image, x + 6, y + 4, size, size);
+      } else {
+        target.fillStyle = '#f2f3f5';
+        target.fillRect(x + 6, y + 4, size, size);
+        target.fillStyle = COLORS.emptyText;
+        target.font = `11px ${FONT_STACK}`;
+        target.fillText('图片', x + 9, y + rowHeight / 2);
+      }
+      if (cell.text) {
+        target.fillStyle = cell.color ?? COLORS.cellText;
+        target.font = `12px ${FONT_STACK}`;
+        target.fillText(cell.text, x + size + 12, y + rowHeight / 2);
+      }
+    } else if (cell.pill) {
+      const textWidth = target.measureText(cell.text).width;
+      const pillWidth = Math.min(columnWidth - 16, textWidth + 20);
+      const pillHeight = 22;
+      const pillX = x + 10;
+      const pillY = y + (rowHeight - pillHeight) / 2;
+      target.fillStyle = cell.bg ?? '#e8f3ff';
+      target.beginPath();
+      target.roundRect(pillX, pillY, pillWidth, pillHeight, 11);
+      target.fill();
+      target.fillStyle = cell.color ?? '#1f2329';
+      target.fillText(cell.text, pillX + 10, y + rowHeight / 2);
+    } else {
+      if (cell.bold) {
+        target.font = `600 13px ${FONT_STACK}`;
+      }
+      target.fillStyle = cell.color ?? COLORS.cellText;
+      target.fillText(cell.text, x + 12, y + rowHeight / 2);
+      if (cell.bold) {
+        target.font = `13px ${FONT_STACK}`;
+      }
+    }
+    target.restore();
+  }
+
   private drawContent(
     width: number,
     height: number,
     rows: VisibleRange,
     columns: VisibleRange,
+    bodyColumnStart: number,
   ): void {
     const offscreenActive = this.offscreen !== null && this.offscreenContext !== null;
 
@@ -747,90 +1015,70 @@ export class CanvasGridEngine {
     }
 
     const gutter = this.rowGutterWidth;
-    target.save();
-    target.beginPath();
-    target.rect(
-      gutter,
-      this.headerHeight,
-      Math.max(0, width - gutter),
-      height - this.headerHeight,
-    );
-    target.clip();
-    target.font = `13px ${FONT_STACK}`;
-    target.textBaseline = 'middle';
+    const frozenW = this.frozenWidth();
+    const scrollLeft = gutter + frozenW;
 
-    for (let row = rows.start; row < rows.end; row += 1) {
-      const y =
-        this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
-      const rowHeight = this.rowAxis.size(row);
-      if (y + rowHeight < this.headerHeight || y > height) continue;
-
-      if (this.selectedRows.has(row)) {
-        target.fillStyle = COLORS.selectionFill;
-        target.fillRect(gutter, y, Math.max(0, width - gutter), rowHeight);
+    const paintRows = (
+      clipX: number,
+      clipW: number,
+      colStart: number,
+      colEnd: number,
+      fillBg: boolean,
+    ) => {
+      target.save();
+      target.beginPath();
+      target.rect(
+        clipX,
+        this.headerHeight,
+        Math.max(0, clipW),
+        height - this.headerHeight,
+      );
+      target.clip();
+      if (fillBg) {
+        target.fillStyle = COLORS.background;
+        target.fillRect(
+          clipX,
+          this.headerHeight,
+          Math.max(0, clipW),
+          height - this.headerHeight,
+        );
       }
-      const rowColor = this.getRowColor(row);
-      if (rowColor) {
-        target.fillStyle = rowColor;
-        target.fillRect(gutter, y, Math.max(0, width - gutter), rowHeight);
-      }
+      target.font = `13px ${FONT_STACK}`;
+      target.textBaseline = 'middle';
 
-      for (let col = columns.start; col < columns.end; col += 1) {
-        const cell = this.getCell(row, col);
-        if (!cell || (!cell.text && !cell.image)) continue;
+      for (let row = rows.start; row < rows.end; row += 1) {
+        const y =
+          this.headerHeight + this.rowAxis.offset(row) - this.scrollY;
+        const rowHeight = this.rowAxis.size(row);
+        if (y + rowHeight < this.headerHeight || y > height) continue;
 
-        const x = this.columnScreenX(col);
-        const columnWidth = this.columnAxis.size(col);
-        if (x + columnWidth < gutter || x > width) continue;
-
-        target.save();
-        target.beginPath();
-        target.rect(x + 1, y, columnWidth - 2, rowHeight);
-        target.clip();
-
-        if (cell.image) {
-          const image = this.imageFor(cell.image);
-          const size = Math.max(16, rowHeight - 8);
-          if (image) {
-            target.drawImage(image, x + 6, y + 4, size, size);
-          } else {
-            target.fillStyle = '#f2f3f5';
-            target.fillRect(x + 6, y + 4, size, size);
-            target.fillStyle = COLORS.emptyText;
-            target.font = `11px ${FONT_STACK}`;
-            target.fillText('图片', x + 9, y + rowHeight / 2);
-          }
-          if (cell.text) {
-            target.fillStyle = cell.color ?? COLORS.cellText;
-            target.font = `12px ${FONT_STACK}`;
-            target.fillText(cell.text, x + size + 12, y + rowHeight / 2);
-          }
-        } else if (cell.pill) {
-          const textWidth = target.measureText(cell.text).width;
-          const pillWidth = Math.min(columnWidth - 16, textWidth + 20);
-          const pillHeight = 22;
-          const pillX = x + 10;
-          const pillY = y + (rowHeight - pillHeight) / 2;
-          target.fillStyle = cell.bg ?? '#e8f3ff';
-          target.beginPath();
-          target.roundRect(pillX, pillY, pillWidth, pillHeight, 11);
-          target.fill();
-          target.fillStyle = cell.color ?? '#1f2329';
-          target.fillText(cell.text, pillX + 10, y + rowHeight / 2);
-        } else {
-          if (cell.bold) {
-            target.font = `600 13px ${FONT_STACK}`;
-          }
-          target.fillStyle = cell.color ?? COLORS.cellText;
-          target.fillText(cell.text, x + 12, y + rowHeight / 2);
-          if (cell.bold) {
-            target.font = `13px ${FONT_STACK}`;
-          }
+        if (this.selectedRows.has(row)) {
+          target.fillStyle = COLORS.selectionFill;
+          target.fillRect(clipX, y, Math.max(0, clipW), rowHeight);
         }
-        target.restore();
+        const rowColor = this.getRowColor(row);
+        if (rowColor) {
+          target.fillStyle = rowColor;
+          target.fillRect(clipX, y, Math.max(0, clipW), rowHeight);
+        }
+
+        for (let col = colStart; col < colEnd; col += 1) {
+          this.paintCellContent(target, row, col, y, rowHeight, width);
+        }
       }
+      target.restore();
+    };
+
+    paintRows(
+      scrollLeft,
+      Math.max(0, width - scrollLeft),
+      bodyColumnStart,
+      columns.end,
+      false,
+    );
+    if (this.frozenColumnCount > 0) {
+      paintRows(gutter, frozenW, 0, this.frozenColumnCount, true);
     }
-    target.restore();
 
     if (offscreenActive) {
       const content = this.contexts.content;
@@ -879,6 +1127,30 @@ export class CanvasGridEngine {
     );
     context.clip();
 
+    if (this.fillState) {
+      const start = Math.min(this.fillState.fromRow, this.fillState.toRow);
+      const end = Math.max(this.fillState.fromRow, this.fillState.toRow);
+      const top = this.cellRect(start, col);
+      const bottom = this.cellRect(end, col);
+      context.fillStyle = 'rgba(45, 140, 240, 0.14)';
+      context.fillRect(
+        top.x,
+        top.y,
+        top.width,
+        bottom.y + bottom.height - top.y,
+      );
+      context.strokeStyle = COLORS.selectionBorder;
+      context.lineWidth = 1;
+      context.setLineDash([4, 3]);
+      context.strokeRect(
+        top.x + 0.5,
+        top.y + 0.5,
+        Math.max(0, top.width - 1),
+        Math.max(0, bottom.y + bottom.height - top.y - 1),
+      );
+      context.setLineDash([]);
+    }
+
     context.fillStyle = COLORS.selectionFill;
     context.fillRect(rect.x, rect.y, rect.width, rect.height);
     context.strokeStyle = COLORS.selectionBorder;
@@ -889,6 +1161,22 @@ export class CanvasGridEngine {
       Math.max(0, rect.width - 2),
       Math.max(0, rect.height - 2),
     );
+
+    if (this.options.onFillExtend) {
+      const handle = this.fillHandleRect();
+      if (handle) {
+        context.fillStyle = COLORS.selectionBorder;
+        context.fillRect(handle.x, handle.y, handle.size, handle.size);
+        context.strokeStyle = '#fff';
+        context.lineWidth = 1;
+        context.strokeRect(
+          handle.x + 0.5,
+          handle.y + 0.5,
+          handle.size - 1,
+          handle.size - 1,
+        );
+      }
+    }
     context.restore();
   }
 }

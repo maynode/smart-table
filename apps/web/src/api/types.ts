@@ -520,3 +520,12 @@ export interface DataSyncRunDto {
   startedAt: string;
   finishedAt: string | null;
 }
+
+export interface NotificationDto {
+  id: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  readAt: string | null;
+  createdAt: string;
+}

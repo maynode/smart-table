@@ -45,6 +45,8 @@ interface UiStep {
   filterFieldId: string;
   filterOperator: string;
   filterValue: string;
+  /** Find-step filter conjunction (企微：满足任意/全部条件). */
+  filterConjunction: 'and' | 'or';
   fromStepId: string;
   mappings: MappingRow[];
   channel: 'doc' | 'group';
@@ -64,7 +66,7 @@ const saving = ref(false);
 const error = ref('');
 
 const name = ref('');
-const enabled = ref(true);
+const enabled = ref(false);
 const triggerType = ref<'recordCreated' | 'recordUpdated' | 'schedule'>(
   'recordCreated',
 );
@@ -72,6 +74,7 @@ const triggerSheetId = ref('');
 const triggerFilters = ref<
   Array<{ fieldId: string; operator: string; value: string }>
 >([{ fieldId: '', operator: 'equals', value: '' }]);
+const triggerConjunction = ref<'and' | 'or'>('and');
 const cron = ref('0 9 * * *');
 const timezone = ref('Asia/Shanghai');
 const onFindEmpty = ref<'continue' | 'stop'>('continue');
@@ -121,6 +124,7 @@ function blankStep(type: StepType): UiStep {
     filterFieldId: '',
     filterOperator: 'equals',
     filterValue: '',
+    filterConjunction: 'and',
     fromStepId: '',
     mappings: [],
     channel: 'doc',
@@ -161,6 +165,99 @@ function stepTypeLabel(type: StepType): string {
 
 function stepTypeIcon(type: StepType): string {
   return stepTypes.find((item) => item.value === type)?.icon ?? '•';
+}
+
+function sheetLabel(sheetId: string): string {
+  return sheets.value.find((sheet) => sheet.id === sheetId)?.name || '未选表';
+}
+
+function operatorLabel(operator: string): string {
+  const map: Record<string, string> = {
+    equals: '等于',
+    notEquals: '不等于',
+    contains: '包含',
+    isEmpty: '为空',
+    isNotEmpty: '不为空',
+    gt: '大于',
+    lt: '小于',
+  };
+  return map[operator] ?? operator;
+}
+
+function triggerSummary(): string {
+  if (triggerType.value === 'schedule') {
+    return `按计划运行：${cron.value || '未设 cron'}（${timezone.value}）`;
+  }
+  const when =
+    triggerType.value === 'recordUpdated' ? '记录被更新时' : '新增记录时';
+  const sheet = sheetLabel(triggerSheetId.value);
+  const conditions = triggerFilters.value
+    .filter((row) => row.fieldId)
+    .map((row) => {
+      const field = fieldName(triggerSheetId.value, row.fieldId);
+      if (row.operator === 'isEmpty' || row.operator === 'isNotEmpty') {
+        return `${field}${operatorLabel(row.operator)}`;
+      }
+      return `${field}${operatorLabel(row.operator)}「${row.value || '…'}」`;
+    });
+  if (conditions.length === 0) {
+    return `当「${sheet}」${when}`;
+  }
+  return `当「${sheet}」${when}，且 ${conditions.join('，')}`;
+}
+
+function stepSummary(step: UiStep): string {
+  switch (step.type) {
+    case 'findRecords': {
+      const sheet = sheetLabel(step.sheetId);
+      if (!step.filterFieldId) {
+        return `在「${sheet}」中查找最多 ${step.limit} 条记录`;
+      }
+      const field = fieldName(step.sheetId, step.filterFieldId);
+      const cond =
+        step.filterOperator === 'isEmpty' ||
+        step.filterOperator === 'isNotEmpty'
+          ? `${field}${operatorLabel(step.filterOperator)}`
+          : `${field}${operatorLabel(step.filterOperator)}「${step.filterValue || '…'}」`;
+      return `在「${sheet}」中查找 ${cond} 的记录（最多 ${step.limit} 条）`;
+    }
+    case 'createRecord': {
+      const sheet = sheetLabel(step.sheetId);
+      const count = step.mappings.filter((row) => row.fieldId).length;
+      return count
+        ? `在「${sheet}」新增记录，写入 ${count} 个字段`
+        : `在「${sheet}」新增记录`;
+    }
+    case 'modifyRecords': {
+      const from =
+        steps.value.find((item) => item.id === step.fromStepId)?.id.slice(0, 8) ||
+        '上一步';
+      const count = step.mappings.filter((row) => row.fieldId).length;
+      return count
+        ? `修改步骤 ${from} 找到的记录，更新 ${count} 个字段`
+        : `修改步骤 ${from} 找到的记录`;
+    }
+    case 'sendMessage': {
+      const preview = step.text.trim().slice(0, 36);
+      const who =
+        step.recipientMode === 'fixed'
+          ? `指定 ${step.userIds.length} 人`
+          : step.recipientField
+            ? `触发记录的「${step.recipientField}」`
+            : '触发相关人员';
+      return preview
+        ? `向${who}发送「${preview}${step.text.trim().length > 36 ? '…' : ''}」`
+        : `向${who}发送消息`;
+    }
+    case 'startGroupChat':
+      return step.name
+        ? `创建群聊「${step.name}」`
+        : '创建群聊';
+    case 'addGroupMembers':
+      return `向群聊添加 ${step.memberUserIds.length || '若干'} 名成员`;
+    default:
+      return stepTypeLabel(step.type);
+  }
 }
 
 function stepSheetId(step: UiStep): string {
@@ -244,6 +341,7 @@ function toggleMember(step: UiStep, userId: string): void {
 
 function buildFilter(
   rows: Array<{ fieldId: string; operator: string; value: string }>,
+  conjunction: 'and' | 'or' = 'and',
 ) {
   const conditions = rows
     .filter((row) => row.fieldId)
@@ -255,9 +353,7 @@ function buildFilter(
           ? undefined
           : row.value,
     }));
-  return conditions.length
-    ? { conjunction: 'and' as const, conditions }
-    : undefined;
+  return conditions.length ? { conjunction, conditions } : undefined;
 }
 
 function buildMappings(step: UiStep) {
@@ -301,7 +397,7 @@ function buildTrigger(): Record<string, unknown> {
   return {
     type: triggerType.value,
     sheetId: triggerSheetId.value,
-    filters: buildFilter(triggerFilters.value),
+    filters: buildFilter(triggerFilters.value, triggerConjunction.value),
   };
 }
 
@@ -315,13 +411,16 @@ function buildSteps(): Array<Record<string, unknown>> {
           sheetId: step.sheetId,
           limit: step.limit,
           onEmpty: step.onEmpty,
-          filters: buildFilter([
-            {
-              fieldId: step.filterFieldId,
-              operator: step.filterOperator,
-              value: step.filterValue,
-            },
-          ]),
+          filters: buildFilter(
+            [
+              {
+                fieldId: step.filterFieldId,
+                operator: step.filterOperator,
+                value: step.filterValue,
+              },
+            ],
+            step.filterConjunction,
+          ),
         };
       case 'createRecord':
         return {
@@ -400,18 +499,19 @@ function validate(): string {
   return '';
 }
 
-async function save(): Promise<void> {
+async function save(mode: 'draft' | 'enable' = 'draft'): Promise<void> {
   const validation = validate();
   if (validation) {
     error.value = validation;
     return;
   }
+  if (mode === 'enable') enabled.value = true;
   saving.value = true;
   error.value = '';
   try {
     const body = {
-      name: name.value.trim(),
-      enabled: enabled.value,
+      name: name.value.trim() || '未命名流程',
+      enabled: mode === 'enable' ? true : enabled.value,
       trigger: buildTrigger(),
       steps: buildSteps(),
       onFindEmpty: onFindEmpty.value,
@@ -440,13 +540,17 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
   step.limit = Number(raw.limit ?? 1) || 1;
   step.onEmpty = raw.onEmpty === 'stop' ? 'stop' : 'continue';
   const filters = raw.filters as
-    | { conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }> }
+    | {
+        conjunction?: 'and' | 'or';
+        conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }>;
+      }
     | undefined;
   const firstFilter = filters?.conditions?.[0];
   step.filterFieldId = firstFilter?.fieldId ?? '';
   step.filterOperator = firstFilter?.operator ?? 'equals';
   step.filterValue =
     firstFilter?.value === undefined ? '' : String(firstFilter.value);
+  step.filterConjunction = filters?.conjunction === 'or' ? 'or' : 'and';
   const target = raw.target as { stepId?: string } | undefined;
   step.fromStepId = String(raw.fromStepId ?? target?.stepId ?? '');
   const content = raw.content as { text?: string } | undefined;
@@ -492,14 +596,20 @@ async function load(): Promise<void> {
       (await endpoints.getBase(props.baseId)).workspaceId,
     ).catch(() => [] as MemberDto[]);
     const triggerSheetCandidate = sheets.value[0]?.id ?? '';
-    triggerSheetId.value = triggerSheetCandidate;
+    const typedDuringLoad = name.value.trim();
 
     const automation = props.automation;
     if (!automation) {
-      name.value = '新建自动化';
+      // Keep any title / sheet the user already chose while sheets were loading.
+      if (!typedDuringLoad) name.value = '未命名流程';
+      if (!triggerSheetId.value) triggerSheetId.value = triggerSheetCandidate;
+      enabled.value = false;
       return;
     }
-    name.value = automation.name;
+    name.value =
+      typedDuringLoad && typedDuringLoad !== automation.name
+        ? typedDuringLoad
+        : automation.name;
     enabled.value = automation.enabled;
     const trigger = automation.trigger as Record<string, unknown>;
     triggerType.value =
@@ -512,8 +622,12 @@ async function load(): Promise<void> {
     cron.value = String(trigger.cron ?? '0 9 * * *');
     timezone.value = String(trigger.timezone ?? 'Asia/Shanghai');
     const filters = trigger.filters as
-      | { conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }> }
+      | {
+          conjunction?: 'and' | 'or';
+          conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }>;
+        }
       | undefined;
+    triggerConjunction.value = filters?.conjunction === 'or' ? 'or' : 'and';
     triggerFilters.value =
       filters?.conditions?.length
         ? filters.conditions.map((condition) => ({
@@ -542,28 +656,21 @@ onMounted(load);
 <template>
   <div class="automation-editor" data-testid="automation-editor">
     <header class="editor-head">
-      <div>
-        <h3>{{ automation ? '编辑自动化' : '新建自动化' }}</h3>
-        <p class="muted">触发 → 查找 → 修改 / 发消息，保存后立即生效。</p>
+      <div class="editor-title-row">
+        <button class="icon-btn" type="button" aria-label="返回" @click="emit('close')">
+          ←
+        </button>
+        <input
+          v-model="name"
+          class="editor-title-input"
+          data-testid="automation-name"
+          maxlength="120"
+          placeholder="未命名流程"
+        />
       </div>
-      <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
-    </header>
-
-    <p v-if="loading" class="muted">加载中…</p>
-    <template v-else>
-      <p v-if="error" class="editor-error" data-testid="automation-editor-error">{{ error }}</p>
-
-      <div class="editor-grid">
-        <label class="form-field">
-          <span>名称</span>
-          <input v-model="name" data-testid="automation-name" maxlength="120" />
-        </label>
-        <label class="form-field inline">
-          <span>启用</span>
-          <input v-model="enabled" type="checkbox" data-testid="automation-enabled" />
-        </label>
-        <label class="form-field">
-          <span>月运行额度</span>
+      <div class="editor-head-actions">
+        <label class="quota-inline">
+          月额度
           <input
             v-model.number="monthlyQuota"
             type="number"
@@ -572,192 +679,222 @@ onMounted(load);
             data-testid="automation-quota"
           />
         </label>
+        <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
       </div>
+    </header>
 
-      <section class="editor-section">
-        <header class="section-head">
-          <strong>触发条件</strong>
-          <span class="section-tag">When</span>
-        </header>
-        <div class="trigger-grid">
-          <label class="form-field">
-            <span>触发方式</span>
-            <select v-model="triggerType" data-testid="trigger-type">
-              <option value="recordCreated">新增记录时</option>
+    <p v-if="loading" class="muted">加载中…</p>
+    <template v-else>
+      <p v-if="error" class="editor-error" data-testid="automation-editor-error">{{ error }}</p>
+
+      <section class="nl-section">
+        <h4 class="nl-section-title">当满足以下条件</h4>
+        <div class="nl-card" data-testid="automation-trigger-card">
+          <div class="nl-step-label">第 1 步</div>
+          <div class="nl-sentence" data-testid="automation-trigger-summary">
+            <select v-model="triggerType" class="nl-chip" data-testid="trigger-type">
+              <option value="recordCreated">添加新记录时</option>
               <option value="recordUpdated">更新记录时</option>
               <option value="schedule">定时触发</option>
             </select>
-          </label>
-          <label v-if="triggerType !== 'schedule'" class="form-field">
-            <span>触发表</span>
-            <select v-model="triggerSheetId" data-testid="trigger-sheet">
-              <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
-                {{ sheet.name }}
-              </option>
-            </select>
-          </label>
-          <template v-else>
-            <label class="form-field">
-              <span>cron（分 时 日 月 周）</span>
-              <input v-model="cron" data-testid="trigger-cron" />
-            </label>
-            <label class="form-field">
-              <span>时区</span>
-              <select v-model="timezone" data-testid="trigger-timezone">
+            <template v-if="triggerType !== 'schedule'">
+              <span>在</span>
+              <select v-model="triggerSheetId" class="nl-chip" data-testid="trigger-sheet">
+                <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
+                  {{ sheet.name }}
+                </option>
+              </select>
+              <span>里{{ triggerType === 'recordCreated' ? '添加新记录' : '更新记录' }}时</span>
+            </template>
+            <template v-else>
+              <span>按</span>
+              <input v-model="cron" class="nl-chip nl-chip-input" data-testid="trigger-cron" />
+              <select v-model="timezone" class="nl-chip" data-testid="trigger-timezone">
                 <option value="Asia/Shanghai">Asia/Shanghai</option>
                 <option value="UTC">UTC</option>
-                <option value="America/New_York">America/New_York</option>
-                <option value="Europe/London">Europe/London</option>
               </select>
-            </label>
-          </template>
-        </div>
+            </template>
+          </div>
 
-        <div v-if="triggerType !== 'schedule'" class="filter-block">
-          <div class="filter-title">
-            <span>且记录满足条件（全部满足）</span>
-            <button class="btn small" data-testid="trigger-add-filter" @click="addTriggerFilter">
-              + 条件
+          <div v-if="triggerType !== 'schedule'" class="nl-filters">
+            <div
+              v-for="(filter, index) in triggerFilters"
+              :key="index"
+              class="nl-sentence"
+              data-testid="trigger-condition"
+            >
+              <span>{{ index === 0 ? '且同时满足' : '并且' }}</span>
+              <select v-model="filter.fieldId" class="nl-chip" data-testid="trigger-filter-field">
+                <option value="">选择字段</option>
+                <option v-for="field in triggerFields" :key="field.id" :value="field.id">
+                  {{ field.name }}
+                </option>
+              </select>
+              <select v-model="filter.operator" class="nl-chip">
+                <option value="equals">等于</option>
+                <option value="notEquals">不等于</option>
+                <option value="contains">包含</option>
+                <option value="notContains">不包含</option>
+                <option value="isEmpty">为空</option>
+                <option value="isNotEmpty">不为空</option>
+                <option value="gt">大于</option>
+                <option value="lt">小于</option>
+              </select>
+              <input
+                v-if="filter.operator !== 'isEmpty' && filter.operator !== 'isNotEmpty'"
+                v-model="filter.value"
+                class="nl-chip nl-chip-input"
+                placeholder="值"
+              />
+              <button class="icon-btn danger" type="button" @click="removeTriggerFilter(index)">
+                ×
+              </button>
+            </div>
+            <div class="nl-sentence" style="margin-top: 4px">
+              <span>条件关系</span>
+              <select
+                v-model="triggerConjunction"
+                class="nl-chip"
+                data-testid="trigger-conjunction"
+              >
+                <option value="and">全部满足</option>
+                <option value="or">任意满足</option>
+              </select>
+            </div>
+            <button
+              class="nl-add-link"
+              type="button"
+              data-testid="trigger-add-filter"
+              @click="addTriggerFilter"
+            >
+              + 添加{{ triggerConjunction === 'or' ? '任意' : '同时' }}满足的条件
             </button>
-          </div>
-          <div
-            v-for="(filter, index) in triggerFilters"
-            :key="index"
-            class="condition-row"
-            data-testid="trigger-condition"
-          >
-            <select v-model="filter.fieldId" data-testid="trigger-filter-field">
-              <option value="">选择字段</option>
-              <option v-for="field in triggerFields" :key="field.id" :value="field.id">
-                {{ field.name }}
-              </option>
-            </select>
-            <select v-model="filter.operator">
-              <option value="equals">等于</option>
-              <option value="notEquals">不等于</option>
-              <option value="contains">包含</option>
-              <option value="isEmpty">为空</option>
-              <option value="isNotEmpty">不为空</option>
-              <option value="gt">大于</option>
-              <option value="lt">小于</option>
-            </select>
-            <input
-              v-if="filter.operator !== 'isEmpty' && filter.operator !== 'isNotEmpty'"
-              v-model="filter.value"
-              placeholder="值"
-            />
-            <button class="icon-btn danger" @click="removeTriggerFilter(index)">×</button>
+            <p class="nl-hint">
+              条件未满足时，不会触发后续操作
+            </p>
           </div>
         </div>
-        <p class="muted tiny" v-if="triggerType !== 'schedule'">
-          触发记录：{{ triggerSheet?.name ?? '请选择工作表' }}
-        </p>
       </section>
 
-      <section class="editor-section">
-        <header class="section-head">
-          <strong>执行步骤</strong>
-          <div class="section-actions">
-            <label class="inline-check">
-              查找为空
-              <select v-model="onFindEmpty">
-                <option value="continue">继续执行</option>
-                <option value="stop">终止</option>
-              </select>
-            </label>
-            <div class="add-step-wrap">
-              <button class="btn btn-primary" data-testid="automation-add-step" @click="addStepOpen = !addStepOpen">
-                + 添加步骤
+      <section class="nl-section">
+        <div class="nl-section-head">
+          <h4 class="nl-section-title">就执行以下操作</h4>
+          <div class="add-step-wrap">
+            <button
+              class="btn btn-primary"
+              data-testid="automation-add-step"
+              type="button"
+              @click="addStepOpen = !addStepOpen"
+            >
+              + 添加步骤
+            </button>
+            <div v-if="addStepOpen" class="add-step-menu">
+              <button
+                v-for="item in stepTypes"
+                :key="item.value"
+                type="button"
+                :data-testid="`add-step-${item.value}`"
+                @click="addStep(item.value)"
+              >
+                <span>{{ item.icon }}</span>{{ item.label }}
               </button>
-              <div v-if="addStepOpen" class="add-step-menu">
-                <button
-                  v-for="item in stepTypes"
-                  :key="item.value"
-                  :data-testid="`add-step-${item.value}`"
-                  @click="addStep(item.value)"
-                >
-                  <span>{{ item.icon }}</span>{{ item.label }}
-                </button>
-              </div>
             </div>
           </div>
-        </header>
+        </div>
 
         <p v-if="steps.length === 0" class="empty-steps">
-          还没有步骤。点击右上角「添加步骤」开始。
+          还没有操作步骤。点击「添加步骤」开始配置。
         </p>
 
         <article
           v-for="(step, index) in steps"
           :key="step.id"
-          class="step-card"
+          class="nl-card step-card"
           :data-testid="`automation-step-${step.type}`"
         >
-          <header class="step-head">
-            <span class="step-index">{{ index + 1 }}</span>
-            <span class="step-icon">{{ stepTypeIcon(step.type) }}</span>
-            <strong>{{ stepTypeLabel(step.type) }}</strong>
-            <span class="step-id">{{ step.id.slice(0, 8) }}</span>
-            <span class="step-spacer"></span>
-            <button class="icon-btn" title="上移" :disabled="index === 0" @click="moveStep(index, -1)">↑</button>
-            <button class="icon-btn" title="下移" :disabled="index === steps.length - 1" @click="moveStep(index, 1)">↓</button>
-            <button class="icon-btn danger" title="删除步骤" @click="removeStep(index)">×</button>
-          </header>
+          <div class="nl-card-head">
+            <div class="nl-step-label">第 {{ index + 2 }} 步 · {{ stepTypeLabel(step.type) }}</div>
+            <div class="nl-card-actions">
+              <button class="icon-btn" type="button" title="上移" :disabled="index === 0" @click="moveStep(index, -1)">↑</button>
+              <button class="icon-btn" type="button" title="下移" :disabled="index === steps.length - 1" @click="moveStep(index, 1)">↓</button>
+              <button class="icon-btn danger" type="button" title="删除" @click="removeStep(index)">×</button>
+            </div>
+          </div>
 
           <div class="step-body">
             <template v-if="step.type === 'findRecords'">
-              <div class="step-grid">
-                <label class="form-field">
-                  <span>在表中查找</span>
-                  <select v-model="step.sheetId" data-testid="step-sheet">
-                    <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
-                      {{ sheet.name }}
-                    </option>
-                  </select>
-                </label>
-                <label class="form-field">
-                  <span>最多返回</span>
-                  <input v-model.number="step.limit" type="number" min="1" />
-                </label>
-                <label class="form-field">
-                  <span>未找到时</span>
-                  <select v-model="step.onEmpty">
-                    <option value="continue">继续执行</option>
-                    <option value="stop">终止</option>
-                  </select>
-                </label>
-              </div>
-              <div class="condition-row">
-                <select v-model="step.filterFieldId" data-testid="step-filter-field">
-                  <option value="">筛选字段（可选）</option>
-                  <option v-for="field in fieldOptions(step.sheetId)" :key="field.id" :value="field.id">
-                    {{ field.name }}
-                  </option>
-                </select>
-                <select v-model="step.filterOperator">
-                  <option value="equals">等于</option>
-                  <option value="notEquals">不等于</option>
-                  <option value="contains">包含</option>
-                  <option value="isEmpty">为空</option>
-                  <option value="isNotEmpty">不为空</option>
-                </select>
-                <input v-model="step.filterValue" placeholder="值" />
-              </div>
-              <p class="muted tiny">默认只返回 1 条，避免企业微信默认 1 条的隐藏坑。</p>
-            </template>
-
-            <template v-else-if="step.type === 'createRecord'">
-              <label class="form-field">
-                <span>目标表</span>
-                <select v-model="step.sheetId" data-testid="step-sheet">
+              <div class="nl-sentence">
+                <span>在</span>
+                <select v-model="step.sheetId" class="nl-chip" data-testid="step-sheet">
                   <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
                     {{ sheet.name }}
                   </option>
                 </select>
-              </label>
+                <span>中查找最多</span>
+                <input v-model.number="step.limit" class="nl-chip nl-chip-input nl-chip-num" type="number" min="1" />
+                <span>条记录</span>
+              </div>
+              <div class="nl-sentence">
+                <span>满足</span>
+                <select
+                  v-model="step.filterConjunction"
+                  class="nl-chip"
+                  data-testid="step-filter-conjunction"
+                >
+                  <option value="and">全部</option>
+                  <option value="or">任意</option>
+                </select>
+                <span>条件</span>
+                <select v-model="step.filterFieldId" class="nl-chip" data-testid="step-filter-field">
+                  <option value="">不筛选</option>
+                  <option v-for="field in fieldOptions(step.sheetId)" :key="field.id" :value="field.id">
+                    {{ field.name }}
+                  </option>
+                </select>
+                <template v-if="step.filterFieldId">
+                  <select
+                    v-model="step.filterOperator"
+                    class="nl-chip"
+                    data-testid="step-filter-operator"
+                  >
+                    <option value="equals">等于</option>
+                    <option value="notEquals">不等于</option>
+                    <option value="contains">包含</option>
+                    <option value="notContains">不包含</option>
+                    <option value="isEmpty">为空</option>
+                    <option value="isNotEmpty">不为空</option>
+                  </select>
+                  <input
+                    v-if="step.filterOperator !== 'isEmpty' && step.filterOperator !== 'isNotEmpty'"
+                    v-model="step.filterValue"
+                    class="nl-chip nl-chip-input"
+                    data-testid="step-filter-value"
+                    placeholder="值"
+                  />
+                </template>
+              </div>
+              <div class="nl-sentence">
+                <span>未找到时</span>
+                <select v-model="step.onEmpty" class="nl-chip">
+                  <option value="continue">继续执行</option>
+                  <option value="stop">终止</option>
+                </select>
+              </div>
+            </template>
+
+            <template v-else-if="step.type === 'createRecord'">
+              <div class="nl-sentence">
+                <span>在</span>
+                <select v-model="step.sheetId" class="nl-chip" data-testid="step-sheet">
+                  <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
+                    {{ sheet.name }}
+                  </option>
+                </select>
+                <span>中新增一条记录，并写入：</span>
+              </div>
               <div class="mapping-head">
                 <span>字段写入</span>
-                <button class="btn small" @click="addMapping(step)">+ 字段</button>
+                <button class="btn small" type="button" @click="addMapping(step)">+ 字段</button>
               </div>
               <div v-for="(mapping, mappingIndex) in step.mappings" :key="mappingIndex" class="mapping-row">
                 <select v-model="mapping.fieldId">
@@ -776,16 +913,16 @@ onMounted(load);
                     <option value="trigger">触发记录</option>
                     <option value="step">前序步骤</option>
                   </select>
-                  <input v-model="mapping.variableField" placeholder="字段名，如 序列号" />
+                  <input v-model="mapping.variableField" placeholder="字段名" />
                 </template>
-                <button class="icon-btn danger" @click="removeMapping(step, mappingIndex)">×</button>
+                <button class="icon-btn danger" type="button" @click="removeMapping(step, mappingIndex)">×</button>
               </div>
             </template>
 
             <template v-else-if="step.type === 'modifyRecords'">
-              <label class="form-field">
-                <span>修改哪条记录（绑定前序查找步骤）</span>
-                <select v-model="step.fromStepId" data-testid="step-target-from">
+              <div class="nl-sentence">
+                <span>修改</span>
+                <select v-model="step.fromStepId" class="nl-chip" data-testid="step-target-from">
                   <option value="">选择查找步骤</option>
                   <option
                     v-for="candidate in previousFindSteps.filter(
@@ -794,14 +931,14 @@ onMounted(load);
                     :key="candidate.id"
                     :value="candidate.id"
                   >
-                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 1 }} 步 · 查找记录
+                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 查找记录
                   </option>
                 </select>
-              </label>
-              <p class="muted tiny">目标表：{{ sheetFields(stepSheetId(step) || '').length ? sheets.find((sheet) => sheet.id === stepSheetId(step))?.name : '未绑定' }}</p>
+                <span>找到的记录：</span>
+              </div>
               <div class="mapping-head">
                 <span>修改字段</span>
-                <button class="btn small" @click="addMapping(step)">+ 字段</button>
+                <button class="btn small" type="button" @click="addMapping(step)">+ 字段</button>
               </div>
               <div v-for="(mapping, mappingIndex) in step.mappings" :key="mappingIndex" class="mapping-row">
                 <select v-model="mapping.fieldId">
@@ -822,29 +959,20 @@ onMounted(load);
                   </select>
                   <input v-model="mapping.variableField" placeholder="字段名" />
                 </template>
-                <button class="icon-btn danger" @click="removeMapping(step, mappingIndex)">×</button>
+                <button class="icon-btn danger" type="button" @click="removeMapping(step, mappingIndex)">×</button>
               </div>
             </template>
 
             <template v-else-if="step.type === 'sendMessage'">
-              <div class="step-grid">
-                <label class="form-field">
-                  <span>发送方式</span>
-                  <select disabled>
-                    <option>应用消息（文档通知）</option>
-                  </select>
-                </label>
-                <label class="form-field">
-                  <span>接收人</span>
-                  <select v-model="step.recipientMode" data-testid="step-recipient-mode">
-                    <option value="trigger">触发记录中的人员字段</option>
-                    <option value="fixed">指定工作区成员</option>
-                  </select>
-                </label>
-                <label v-if="step.recipientMode === 'trigger'" class="form-field">
-                  <span>人员字段</span>
-                  <select v-model="step.recipientField" data-testid="step-recipient-field">
-                    <option value="">触发人 / 记录创建者</option>
+              <div class="nl-sentence">
+                <span>向</span>
+                <select v-model="step.recipientMode" class="nl-chip" data-testid="step-recipient-mode">
+                  <option value="trigger">触发记录中的人员</option>
+                  <option value="fixed">指定成员</option>
+                </select>
+                <template v-if="step.recipientMode === 'trigger'">
+                  <select v-model="step.recipientField" class="nl-chip" data-testid="step-recipient-field">
+                    <option value="">触发人</option>
                     <option
                       v-for="field in triggerFields.filter((item) => item.type === 'person')"
                       :key="field.id"
@@ -853,7 +981,8 @@ onMounted(load);
                       {{ field.name }}
                     </option>
                   </select>
-                </label>
+                </template>
+                <span>发送消息</span>
               </div>
               <div v-if="step.recipientMode === 'fixed'" class="member-picker">
                 <label v-for="member in members" :key="member.userId" class="inline-check">
@@ -877,6 +1006,7 @@ onMounted(load);
                   v-for="field in variableFieldsFor(step).slice(0, 8)"
                   :key="field"
                   class="var-chip"
+                  type="button"
                   @click="insertVariable(step, field)"
                 >
                   {{ field }}
@@ -885,10 +1015,10 @@ onMounted(load);
             </template>
 
             <template v-else-if="step.type === 'startGroupChat'">
-              <label class="form-field">
-                <span>群聊名称</span>
-                <input v-model="step.name" placeholder="例如：领取通知群" />
-              </label>
+              <div class="nl-sentence">
+                <span>创建群聊</span>
+                <input v-model="step.name" class="nl-chip nl-chip-input" placeholder="群聊名称" />
+              </div>
               <div class="member-picker">
                 <label v-for="member in members" :key="member.userId" class="inline-check">
                   <input
@@ -899,26 +1029,26 @@ onMounted(load);
                   {{ member.name }}
                 </label>
               </div>
-              <p class="muted tiny">已选择 {{ step.memberUserIds.length }} 人；企业微信凭据缺失时使用本地群聊。</p>
             </template>
 
             <template v-else-if="step.type === 'addGroupMembers'">
-              <label class="form-field">
-                <span>群聊来源</span>
-                <select v-model="step.fromStepId">
-                  <option value="">使用群聊 ID</option>
+              <div class="nl-sentence">
+                <span>向</span>
+                <select v-model="step.fromStepId" class="nl-chip">
+                  <option value="">指定群聊 ID</option>
                   <option
                     v-for="candidate in steps.filter((item) => item.type === 'startGroupChat')"
                     :key="candidate.id"
                     :value="candidate.id"
                   >
-                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 1 }} 步 · 创建群聊
+                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 创建群聊
                   </option>
                 </select>
-              </label>
+                <span>添加成员</span>
+              </div>
               <label v-if="!step.fromStepId" class="form-field">
                 <span>群聊 ID</span>
-                <input v-model="step.groupChatId" placeholder="wecom chat id" />
+                <input v-model="step.groupChatId" placeholder="chat id" />
               </label>
               <div class="member-picker">
                 <label v-for="member in members" :key="member.userId" class="inline-check">
@@ -933,15 +1063,28 @@ onMounted(load);
             </template>
           </div>
         </article>
+
+        <label class="on-empty-inline">
+          查找步骤为空时
+          <select v-model="onFindEmpty">
+            <option value="continue">继续执行</option>
+            <option value="stop">终止流程</option>
+          </select>
+        </label>
       </section>
 
       <footer class="editor-footer">
-        <p class="muted tiny" v-if="steps.length">
-          保存后共 {{ steps.length }} 步；变量以 <code v-pre>{{字段名}}</code> 插入。
-        </p>
-        <button class="btn" @click="emit('close')">取消</button>
-        <button class="btn btn-primary" data-testid="automation-save" :disabled="saving" @click="save">
-          {{ saving ? '保存中…' : '保存自动化' }}
+        <button class="btn" type="button" data-testid="automation-save" :disabled="saving" @click="save('draft')">
+          {{ saving ? '保存中…' : '仅保存' }}
+        </button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          data-testid="automation-save-enable"
+          :disabled="saving"
+          @click="save('enable')"
+        >
+          {{ saving ? '保存中…' : '保存并启用' }}
         </button>
       </footer>
     </template>
@@ -952,26 +1095,147 @@ onMounted(load);
 .automation-editor {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  max-width: 720px;
 }
 .editor-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  gap: 12px;
 }
-.editor-head h3 {
-  margin: 0 0 4px;
+.editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
-.editor-head p {
-  margin: 0;
+.editor-title-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+}
+.editor-title-input:hover,
+.editor-title-input:focus {
+  border-color: #d0d5dd;
+  background: #fff;
+  outline: none;
+}
+.editor-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.quota-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #667085;
+}
+.quota-inline input {
+  width: 72px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
   font-size: 12px;
 }
-.editor-grid,
-.step-grid,
-.trigger-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 0.8fr 0.9fr;
+.nl-section {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+}
+.nl-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.nl-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+}
+.nl-card {
+  padding: 14px 16px;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.nl-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.nl-card-actions {
+  display: flex;
+  gap: 2px;
+}
+.nl-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d6fdc;
+}
+.nl-sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #344054;
+  line-height: 1.6;
+}
+.nl-chip,
+.nl-chip-input {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #c7d7f5;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #1d6fdc;
+  font-size: 13px;
+  font-family: inherit;
+  max-width: 220px;
+}
+.nl-chip-input {
+  min-width: 88px;
+}
+.nl-chip-num {
+  width: 64px;
+  max-width: 64px;
+  text-align: center;
+}
+.nl-filters {
+  margin-top: 4px;
+}
+.nl-add-link {
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1d6fdc;
+  font-size: 13px;
+  cursor: pointer;
+}
+.nl-hint {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #1d6fdc;
+  font-size: 12px;
 }
 .form-field {
   display: flex;
@@ -980,15 +1244,9 @@ onMounted(load);
   font-size: 12px;
   color: #475467;
 }
-.form-field.inline {
-  flex-direction: row;
-  align-items: center;
-}
 .form-field input,
 .form-field select,
 .step-body textarea,
-.condition-row select,
-.condition-row input,
 .mapping-row select,
 .mapping-row input {
   height: 32px;
@@ -1006,29 +1264,6 @@ onMounted(load);
   width: 100%;
   box-sizing: border-box;
 }
-.editor-section {
-  padding: 14px;
-  border: 1px solid #eaecf0;
-  border-radius: 11px;
-}
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.section-tag {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: #eef4ff;
-  color: #1d6fdc;
-  font-size: 10px;
-}
-.section-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
 .inline-check {
   display: inline-flex;
   align-items: center;
@@ -1036,35 +1271,20 @@ onMounted(load);
   font-size: 12px;
   color: #475467;
 }
-.inline-check select {
-  height: 28px;
-  border: 1px solid #d0d5dd;
-  border-radius: 6px;
-}
-.filter-block {
-  margin-top: 10px;
-  padding: 10px;
-  border-radius: 8px;
-  background: #f8f9fb;
-}
-.filter-title,
 .mapping-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  margin: 8px 0 4px;
   font-size: 12px;
   color: #475467;
 }
-.condition-row,
 .mapping-row {
   display: flex;
   gap: 6px;
   align-items: center;
   margin-top: 6px;
 }
-.condition-row select,
-.condition-row input,
 .mapping-row select,
 .mapping-row input {
   flex: 1;
@@ -1103,52 +1323,32 @@ onMounted(load);
   background: #f5f8ff;
 }
 .empty-steps {
-  padding: 18px;
+  padding: 22px;
   text-align: center;
   color: #98a2b3;
-  font-size: 12px;
+  font-size: 13px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 12px;
 }
 .step-card {
-  margin-top: 10px;
-  border: 1px solid #e5e6eb;
-  border-radius: 10px;
-  overflow: hidden;
-}
-.step-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: #f8f9fb;
-  border-bottom: 1px solid #eef0f3;
-}
-.step-index {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: #2d8cf0;
-  color: #fff;
-  font-size: 11px;
-}
-.step-icon {
-  font-size: 14px;
-}
-.step-id {
-  color: #98a2b3;
-  font-size: 10px;
-  font-family: ui-monospace, Menlo, monospace;
-}
-.step-spacer {
-  flex: 1;
+  margin-top: 0;
 }
 .step-body {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+.on-empty-inline {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  padding: 11px;
+  font-size: 12px;
+  color: #667085;
+}
+.on-empty-inline select {
+  height: 28px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
 }
 .member-picker {
   display: flex;
@@ -1180,15 +1380,15 @@ onMounted(load);
   margin: 0;
 }
 .editor-footer {
+  position: sticky;
+  bottom: 0;
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  padding-top: 6px;
+  gap: 10px;
+  padding: 12px 0 4px;
   border-top: 1px solid #eaecf0;
-}
-.editor-footer p {
-  flex: 1;
+  background: #fff;
 }
 .icon-btn.danger {
   color: #d4380d;
@@ -1198,12 +1398,5 @@ onMounted(load);
 }
 .tiny {
   font-size: 11px;
-}
-@media (max-width: 800px) {
-  .editor-grid,
-  .step-grid,
-  .trigger-grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

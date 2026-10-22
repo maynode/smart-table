@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
 import MembersPanel from '../components/MembersPanel.vue';
@@ -14,8 +14,18 @@ import PublicViewPanel from '../components/PublicViewPanel.vue';
 import DeveloperPanel from '../components/DeveloperPanel.vue';
 import QuotaPanel from '../components/QuotaPanel.vue';
 import SyncPanel from '../components/SyncPanel.vue';
+import NotificationBell from '../components/NotificationBell.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { confirmDialog, promptDialog } from '../ui/dialog';
+import {
+  clearEditHistory,
+  pushEdit,
+  pushRedo,
+  pushUndoEntry,
+  takeRedo,
+  takeUndo,
+} from '../ui/edit-history';
 import { toast } from '../ui/toast';
 import type { ViewQuery } from 'shared';
 import type {
@@ -61,6 +71,9 @@ const commentsOpen = ref(false);
 const comments = ref<CommentDto[]>([]);
 const commentDraft = ref('');
 const commentSending = ref(false);
+const mentionQuery = ref<string | null>(null);
+const mentionIndex = ref(0);
+const commentMentions = ref<string[]>([]);
 
 const membersOpen = ref(false);
 const members = ref<MemberDto[]>([]);
@@ -130,6 +143,9 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       endpoints.getSheet(sheetId),
       endpoints.listSavedViews(sheetId).catch(() => [] as SavedViewDto[]),
     ]);
+    if (activeSheet.value?.id !== sheetId) {
+      clearEditHistory();
+    }
     activeSheet.value = detail;
     savedViews.value = views;
     currentViewId.value = '';
@@ -196,16 +212,33 @@ function coerceCellValue(field: FieldDto, value: string): unknown {
   return value;
 }
 
+function formatHistoryValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '空';
+  if (typeof value === 'string') return value.slice(0, 24);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value).slice(0, 24);
+  } catch {
+    return '…';
+  }
+}
+
 async function commitCell(payload: {
   record: RecordDto;
   field: FieldDto;
   value: unknown;
+  previous?: unknown;
 }): Promise<void> {
+  if (!activeSheet.value) return;
   try {
     const coerced =
       typeof payload.value === 'string'
         ? coerceCellValue(payload.field, payload.value)
         : payload.value;
+    const previous =
+      payload.previous !== undefined
+        ? payload.previous
+        : payload.record.cells[payload.field.id];
     const updated = await endpoints.updateRecord(
       payload.record.id,
       { [payload.field.id]: coerced },
@@ -214,9 +247,78 @@ async function commitCell(payload: {
     records.value = records.value.map((record) =>
       record.id === updated.id ? updated : record,
     );
+    pushEdit({
+      sheetId: activeSheet.value.id,
+      recordId: updated.id,
+      fieldId: payload.field.id,
+      fieldName: payload.field.name,
+      previous,
+      next: coerced,
+      label: `${payload.field.name}: ${formatHistoryValue(previous)} → ${formatHistoryValue(coerced)}`,
+    });
   } catch (error) {
     toast(messageOf(error));
   }
+}
+
+async function applyHistoryValue(
+  recordId: string,
+  fieldId: string,
+  value: unknown,
+): Promise<boolean> {
+  const record = records.value.find((item) => item.id === recordId);
+  if (!record) {
+    toast('记录已不存在，无法撤销/重做');
+    return false;
+  }
+  try {
+    const updated = await endpoints.updateRecord(
+      recordId,
+      { [fieldId]: value },
+      record.version,
+    );
+    records.value = records.value.map((item) =>
+      item.id === updated.id ? updated : item,
+    );
+    return true;
+  } catch (error) {
+    toast(messageOf(error));
+    return false;
+  }
+}
+
+async function undoEdit(): Promise<void> {
+  const entry = takeUndo();
+  if (!entry) return;
+  const ok = await applyHistoryValue(
+    entry.recordId,
+    entry.fieldId,
+    entry.previous,
+  );
+  if (!ok) {
+    pushUndoEntry(entry);
+    return;
+  }
+  pushRedo(entry);
+  toast('已撤销');
+}
+
+async function redoEdit(): Promise<void> {
+  const entry = takeRedo();
+  if (!entry) return;
+  const ok = await applyHistoryValue(entry.recordId, entry.fieldId, entry.next);
+  if (!ok) {
+    pushRedo(entry);
+    return;
+  }
+  pushUndoEntry(entry);
+  toast('已重做');
+}
+
+async function refreshSheet(): Promise<void> {
+  if (!activeSheet.value) return;
+  await selectSheet(activeSheet.value.id, false);
+  toast('已刷新');
 }
 
 async function loadMore(): Promise<void> {
@@ -275,6 +377,15 @@ async function createField(payload: {
       fields: [...(activeSheet.value.fields ?? []), created],
     };
     toast(`已添加字段「${created.name}」`);
+    // Relation / formula / lookup need follow-up config (企微加列后进配置).
+    if (
+      created.type === 'relation' ||
+      created.type === 'formula' ||
+      created.type === 'lookup' ||
+      created.type === 'ai'
+    ) {
+      gridRef.value?.openFieldOptions?.(created);
+    }
   } catch (error) {
     toast(messageOf(error));
   }
@@ -354,7 +465,7 @@ async function uploadToSheet(file: File) {
 
 async function renameSheet(sheet: SheetDto): Promise<void> {
   sheetMenuId.value = null;
-  const name = window.prompt('重命名工作表', sheet.name)?.trim();
+  const name = (await promptDialog('重命名工作表', sheet.name))?.trim();
   if (!name || name === sheet.name) return;
   try {
     const updated = await endpoints.updateSheet(sheet.id, name);
@@ -372,9 +483,11 @@ async function renameSheet(sheet: SheetDto): Promise<void> {
 
 async function deleteSheet(sheet: SheetDto): Promise<void> {
   sheetMenuId.value = null;
-  if (!window.confirm(`删除工作表「${sheet.name}」及其全部记录？此操作不可撤销。`)) {
-    return;
-  }
+  const ok = await confirmDialog(
+    `删除工作表「${sheet.name}」及其全部记录？此操作不可撤销。`,
+    { title: '删除工作表', confirmLabel: '删除' },
+  );
+  if (!ok) return;
   try {
     await endpoints.deleteSheet(sheet.id);
     const wasActive = activeSheet.value?.id === sheet.id;
@@ -449,7 +562,7 @@ function applySavedView(view: SavedViewDto): void {
 }
 
 async function renameSavedView(view: SavedViewDto): Promise<void> {
-  const name = window.prompt('重命名视图', view.name)?.trim();
+  const name = (await promptDialog('重命名视图', view.name))?.trim();
   if (!name || name === view.name) return;
   try {
     const updated = await endpoints.updateSavedView(view.id, { name });
@@ -463,7 +576,11 @@ async function renameSavedView(view: SavedViewDto): Promise<void> {
 }
 
 async function deleteSavedView(view: SavedViewDto): Promise<void> {
-  if (!window.confirm(`删除视图「${view.name}」？`)) return;
+  const ok = await confirmDialog(`删除视图「${view.name}」？`, {
+    title: '删除视图',
+    confirmLabel: '删除',
+  });
+  if (!ok) return;
   try {
     await endpoints.deleteSavedView(view.id);
     savedViews.value = savedViews.value.filter((item) => item.id !== view.id);
@@ -485,7 +602,7 @@ function onQueryChange(query: ViewQuery): void {
 }
 
 async function createSheet(): Promise<void> {
-  const name = window.prompt('新工作表名称', '新工作表');
+  const name = (await promptDialog('新工作表名称', '新工作表'))?.trim();
   if (!name) return;
   try {
     const sheet = await endpoints.createSheet(baseId.value, name);
@@ -500,10 +617,102 @@ async function openComments(): Promise<void> {
   commentsOpen.value = true;
   if (!activeSheet.value) return;
   try {
-    comments.value = await endpoints.listComments(activeSheet.value.id);
+    const [list, memberList] = await Promise.all([
+      endpoints.listComments(activeSheet.value.id),
+      members.value.length
+        ? Promise.resolve(members.value)
+        : endpoints.listMembers(workspaceId.value),
+    ]);
+    comments.value = list;
+    if (!members.value.length) members.value = memberList;
   } catch (error) {
     toast(messageOf(error));
   }
+}
+
+const mentionCandidates = computed(() => {
+  if (mentionQuery.value === null) return [];
+  const q = mentionQuery.value.toLowerCase();
+  return members.value
+    .filter(
+      (member) =>
+        !q ||
+        member.name.toLowerCase().includes(q) ||
+        member.email.toLowerCase().includes(q),
+    )
+    .slice(0, 8);
+});
+
+function onCommentInput(): void {
+  const text = commentDraft.value;
+  const match = /(^|[\s])@([^\s@]*)$/.exec(text);
+  if (!match) {
+    mentionQuery.value = null;
+    return;
+  }
+  mentionQuery.value = match[2] ?? '';
+  mentionIndex.value = 0;
+}
+
+function insertMention(member: MemberDto): void {
+  const text = commentDraft.value;
+  const match = /(^|[\s])@([^\s@]*)$/.exec(text);
+  if (!match) {
+    commentDraft.value = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@${member.name} `;
+  } else {
+    const start = text.length - (match[2]?.length ?? 0) - 1;
+    commentDraft.value = `${text.slice(0, start)}@${member.name} ${text.slice(text.length)}`;
+  }
+  if (!commentMentions.value.includes(member.userId)) {
+    commentMentions.value = [...commentMentions.value, member.userId];
+  }
+  mentionQuery.value = null;
+}
+
+function onCommentKeydown(event: KeyboardEvent): void {
+  if (mentionQuery.value === null || mentionCandidates.value.length === 0) {
+    return;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    mentionIndex.value =
+      (mentionIndex.value + 1) % mentionCandidates.value.length;
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    mentionIndex.value =
+      (mentionIndex.value - 1 + mentionCandidates.value.length) %
+      mentionCandidates.value.length;
+  } else if (event.key === 'Enter' || event.key === 'Tab') {
+    event.preventDefault();
+    insertMention(mentionCandidates.value[mentionIndex.value]);
+  } else if (event.key === 'Escape') {
+    mentionQuery.value = null;
+  }
+}
+
+function resolveMentionIds(body: string): string[] {
+  const ids = new Set(commentMentions.value);
+  for (const member of members.value) {
+    if (body.includes(`@${member.name}`) || body.includes(`@${member.email}`)) {
+      ids.add(member.userId);
+    }
+  }
+  return [...ids];
+}
+
+function formatCommentBody(body: string): string {
+  let html = body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const sorted = [...members.value].sort(
+    (a, b) => b.name.length - a.name.length,
+  );
+  for (const member of sorted) {
+    const token = `@${member.name}`;
+    html = html.split(token).join(`<span class="mention">${token}</span>`);
+  }
+  return html.replace(/\n/g, '<br />');
 }
 
 async function postComment(): Promise<void> {
@@ -512,12 +721,17 @@ async function postComment(): Promise<void> {
   }
   commentSending.value = true;
   try {
+    const body = commentDraft.value.trim();
+    const mentionedUserIds = resolveMentionIds(body);
     const comment = await endpoints.createComment(
       activeSheet.value.id,
-      commentDraft.value.trim(),
+      body,
+      mentionedUserIds,
     );
     comments.value = [...comments.value, comment];
     commentDraft.value = '';
+    commentMentions.value = [];
+    mentionQuery.value = null;
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -651,7 +865,39 @@ function openCreatedBase(result: { baseId: string }): void {
   void router.push(`/workspaces/${workspaceId.value}/bases/${result.baseId}`);
 }
 
-onMounted(bootstrap);
+function onGlobalKeydown(event: KeyboardEvent): void {
+  const mod = event.metaKey || event.ctrlKey;
+  if (!mod) return;
+  const target = event.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
+      target.isContentEditable)
+  ) {
+    // Allow undo inside cell editor via CanvasGrid; skip when typing elsewhere.
+    if (target.getAttribute('data-testid') !== 'cell-editor') return;
+  }
+  if (event.key === 'z' || event.key === 'Z') {
+    event.preventDefault();
+    if (event.shiftKey) void redoEdit();
+    else void undoEdit();
+    return;
+  }
+  if (event.key === 'y' || event.key === 'Y') {
+    event.preventDefault();
+    void redoEdit();
+  }
+}
+
+onMounted(() => {
+  void bootstrap();
+  window.addEventListener('keydown', onGlobalKeydown);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown);
+});
 </script>
 
 <template>
@@ -676,6 +922,7 @@ onMounted(bootstrap);
         </nav>
       </div>
       <div class="topbar-right">
+        <NotificationBell />
         <button class="topbar-btn" @click="openMembers">成员</button>
         <button
           class="topbar-btn"
@@ -923,9 +1170,13 @@ onMounted(bootstrap);
           :row-height="rowHeightPx"
           :groups="viewGroups"
           :members="members"
+          :sheets="sheets"
           :upload-attachment="uploadToSheet"
           @add-row="addRow"
           @load-more="loadMore"
+          @refresh="refreshSheet"
+          @undo="undoEdit"
+          @redo="redoEdit"
           @commit="commitCell"
           @toggle-field="toggleField"
           @create-field="createField"
@@ -952,17 +1203,43 @@ onMounted(bootstrap);
       <ul class="comment-list">
         <li v-for="comment in comments" :key="comment.id">
           <div class="comment-author">{{ comment.author.name }}</div>
-          <p>{{ comment.body }}</p>
+          <p class="comment-body" v-html="formatCommentBody(comment.body)"></p>
         </li>
         <li v-if="comments.length === 0" class="muted">还没有评论。</li>
       </ul>
       <form class="comment-form" @submit.prevent="postComment">
-        <textarea
-          v-model="commentDraft"
-          data-testid="comment-input"
-          rows="3"
-          placeholder="输入评论，@ 同事"
-        ></textarea>
+        <div class="comment-compose">
+          <textarea
+            v-model="commentDraft"
+            data-testid="comment-input"
+            rows="3"
+            placeholder="输入评论，键入 @ 提及同事"
+            @input="onCommentInput"
+            @keydown="onCommentKeydown"
+          ></textarea>
+          <ul
+            v-if="mentionQuery !== null && mentionCandidates.length"
+            class="mention-menu"
+            data-testid="mention-menu"
+          >
+            <li
+              v-for="(member, index) in mentionCandidates"
+              :key="member.userId"
+              :class="{ active: index === mentionIndex }"
+              :data-testid="`mention-option-${member.userId}`"
+              @mousedown.prevent="insertMention(member)"
+            >
+              <strong>{{ member.name }}</strong>
+              <span>{{ member.email }}</span>
+            </li>
+          </ul>
+          <p
+            v-else-if="mentionQuery !== null && members.length === 0"
+            class="mention-empty"
+          >
+            暂无成员可提及
+          </p>
+        </div>
         <button
           class="btn btn-primary"
           data-testid="comment-send"
@@ -1121,9 +1398,11 @@ onMounted(bootstrap);
   display: none;
 }
 .automation-modal {
-  width: min(980px, 94vw);
+  width: min(880px, 94vw);
   max-height: 88vh;
+  padding: 16px 18px 12px;
   overflow: auto;
+  border-radius: 12px;
 }
 .form-builder-modal {
   width: min(1120px, 95vw);
