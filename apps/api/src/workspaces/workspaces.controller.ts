@@ -14,7 +14,9 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { PinWorkspaceDto } from './dto/pin-workspace.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
 @Controller('workspaces')
@@ -37,6 +39,33 @@ export class WorkspacesController {
     return this.workspacesService.getDetail(id, user.sub);
   }
 
+  @Patch(':id')
+  rename(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateWorkspaceDto,
+  ) {
+    return this.workspacesService.rename(id, user.sub, dto.name);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+  ): Promise<void> {
+    await this.workspacesService.remove(id, user.sub);
+  }
+
+  @Patch(':id/pin')
+  setPinned(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: PinWorkspaceDto,
+  ) {
+    return this.workspacesService.setPinned(id, user.sub, dto.pinned);
+  }
+
   @Get(':id/members')
   members(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.workspacesService.listMembers(id, user.sub);
@@ -48,7 +77,7 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Body() dto: InviteMemberDto,
   ) {
-    return this.workspacesService.invite(id, user.sub, dto.email, dto.role);
+    return this.workspacesService.invite(id, user.sub, dto.account, dto.role);
   }
 
   @Patch(':id/members/:userId')

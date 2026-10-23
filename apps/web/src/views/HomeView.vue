@@ -36,6 +36,12 @@ const moveBaseId = ref('');
 const moveTargetId = ref('');
 const createMenuOpen = ref(false);
 const rowMenuId = ref<string | null>(null);
+const wsMenuId = ref<string | null>(null);
+const wsMenuPos = ref<{ top: number; left: number } | null>(null);
+
+const wsMenuTarget = computed(
+  () => workspaces.value.find((item) => item.id === wsMenuId.value) ?? null,
+);
 const baseFormOpen = ref(false);
 const baseFormMode = ref<'create' | 'edit'>('create');
 const baseFormId = ref('');
@@ -78,6 +84,14 @@ const canEditCurrent = computed(() => {
   const role = currentWorkspace.value?.role;
   return role === 'owner' || role === 'admin' || role === 'editor';
 });
+
+function canManageWorkspace(ws: WorkspaceDto): boolean {
+  return ws.role === 'owner' || ws.role === 'admin';
+}
+
+function canDeleteWorkspace(ws: WorkspaceDto): boolean {
+  return ws.role === 'owner';
+}
 
 const ownedBases = computed(() => bases.value.filter(isOwnedBase));
 
@@ -140,6 +154,36 @@ function persistWorkspaceId(id: string): void {
 function closeMenus(): void {
   createMenuOpen.value = false;
   rowMenuId.value = null;
+  wsMenuId.value = null;
+  wsMenuPos.value = null;
+}
+
+function toggleWsMenu(id: string, event: Event): void {
+  event.stopPropagation();
+  rowMenuId.value = null;
+  createMenuOpen.value = false;
+  if (wsMenuId.value === id) {
+    wsMenuId.value = null;
+    wsMenuPos.value = null;
+    return;
+  }
+  const btn = event.currentTarget as HTMLElement | null;
+  const rect = btn?.getBoundingClientRect();
+  if (!rect) return;
+  const menuWidth = 168;
+  const left = Math.min(
+    Math.max(8, rect.right - menuWidth),
+    window.innerWidth - menuWidth - 8,
+  );
+  // 优先在按钮下方展开；靠近底部时翻到上方
+  const below = rect.bottom + 4;
+  const estHeight = 140;
+  const top =
+    below + estHeight > window.innerHeight - 8
+      ? Math.max(8, rect.top - estHeight - 4)
+      : below;
+  wsMenuId.value = id;
+  wsMenuPos.value = { top, left };
 }
 
 function onDocumentClick(): void {
@@ -190,18 +234,96 @@ async function loadBases(): Promise<void> {
 }
 
 async function createWorkspace(): Promise<void> {
-  const name = (await promptDialog('新建工作区', '未命名工作区', {
+  await promptDialog('新建工作区', '未命名工作区', {
     confirmLabel: '创建',
-  }))?.trim();
-  if (!name) return;
+    onConfirm: async (raw) => {
+      const name = raw.trim();
+      if (!name) {
+        toast('请填写名称');
+        throw new Error('empty');
+      }
+      try {
+        const workspace = await endpoints.createWorkspace(name);
+        workspaces.value = [...workspaces.value, workspace];
+        toast('工作区已创建');
+        persistWorkspaceId(workspace.id);
+        await loadBases();
+      } catch (error) {
+        toast(messageOf(error) || '创建工作区失败');
+        throw error;
+      }
+    },
+  });
+}
+
+async function renameWorkspace(ws: WorkspaceDto): Promise<void> {
+  closeMenus();
+  if (!canManageWorkspace(ws)) return;
+  await promptDialog('重命名工作区', ws.name, {
+    confirmLabel: '保存',
+    onConfirm: async (raw) => {
+      const name = raw.trim();
+      if (!name) {
+        toast('请填写名称');
+        throw new Error('empty');
+      }
+      if (name === ws.name) return;
+      try {
+        const updated = await endpoints.renameWorkspace(ws.id, name);
+        workspaces.value = workspaces.value.map((item) =>
+          item.id === updated.id ? { ...item, ...updated } : item,
+        );
+        toast('已重命名');
+      } catch (error) {
+        toast(messageOf(error) || '重命名失败');
+        throw error;
+      }
+    },
+  });
+}
+
+async function togglePinWorkspace(ws: WorkspaceDto): Promise<void> {
+  closeMenus();
+  const next = !ws.pinned;
   try {
-    const workspace = await endpoints.createWorkspace(name);
-    workspaces.value = [...workspaces.value, workspace];
-    toast('工作区已创建');
-    persistWorkspaceId(workspace.id);
-    await loadBases();
+    await endpoints.pinWorkspace(ws.id, next);
+    workspaces.value = await endpoints.listWorkspaces();
+    toast(next ? '已置顶' : '已取消置顶');
   } catch (error) {
-    toast(messageOf(error) || '创建工作区失败');
+    toast(messageOf(error) || '置顶失败');
+  }
+}
+
+async function deleteWorkspace(ws: WorkspaceDto): Promise<void> {
+  closeMenus();
+  if (!canDeleteWorkspace(ws)) return;
+  const ok = await confirmDialog(
+    `确定删除工作区「${ws.name}」？其中的智能表格将一并删除且无法恢复。`,
+    { confirmLabel: '删除', danger: true },
+  );
+  if (!ok) return;
+  try {
+    await endpoints.deleteWorkspace(ws.id);
+    workspaces.value = workspaces.value.filter((item) => item.id !== ws.id);
+    toast('工作区已删除');
+    if (currentWorkspaceId.value === ws.id) {
+      const next = workspaces.value[0]?.id ?? '';
+      if (next) {
+        persistWorkspaceId(next);
+        await loadBases();
+      } else {
+        currentWorkspaceId.value = '';
+        bases.value = [];
+        try {
+          localStorage.removeItem(WS_STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+        void router.replace({ path: '/' });
+      }
+    }
+  } catch (error) {
+    toast(messageOf(error) || '删除失败');
   }
 }
 
@@ -309,7 +431,8 @@ async function confirmMove(): Promise<void> {
     moveOpen.value = false;
     await loadBases();
   } catch (error) {
-    toast(messageOf(error));
+    // 重名等失败时保留移动弹窗，方便改目标或取消
+    toast(messageOf(error) || '移动失败');
   }
 }
 
@@ -353,6 +476,7 @@ function openBase(baseId: string): void {
 function toggleRowMenu(baseId: string, event: MouseEvent): void {
   event.stopPropagation();
   rowMenuId.value = rowMenuId.value === baseId ? null : baseId;
+  wsMenuId.value = null;
   createMenuOpen.value = false;
 }
 
@@ -469,8 +593,8 @@ onUnmounted(() => {
           />
         </div>
         <p v-if="loading" class="hint">加载中…</p>
-        <ul v-else class="ws-list">
-          <li v-for="ws in filteredWorkspaces" :key="ws.id">
+        <ul v-else class="ws-list" @scroll="closeMenus">
+          <li v-for="ws in filteredWorkspaces" :key="ws.id" class="ws-row">
             <button
               type="button"
               class="ws-item"
@@ -484,12 +608,58 @@ onUnmounted(() => {
                 <span class="ws-role">{{ roleLabel[ws.role ?? ''] ?? '成员' }}</span>
               </span>
             </button>
+            <div class="ws-more" @click.stop>
+              <button
+                type="button"
+                class="more-btn ws-more-btn"
+                :aria-expanded="wsMenuId === ws.id"
+                :data-testid="`workspace-menu-${ws.id}`"
+                @click="toggleWsMenu(ws.id, $event)"
+              >
+                ⋯
+              </button>
+            </div>
           </li>
           <li v-if="filteredWorkspaces.length === 0" class="hint">
             {{ workspaces.length ? '无匹配结果' : '点击右上角 + 创建工作区' }}
           </li>
         </ul>
       </aside>
+
+      <Teleport to="body">
+        <div
+          v-if="wsMenuTarget && wsMenuPos"
+          class="menu row-menu ws-menu-fixed"
+          data-testid="workspace-row-menu"
+          :style="{ top: `${wsMenuPos.top}px`, left: `${wsMenuPos.left}px` }"
+          @click.stop
+        >
+          <button
+            type="button"
+            data-testid="workspace-pin"
+            @click="togglePinWorkspace(wsMenuTarget)"
+          >
+            {{ wsMenuTarget.pinned ? '取消置顶' : '置顶' }}
+          </button>
+          <button
+            v-if="canManageWorkspace(wsMenuTarget)"
+            type="button"
+            data-testid="workspace-rename"
+            @click="renameWorkspace(wsMenuTarget)"
+          >
+            重命名
+          </button>
+          <button
+            v-if="canDeleteWorkspace(wsMenuTarget)"
+            type="button"
+            class="danger"
+            data-testid="workspace-delete"
+            @click="deleteWorkspace(wsMenuTarget)"
+          >
+            删除
+          </button>
+        </div>
+      </Teleport>
 
       <main class="main">
         <div class="main-head">
@@ -750,22 +920,22 @@ onUnmounted(() => {
 
 <style scoped>
 .hub {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: #f5f6f8;
+  overflow: hidden;
 }
 
 .topbar {
   height: 56px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 20px;
   padding: 0 20px;
   background: #fff;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
   z-index: 20;
 }
 
@@ -899,6 +1069,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -908,6 +1079,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar-title {
@@ -954,15 +1127,36 @@ onUnmounted(() => {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ws-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: 9px;
+  z-index: 0;
+}
+
+.ws-row:has(.menu) {
+  z-index: 40;
+}
+
+.ws-row:hover,
+.ws-row:focus-within {
+  background: #f5f6f8;
 }
 
 .ws-item {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 10px;
+  padding: 10px 28px 10px 10px;
   border: none;
   border-radius: 9px;
   background: transparent;
@@ -972,12 +1166,37 @@ onUnmounted(() => {
 }
 
 .ws-item:hover {
-  background: #f5f6f8;
+  background: transparent;
 }
 
 .ws-item.active {
   background: #e8f3ff;
 }
+
+.ws-row:has(.ws-item.active) {
+  background: #e8f3ff;
+}
+
+.ws-more {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.ws-row:hover .ws-more,
+.ws-row:focus-within .ws-more,
+.ws-more:has(.menu) {
+  opacity: 1;
+}
+
+.ws-more-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+
 
 .ws-dot {
   width: 8px;
@@ -1017,6 +1236,8 @@ onUnmounted(() => {
 }
 
 .main {
+  min-height: 0;
+  overflow-y: auto;
   padding: 28px 36px 40px;
   max-width: 1080px;
 }
@@ -1158,6 +1379,13 @@ onUnmounted(() => {
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.14);
   z-index: 30;
   animation: hub-menu-in 0.14s ease;
+}
+
+.menu.ws-menu-fixed {
+  position: fixed;
+  top: 0;
+  right: auto;
+  z-index: 2500;
 }
 
 @keyframes hub-menu-in {
@@ -1315,6 +1543,7 @@ onUnmounted(() => {
     border-right: none;
     border-bottom: 1px solid var(--border);
     max-height: 220px;
+    overflow: hidden;
   }
 
   .main {

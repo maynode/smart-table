@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { validateAccount } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { MemberDto } from '../api/types';
@@ -12,7 +13,7 @@ const emit = defineEmits<{
 }>();
 
 const members = ref<MemberDto[]>([]);
-const email = ref('');
+const account = ref('');
 const role = ref<'editor' | 'viewer' | 'admin'>('editor');
 const loading = ref(false);
 const inviting = ref(false);
@@ -36,13 +37,14 @@ async function load(): Promise<void> {
 }
 
 async function invite(): Promise<void> {
-  const target = email.value.trim().toLowerCase();
+  const target = account.value.trim().toLowerCase();
   if (!target) {
-    error.value = '请输入成员邮箱';
+    error.value = '请输入成员账号';
     return;
   }
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target)) {
-    error.value = '邮箱格式不正确';
+  const accountError = validateAccount(target);
+  if (accountError) {
+    error.value = accountError;
     return;
   }
   inviting.value = true;
@@ -54,7 +56,7 @@ async function invite(): Promise<void> {
       role.value,
     );
     members.value = [...members.value, created];
-    email.value = '';
+    account.value = '';
     emit('changed', [...members.value]);
   } catch (cause) {
     error.value = messageOf(cause);
@@ -135,10 +137,9 @@ onMounted(load);
 
     <form class="invite-form" @submit.prevent="invite">
       <input
-        v-model="email"
-        type="email"
-        placeholder="输入已注册成员的邮箱"
-        data-testid="invite-email"
+        v-model="account"
+        placeholder="输入已注册成员的账号"
+        data-testid="invite-account"
       />
       <select v-model="role" data-testid="invite-role">
         <option value="editor">可编辑</option>
@@ -161,7 +162,7 @@ onMounted(load);
         <span class="avatar">{{ member.name.slice(0, 1) }}</span>
         <span class="member-main">
           <strong>{{ member.name }}</strong>
-          <small>{{ member.email }}</small>
+          <small>{{ member.account }}</small>
         </span>
         <select
           v-if="member.role !== 'owner'"

@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { hash } from '@node-rs/argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
 
-const DEMO_EMAIL = 'demo@smart-table.local';
+const DEMO_ACCOUNT = 'demo';
 const DEMO_PASSWORD = 'Passw0rd!123';
 const WORKSPACE_NAME = '序列号领取演示';
 const BASE_NAME = '序列号领取';
@@ -16,7 +16,7 @@ export interface SerialClaimSeedResult {
   shareToken: string;
   shareUrl: string;
   automationId: string;
-  demoEmail: string;
+  demoAccount: string;
   demoPassword: string;
   codes: number;
 }
@@ -33,13 +33,15 @@ export async function seedSerialClaim(
     process.env.PUBLIC_FORM_BASE_URL ?? 'http://localhost:5173'
   ).replace(/\/$/, '');
 
-  let user = await prisma.user.findUnique({ where: { email: DEMO_EMAIL } });
+  let user = await prisma.user.findUnique({ where: { account: DEMO_ACCOUNT } });
   if (!user) {
     user = await prisma.user.create({
       data: {
-        email: DEMO_EMAIL,
+        account: DEMO_ACCOUNT,
         name: '演示管理员',
         passwordHash: await hash(DEMO_PASSWORD),
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswerHash: await hash('demo'),
       },
     });
   }
@@ -84,7 +86,7 @@ export async function seedSerialClaim(
         shareToken: form.shareToken,
         shareUrl: `${publicBase}/fill/${form.shareToken}`,
         automationId: automation?.id ?? '',
-        demoEmail: DEMO_EMAIL,
+        demoAccount: DEMO_ACCOUNT,
         demoPassword: DEMO_PASSWORD,
         codes: await prisma.recordRow.count({
           where: { sheet: { baseId: existingBase.id, name: '码库' } },
@@ -263,7 +265,7 @@ export async function seedSerialClaim(
     shareToken: result.shareToken,
     shareUrl: `${publicBase}/fill/${result.shareToken}`,
     automationId: result.automationId,
-    demoEmail: DEMO_EMAIL,
+    demoAccount: DEMO_ACCOUNT,
     demoPassword: DEMO_PASSWORD,
     codes: CODE_COUNT,
   };

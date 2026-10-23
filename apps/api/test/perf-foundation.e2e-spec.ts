@@ -33,10 +33,11 @@ describe('Performance foundation (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `perf-${stamp}@example.com`,
+        account: `perf${stamp}`,
         password: 'Passw0rd!123',
         name: '性能管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
   });
 

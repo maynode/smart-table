@@ -12,9 +12,11 @@ export interface DialogState {
   cancelLabel: string;
   danger: boolean;
   value: string;
+  busy: boolean;
 }
 
 type Resolver = ((value: string | null) => void) | ((value: boolean) => void);
+type PromptSubmit = (value: string) => void | Promise<void>;
 
 const state = reactive<DialogState>({
   open: false,
@@ -26,13 +28,17 @@ const state = reactive<DialogState>({
   cancelLabel: '取消',
   danger: false,
   value: '',
+  busy: false,
 });
 
 let resolveFn: Resolver | null = null;
+let promptSubmit: PromptSubmit | null = null;
 
 function close(): void {
   state.open = false;
+  state.busy = false;
   resolveFn = null;
+  promptSubmit = null;
 }
 
 export function useAppDialogState() {
@@ -42,13 +48,21 @@ export function useAppDialogState() {
 export function promptDialog(
   title: string,
   defaultValue = '',
-  options?: { confirmLabel?: string; cancelLabel?: string },
+  options?: {
+    confirmLabel?: string;
+    cancelLabel?: string;
+    /**
+     * 点确定时调用。成功才关弹窗；抛错则保持弹窗不动（由调用方 toast）。
+     */
+    onConfirm?: PromptSubmit;
+  },
 ): Promise<string | null> {
   return new Promise((resolve) => {
     if (resolveFn) {
       (resolveFn as (value: string | null) => void)(null);
     }
     resolveFn = resolve as (value: string | null) => void;
+    promptSubmit = options?.onConfirm ?? null;
     state.mode = 'prompt';
     state.title = title;
     state.message = '';
@@ -57,6 +71,7 @@ export function promptDialog(
     state.confirmLabel = options?.confirmLabel ?? '确定';
     state.cancelLabel = options?.cancelLabel ?? '取消';
     state.danger = false;
+    state.busy = false;
     state.open = true;
   });
 }
@@ -75,6 +90,7 @@ export function confirmDialog(
       (resolveFn as (value: boolean) => void)(false);
     }
     resolveFn = resolve as (value: boolean) => void;
+    promptSubmit = null;
     state.mode = 'confirm';
     state.title = options?.title ?? '确认';
     state.message = message;
@@ -83,11 +99,23 @@ export function confirmDialog(
     state.confirmLabel = options?.confirmLabel ?? '确定';
     state.cancelLabel = options?.cancelLabel ?? '取消';
     state.danger = options?.danger ?? true;
+    state.busy = false;
     state.open = true;
   });
 }
 
 export function resolveDialog(confirmed: boolean): void {
+  if (state.busy) return;
+
+  if (
+    confirmed &&
+    state.mode === 'prompt' &&
+    promptSubmit
+  ) {
+    void submitPrompt();
+    return;
+  }
+
   const resolver = resolveFn;
   const mode = state.mode;
   const value = state.value;
@@ -102,4 +130,20 @@ export function resolveDialog(confirmed: boolean): void {
     return;
   }
   (resolver as (value: boolean) => void)(confirmed);
+}
+
+async function submitPrompt(): Promise<void> {
+  const submit = promptSubmit;
+  const resolver = resolveFn;
+  if (!submit || !resolver) return;
+  const value = state.value;
+  state.busy = true;
+  try {
+    await submit(value);
+    close();
+    (resolver as (value: string | null) => void)(value);
+  } catch {
+    // 失败时弹窗不动，错误由 onConfirm 内自行提示
+    state.busy = false;
+  }
 }

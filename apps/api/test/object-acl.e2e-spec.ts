@@ -38,29 +38,32 @@ describe('Content permissions object ACL (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `acl-owner-${stamp}@example.com`,
+        account: `acl_owner${stamp}`,
         password: 'Passw0rd!123',
         name: '权限所有者',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     ownerToken = owner.body.accessToken;
 
     const editor = await http()
       .post('/auth/register')
       .send({
-        email: `acl-editor-${stamp}@example.com`,
+        account: `acl_editor${stamp}`,
         password: 'Passw0rd!123',
         name: '编辑成员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     editorToken = editor.body.accessToken;
     editorId = editor.body.user.id;
 
     const viewer = await http()
       .post('/auth/register')
       .send({
-        email: `acl-viewer-${stamp}@example.com`,
+        account: `acl_viewer${stamp}`,
         password: 'Passw0rd!123',
         name: '只读成员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     viewerToken = viewer.body.accessToken;
     viewerId = viewer.body.user.id;
 
@@ -74,12 +77,12 @@ describe('Content permissions object ACL (e2e)', () => {
     await http()
       .post(`/workspaces/${workspaceId}/members`)
       .set(auth(ownerToken))
-      .send({ email: `acl-editor-${stamp}@example.com`, role: 'editor' })
+      .send({ account: `acl_editor${stamp}`, role: 'editor' })
       .expect(201);
     await http()
       .post(`/workspaces/${workspaceId}/members`)
       .set(auth(ownerToken))
-      .send({ email: `acl-viewer-${stamp}@example.com`, role: 'viewer' })
+      .send({ account: `acl_viewer${stamp}`, role: 'viewer' })
       .expect(201);
 
     const base = await http()

@@ -36,10 +36,11 @@ describe('W4 platform capabilities (e2e)', () => {
     const owner = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `w4-${stamp}@example.com`,
+        account: `w4${stamp}`,
         password: 'Passw0rd!123',
         name: 'W4 管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
     const workspace = await request(app.getHttpServer())
       .post('/workspaces')

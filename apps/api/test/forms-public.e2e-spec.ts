@@ -70,10 +70,11 @@ describe('Forms public share and submit (e2e)', () => {
     const user = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `forms-${stamp}@example.com`,
+        account: `forms${stamp}`,
         password: 'Passw0rd!123',
         name: '表单管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = user.body.accessToken;
 
     const workspace = await request(app.getHttpServer())

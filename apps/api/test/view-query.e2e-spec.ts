@@ -32,10 +32,11 @@ describe('View query (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `views-${stamp}@example.com`,
+        account: `views${stamp}`,
         password: 'Passw0rd!123',
         name: '视图管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
 
     const workspace = await http()
@@ -286,10 +287,11 @@ describe('View query (e2e)', () => {
     const outsider = await http()
       .post('/auth/register')
       .send({
-        email: `views-outsider-${stamp}@example.com`,
+        account: `views_outsider${stamp}`,
         password: 'Passw0rd!123',
         name: '外部用户',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     await http()
       .post(`/sheets/${sheetId}/query`)
       .set({ Authorization: `Bearer ${outsider.body.accessToken}` })

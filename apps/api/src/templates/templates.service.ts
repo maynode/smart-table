@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -173,10 +177,28 @@ export class TemplatesService {
     const template = TEMPLATE_CATALOG.find((item) => item.key === key);
     if (!template) throw new BadRequestException('模板不存在');
     const baseName = (name ?? '').trim() || template.name;
+    await this.assertBaseNameAvailable(workspaceId, baseName);
     if (template.serialClaim) {
       return this.instantiateSerialClaim(workspaceId, template, baseName);
     }
     return this.instantiateSimple(workspaceId, template, baseName);
+  }
+
+  private async assertBaseNameAvailable(
+    workspaceId: string,
+    name: string,
+  ): Promise<void> {
+    const rows = await this.prisma.base.findMany({
+      where: { workspaceId },
+      select: { name: true },
+    });
+    const needle = name.trim().toLowerCase();
+    const clash = rows.find(
+      (item) => item.name.trim().toLowerCase() === needle,
+    );
+    if (clash) {
+      throw new ConflictException(`当前工作区已存在同名表格「${clash.name}」`);
+    }
   }
 
   private async instantiateSimple(

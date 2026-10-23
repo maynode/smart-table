@@ -45,10 +45,11 @@ describe('Automation engine (e2e)', () => {
     const owner = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `automation-${stamp}@example.com`,
+        account: `automation${stamp}`,
         password: 'Passw0rd!123',
         name: '自动化管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
     userId = owner.body.user.id;
 
@@ -346,10 +347,11 @@ describe('Automation engine (e2e)', () => {
     const outsider = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `automation-out-${stamp}@example.com`,
+        account: `automation_out${stamp}`,
         password: 'Passw0rd!123',
         name: '外部人',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     const outsiderToken = outsider.body.accessToken as string;
 
     const forbidden = await request(app.getHttpServer())

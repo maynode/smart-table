@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,11 @@ export class BasesService {
     description?: string | null,
   ) {
     await this.workspacesService.requireMember(workspaceId, userId, 'editor');
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('名称不能为空');
+    }
+    await this.assertNameAvailable(workspaceId, trimmed);
     const desc = normalizeDescription(description);
     return this.prisma.$transaction(async (tx) => {
       const max = await tx.base.aggregate({
@@ -33,7 +39,7 @@ export class BasesService {
       const base = await tx.base.create({
         data: {
           workspaceId,
-          name: name.trim(),
+          name: trimmed,
           description: desc,
           sortOrder,
         },
@@ -94,6 +100,7 @@ export class BasesService {
     if (body.name !== undefined) {
       const name = body.name.trim();
       if (!name) throw new BadRequestException('名称不能为空');
+      await this.assertNameAvailable(base.workspaceId, name, baseId);
       data.name = name;
     }
     if (body.description !== undefined) {
@@ -144,6 +151,9 @@ export class BasesService {
       'editor',
     );
     await this.workspacesService.requireMember(workspaceId, userId, 'editor');
+    await this.assertNameAvailable(workspaceId, base.name, undefined, {
+      moveConflict: true,
+    });
 
     return this.prisma.$transaction(async (tx) => {
       const max = await tx.base.aggregate({
@@ -156,6 +166,33 @@ export class BasesService {
         data: { workspaceId, sortOrder },
       });
     });
+  }
+
+  /** 同一工作区内表格名称不可重复（大小写不敏感）。 */
+  async assertNameAvailable(
+    workspaceId: string,
+    name: string,
+    excludeBaseId?: string,
+    options?: { moveConflict?: boolean },
+  ): Promise<void> {
+    const rows = await this.prisma.base.findMany({
+      where: {
+        workspaceId,
+        ...(excludeBaseId ? { id: { not: excludeBaseId } } : {}),
+      },
+      select: { id: true, name: true },
+    });
+    const needle = name.trim().toLowerCase();
+    const clash = rows.find(
+      (item) => item.name.trim().toLowerCase() === needle,
+    );
+    if (!clash) return;
+    if (options?.moveConflict) {
+      throw new ConflictException(
+        `目标工作区已有同名表格「${clash.name}」，请先改名后再移动`,
+      );
+    }
+    throw new ConflictException(`当前工作区已存在同名表格「${clash.name}」`);
   }
 
   async reorder(

@@ -77,12 +77,36 @@ async function exportSheetFile(
 }
 
 export const endpoints = {
-  login: (email: string, password: string) =>
-    api<AuthResult>('/auth/login', { body: { email, password }, token: null }),
+  login: (account: string, password: string) =>
+    api<AuthResult>('/auth/login', {
+      body: { account, password },
+      token: null,
+    }),
 
-  register: (email: string, password: string, name: string) =>
+  register: (payload: {
+    account: string;
+    password: string;
+    securityQuestion: string;
+    securityAnswer: string;
+  }) =>
     api<AuthResult>('/auth/register', {
-      body: { email, password, name },
+      body: payload,
+      token: null,
+    }),
+
+  recoveryQuestion: (account: string) =>
+    api<{ question: string }>('/auth/recovery/question', {
+      body: { account },
+      token: null,
+    }),
+
+  recoveryReset: (payload: {
+    account: string;
+    securityAnswer: string;
+    password: string;
+  }) =>
+    api<{ ok: true }>('/auth/recovery/reset', {
+      body: payload,
       token: null,
     }),
 
@@ -90,6 +114,21 @@ export const endpoints = {
 
   createWorkspace: (name: string) =>
     api<WorkspaceDto>('/workspaces', { body: { name } }),
+
+  renameWorkspace: (workspaceId: string, name: string) =>
+    api<WorkspaceDto>(`/workspaces/${workspaceId}`, {
+      method: 'PATCH',
+      body: { name },
+    }),
+
+  deleteWorkspace: (workspaceId: string) =>
+    api<void>(`/workspaces/${workspaceId}`, { method: 'DELETE' }),
+
+  pinWorkspace: (workspaceId: string, pinned: boolean) =>
+    api<WorkspaceDto>(`/workspaces/${workspaceId}/pin`, {
+      method: 'PATCH',
+      body: { pinned },
+    }),
 
   getWorkspace: (workspaceId: string) =>
     api<WorkspaceDto>(`/workspaces/${workspaceId}`),
@@ -99,12 +138,12 @@ export const endpoints = {
 
   inviteMember: (
     workspaceId: string,
-    email: string,
+    account: string,
     role: 'owner' | 'admin' | 'editor' | 'viewer',
   ) =>
     api<MemberDto>(`/workspaces/${workspaceId}/members`, {
       method: 'POST',
-      body: { email, role },
+      body: { account, role },
     }),
 
   updateMemberRole: (

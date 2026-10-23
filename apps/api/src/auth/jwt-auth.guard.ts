@@ -9,7 +9,7 @@ import type { FastifyRequest } from 'fastify';
 
 export interface JwtPayload {
   sub: string;
-  email: string;
+  account: string;
 }
 
 export type AuthenticatedRequest = FastifyRequest & { user?: JwtPayload };

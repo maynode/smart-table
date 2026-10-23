@@ -23,7 +23,7 @@ export class CommentsService {
     const trimmed = body.trim();
     const comment = await this.prisma.comment.create({
       data: { sheetId, authorId: userId, body: trimmed },
-      include: { author: { select: { id: true, name: true, email: true } } },
+      include: { author: { select: { id: true, name: true, account: true } } },
     });
 
     await this.notifyMentions({
@@ -50,7 +50,7 @@ export class CommentsService {
     const comments = await this.prisma.comment.findMany({
       where: { sheetId },
       orderBy: { createdAt: 'asc' },
-      include: { author: { select: { id: true, name: true, email: true } } },
+      include: { author: { select: { id: true, name: true, account: true } } },
     });
 
     return comments.map((comment) => ({
@@ -84,7 +84,7 @@ export class CommentsService {
 
       const members = await this.prisma.workspaceMember.findMany({
         where: { workspaceId: sheet.base.workspaceId },
-        include: { user: { select: { id: true, name: true, email: true } } },
+        include: { user: { select: { id: true, name: true, account: true } } },
       });
 
       const byId = new Map(members.map((row) => [row.userId, row.user]));
@@ -94,17 +94,17 @@ export class CommentsService {
         if (byId.has(id) && id !== input.authorId) recipients.add(id);
       }
 
-      // Also resolve `@Name` / `@email` tokens from the body.
+      // Also resolve `@Name` / `@account` tokens from the body.
       const sorted = [...members].sort(
         (a, b) => b.user.name.length - a.user.name.length,
       );
       for (const row of sorted) {
         if (row.userId === input.authorId) continue;
         const nameToken = `@${row.user.name}`;
-        const emailToken = `@${row.user.email}`;
+        const accountToken = `@${row.user.account}`;
         if (
           input.body.includes(nameToken) ||
-          input.body.includes(emailToken)
+          input.body.includes(accountToken)
         ) {
           recipients.add(row.userId);
         }

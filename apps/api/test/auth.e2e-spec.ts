@@ -9,7 +9,7 @@ import { configureApp } from '../src/app.setup';
 
 describe('Auth (e2e)', () => {
   let app: NestFastifyApplication;
-  const email = `auth-${Date.now()}@example.com`;
+  const account = `auth_${Date.now()}`;
   const password = 'Passw0rd!123';
 
   beforeAll(async () => {
@@ -32,16 +32,22 @@ describe('Auth (e2e)', () => {
   it('registers, logs in, and answers an authenticated ping', async () => {
     const register = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email, password, name: '张三' });
+      .send({
+        account,
+        password,
+        name: '张三',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
 
     expect(register.status).toBe(201);
     expect(register.body.accessToken).toEqual(expect.any(String));
-    expect(register.body.user.email).toBe(email);
+    expect(register.body.user.account).toBe(account);
     expect(register.body.user.passwordHash).toBeUndefined();
 
     const login = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email, password });
+      .send({ account, password });
 
     expect(login.status).toBe(200);
     const token = login.body.accessToken as string;
@@ -52,7 +58,7 @@ describe('Auth (e2e)', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(me.status).toBe(200);
-    expect(me.body.email).toBe(email);
+    expect(me.body.account).toBe(account);
     expect(me.body.name).toBe('张三');
 
     const anonymous = await request(app.getHttpServer()).get('/auth/me');
@@ -60,7 +66,7 @@ describe('Auth (e2e)', () => {
 
     const badPassword = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email, password: 'wrong-password' });
+      .send({ account, password: 'wrong-password' });
     expect(badPassword.status).toBe(401);
   });
 });

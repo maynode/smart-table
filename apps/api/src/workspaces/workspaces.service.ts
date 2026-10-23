@@ -16,6 +16,8 @@ export interface WorkspaceWithRole {
   createdAt: Date;
   updatedAt: Date;
   role: WorkspaceRole;
+  pinned: boolean;
+  pinnedAt: Date | null;
 }
 
 @Injectable()
@@ -26,27 +28,37 @@ export class WorkspacesService {
   ) {}
 
   async create(userId: string, name: string): Promise<WorkspaceWithRole> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('工作区名称不能为空');
+    }
+    await this.assertNameAvailableForUser(userId, trimmed);
     const workspace = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.workspace.create({ data: { name: name.trim() } });
+      const created = await tx.workspace.create({ data: { name: trimmed } });
       await tx.workspaceMember.create({
         data: { workspaceId: created.id, userId, role: 'owner' },
       });
       return created;
     });
-    return { ...workspace, role: 'owner' };
+    return { ...workspace, role: 'owner', pinned: false, pinnedAt: null };
   }
 
   async listMine(userId: string): Promise<WorkspaceWithRole[]> {
     const memberships = await this.prisma.workspaceMember.findMany({
       where: { userId },
       include: { workspace: true },
-      orderBy: { createdAt: 'asc' },
     });
 
-    return memberships.map((membership) => ({
-      ...membership.workspace,
-      role: membership.role,
-    }));
+    memberships.sort((a, b) => {
+      const aPin = a.pinnedAt?.getTime() ?? 0;
+      const bPin = b.pinnedAt?.getTime() ?? 0;
+      if (aPin !== bPin) return bPin - aPin;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+
+    return memberships.map((membership) =>
+      this.toWorkspaceDto(membership.workspace, membership),
+    );
   }
 
   async getDetail(
@@ -60,7 +72,84 @@ export class WorkspacesService {
     if (!workspace) {
       throw new NotFoundException('工作区不存在');
     }
-    return { ...workspace, role: membership.role };
+    return this.toWorkspaceDto(workspace, membership);
+  }
+
+  async rename(
+    workspaceId: string,
+    userId: string,
+    name: string,
+  ): Promise<WorkspaceWithRole> {
+    const membership = await this.requireMember(workspaceId, userId, 'admin');
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('工作区名称不能为空');
+    }
+    await this.assertNameAvailableForUser(userId, trimmed, workspaceId);
+    const workspace = await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { name: trimmed },
+    });
+    return this.toWorkspaceDto(workspace, membership);
+  }
+
+  /** 当前用户可见的工作区名称不可重复（大小写不敏感）。 */
+  private async assertNameAvailableForUser(
+    userId: string,
+    name: string,
+    excludeWorkspaceId?: string,
+  ): Promise<void> {
+    const memberships = await this.prisma.workspaceMember.findMany({
+      where: { userId },
+      include: { workspace: { select: { id: true, name: true } } },
+    });
+    const needle = name.toLowerCase();
+    const clash = memberships.find(
+      (item) =>
+        item.workspace.id !== excludeWorkspaceId &&
+        item.workspace.name.trim().toLowerCase() === needle,
+    );
+    if (clash) {
+      throw new ConflictException(`已存在同名工作区「${clash.workspace.name}」`);
+    }
+  }
+
+  async remove(workspaceId: string, userId: string): Promise<void> {
+    await this.requireMember(workspaceId, userId, 'owner');
+    const existing = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('工作区不存在');
+    }
+    await this.prisma.workspace.delete({ where: { id: workspaceId } });
+  }
+
+  async setPinned(
+    workspaceId: string,
+    userId: string,
+    pinned: boolean,
+  ): Promise<WorkspaceWithRole> {
+    const membership = await this.requireMember(workspaceId, userId, 'viewer');
+    const updated = await this.prisma.workspaceMember.update({
+      where: { id: membership.id },
+      data: { pinnedAt: pinned ? new Date() : null },
+      include: { workspace: true },
+    });
+    return this.toWorkspaceDto(updated.workspace, updated);
+  }
+
+  private toWorkspaceDto(
+    workspace: { id: string; name: string; createdAt: Date; updatedAt: Date },
+    membership: { role: WorkspaceRole; pinnedAt: Date | null },
+  ): WorkspaceWithRole {
+    return {
+      ...workspace,
+      role: membership.role,
+      pinned: membership.pinnedAt != null,
+      pinnedAt: membership.pinnedAt,
+    };
   }
 
   async requireMember(
@@ -92,7 +181,7 @@ export class WorkspacesService {
 
     return members.map((member) => ({
       userId: member.userId,
-      email: member.user.email,
+      account: member.user.account,
       name: member.user.name,
       role: member.role,
       createdAt: member.createdAt,
@@ -102,7 +191,7 @@ export class WorkspacesService {
   async invite(
     workspaceId: string,
     actorId: string,
-    email: string,
+    accountRaw: string,
     role: WorkspaceRole,
   ) {
     const actor = await this.requireMember(workspaceId, actorId, 'admin');
@@ -111,11 +200,12 @@ export class WorkspacesService {
       throw new ForbiddenException('只有所有者可以授予所有者角色');
     }
 
+    const account = accountRaw.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
-      where: { email: email.trim().toLowerCase() },
+      where: { account },
     });
     if (!user) {
-      throw new NotFoundException('该邮箱尚未注册');
+      throw new NotFoundException('该账号尚未注册');
     }
 
     await this.quotas.assertSeats(workspaceId);
@@ -126,7 +216,7 @@ export class WorkspacesService {
       });
       return {
         userId: user.id,
-        email: user.email,
+        account: user.account,
         name: user.name,
         role: member.role,
         createdAt: member.createdAt,
@@ -177,7 +267,7 @@ export class WorkspacesService {
 
     return {
       userId: updated.userId,
-      email: user?.email ?? '',
+      account: user?.account ?? '',
       name: user?.name ?? '',
       role: updated.role,
       createdAt: updated.createdAt,

@@ -1,6 +1,15 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService, PublicUser } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RecoveryQuestionDto, RecoveryResetDto } from './dto/recovery.dto';
 import { RegisterDto } from './dto/register.dto';
 import { CurrentUser } from './current-user.decorator';
 import { JwtAuthGuard, JwtPayload } from './jwt-auth.guard';
@@ -14,7 +23,12 @@ export class AuthController {
     accessToken: string;
     user: PublicUser;
   }> {
-    return this.authService.register(dto.email, dto.password, dto.name);
+    return this.authService.register(
+      dto.account,
+      dto.password,
+      dto.securityQuestion,
+      dto.securityAnswer,
+    );
   }
 
   @Post('login')
@@ -23,7 +37,23 @@ export class AuthController {
     accessToken: string;
     user: PublicUser;
   }> {
-    return this.authService.login(dto.email, dto.password);
+    return this.authService.login(dto.account, dto.password);
+  }
+
+  @Post('recovery/question')
+  @HttpCode(HttpStatus.OK)
+  recoveryQuestion(@Body() dto: RecoveryQuestionDto) {
+    return this.authService.getRecoveryQuestion(dto.account);
+  }
+
+  @Post('recovery/reset')
+  @HttpCode(HttpStatus.OK)
+  recoveryReset(@Body() dto: RecoveryResetDto) {
+    return this.authService.resetPasswordWithSecurityAnswer(
+      dto.account,
+      dto.securityAnswer,
+      dto.password,
+    );
   }
 
   @Get('me')

@@ -11,7 +11,7 @@ import { configureApp } from '../src/app.setup';
 describe('Audit log and quotas (e2e)', () => {
   let app: NestFastifyApplication;
   const stamp = Date.now();
-  const ownerEmail = `audit-quota-${stamp}@example.com`;
+  const ownerAccount = `audit_quota_${stamp}`;
   let token: string;
   let workspaceId: string;
   let baseId: string;
@@ -23,7 +23,7 @@ describe('Audit log and quotas (e2e)', () => {
   const http = () => request(app.getHttpServer());
 
   beforeAll(async () => {
-    process.env.INSTALL_ADMIN_EMAILS = ownerEmail;
+    process.env.INSTALL_ADMIN_EMAILS = ownerAccount;
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -36,8 +36,7 @@ describe('Audit log and quotas (e2e)', () => {
 
     const owner = await http()
       .post('/auth/register')
-      .send({
-        email: ownerEmail,
+      .send({ account: ownerAccount,
         password: 'Passw0rd!123',
         name: '配额管理员',
       })
@@ -131,16 +130,17 @@ describe('Audit log and quotas (e2e)', () => {
     await http()
       .post('/auth/register')
       .send({
-        email: `audit-quota-second-${stamp}@example.com`,
+        account: `audit_quota_second${stamp}`,
         password: 'Passw0rd!123',
         name: '第二成员',
-      })
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        })
       .expect(201);
     const invite = await http()
       .post(`/workspaces/${workspaceId}/members`)
       .set(auth())
       .send({
-        email: `audit-quota-second-${stamp}@example.com`,
+        account: `audit_quota_second${stamp}`,
         role: 'editor',
       })
       .expect(403);

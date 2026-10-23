@@ -440,7 +440,7 @@ onMounted(loadObjects);
                 :key="member.userId"
                 :value="member.userId"
               >
-                {{ member.name || member.email }}
+                {{ member.name || member.account }}
               </option>
             </select>
             <select v-model="addMemberLevel">

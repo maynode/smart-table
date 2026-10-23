@@ -1,6 +1,6 @@
 export interface StoredUser {
   id: string;
-  email: string;
+  account: string;
   name: string;
 }
 
@@ -36,17 +36,28 @@ export class ApiError extends Error {
     readonly status: number,
     readonly body: unknown,
   ) {
-    super(ApiError.describe(body));
+    super(ApiError.describe(body, status));
     this.name = 'ApiError';
   }
 
-  private static describe(body: unknown): string {
-    if (body && typeof body === 'object' && 'message' in body) {
-      const message = (body as { message: unknown }).message;
-      if (Array.isArray(message)) return message.join('；');
-      if (typeof message === 'string') return message;
+  private static describe(body: unknown, status?: number): string {
+    if (typeof body === 'string' && body.trim()) return body.trim();
+    if (body && typeof body === 'object') {
+      const message = (body as { message?: unknown }).message;
+      if (Array.isArray(message)) {
+        return message
+          .map((item) => (typeof item === 'string' ? item : String(item)))
+          .filter(Boolean)
+          .join('；');
+      }
+      if (typeof message === 'string' && message.trim()) return message.trim();
+      const error = (body as { error?: unknown }).error;
+      if (typeof error === 'string' && error.trim()) return error.trim();
     }
-    return '请求失败';
+    if (status === 401) return '未登录或登录已过期';
+    if (status === 403) return '没有权限';
+    if (status === 404) return '资源不存在';
+    return status ? `请求失败（${status}）` : '请求失败';
   }
 }
 
@@ -79,9 +90,22 @@ export async function api<T>(
   }
 
   const text = await response.text();
-  const data = text ? (JSON.parse(text) as unknown) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      data = text;
+    }
+  }
   if (!response.ok) {
-    if (response.status === 401) {
+    // 登录/注册本身的 401 不是会话过期
+    const isAuthAttempt =
+      path === '/auth/login' ||
+      path === '/auth/register' ||
+      path === '/auth/recovery/question' ||
+      path === '/auth/recovery/reset';
+    if (response.status === 401 && !isAuthAttempt) {
       window.dispatchEvent(new CustomEvent('st:unauthorized'));
     }
     throw new ApiError(response.status, data);

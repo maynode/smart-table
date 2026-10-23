@@ -229,12 +229,16 @@ export class QuotasService {
   private async isInstallAdmin(userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) return false;
-    const configured = (process.env.INSTALL_ADMIN_EMAILS ?? '')
+    const configured = (
+      process.env.INSTALL_ADMIN_ACCOUNTS ??
+      process.env.INSTALL_ADMIN_EMAILS ??
+      ''
+    )
       .split(',')
-      .map((email) => email.trim().toLowerCase())
+      .map((item) => item.trim().toLowerCase())
       .filter(Boolean);
     if (configured.length) {
-      return configured.includes(user.email.toLowerCase());
+      return configured.includes(user.account.toLowerCase());
     }
     const first = await this.prisma.user.findFirst({
       orderBy: { createdAt: 'asc' },

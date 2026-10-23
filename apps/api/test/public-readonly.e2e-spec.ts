@@ -34,10 +34,11 @@ describe('Public read-only views (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `public-view-${stamp}@example.com`,
+        account: `public_view${stamp}`,
         password: 'Passw0rd!123',
         name: '公开视图管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
     const workspace = await http()
       .post('/workspaces')
@@ -153,10 +154,11 @@ describe('Public read-only views (e2e)', () => {
     const outsider = await http()
       .post('/auth/register')
       .send({
-        email: `public-view-outsider-${stamp}@example.com`,
+        account: `public_view_outsider${stamp}`,
         password: 'Passw0rd!123',
         name: '公开视图局外人',
-      })
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        })
       .expect(201);
     await http()
       .post(`/sheets/${sheetId}/public-views`)

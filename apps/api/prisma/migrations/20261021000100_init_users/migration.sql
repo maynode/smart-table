@@ -1,9 +1,11 @@
 -- CreateTable
 CREATE TABLE "users" (
     "id" UUID NOT NULL,
-    "email" TEXT NOT NULL,
+    "account" TEXT NOT NULL,
     "password_hash" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "security_question" TEXT NOT NULL,
+    "security_answer_hash" TEXT NOT NULL,
     "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(6) NOT NULL,
 
@@ -11,4 +13,4 @@ CREATE TABLE "users" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+CREATE UNIQUE INDEX "users_account_key" ON "users"("account");

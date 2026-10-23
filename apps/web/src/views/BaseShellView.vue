@@ -807,7 +807,7 @@ const mentionCandidates = computed(() => {
       (member) =>
         !q ||
         member.name.toLowerCase().includes(q) ||
-        member.email.toLowerCase().includes(q),
+        member.account.toLowerCase().includes(q),
     )
     .slice(0, 8);
 });
@@ -862,7 +862,10 @@ function onCommentKeydown(event: KeyboardEvent): void {
 function resolveMentionIds(body: string): string[] {
   const ids = new Set(commentMentions.value);
   for (const member of members.value) {
-    if (body.includes(`@${member.name}`) || body.includes(`@${member.email}`)) {
+    if (
+      body.includes(`@${member.name}`) ||
+      body.includes(`@${member.account}`)
+    ) {
       ids.add(member.userId);
     }
   }
@@ -1460,7 +1463,7 @@ onBeforeUnmount(() => {
               @mousedown.prevent="insertMention(member)"
             >
               <strong>{{ member.name }}</strong>
-              <span>{{ member.email }}</span>
+              <span>{{ member.account }}</span>
             </li>
           </ul>
           <p

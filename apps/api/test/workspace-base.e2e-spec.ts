@@ -10,9 +10,9 @@ import { configureApp } from '../src/app.setup';
 describe('Workspace + Base + members (e2e)', () => {
   let app: NestFastifyApplication;
   const stamp = Date.now();
-  const ownerEmail = `owner-${stamp}@example.com`;
-  const memberEmail = `member-${stamp}@example.com`;
-  const outsiderEmail = `outsider-${stamp}@example.com`;
+  const ownerAccount = `owner_${stamp}`;
+  const memberAccount = `member_${stamp}`;
+  const outsiderAccount = `outsider_${stamp}`;
 
   let ownerToken: string;
   let memberToken: string;
@@ -23,12 +23,12 @@ describe('Workspace + Base + members (e2e)', () => {
   const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
   async function register(
-    email: string,
+    account: string,
     name: string,
   ): Promise<{ token: string; userId: string }> {
     const res = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ email, password: 'Passw0rd!123', name });
+      .send({ account, password: 'Passw0rd!123', name, securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo' });
 
     expect(res.status).toBe(201);
     return { token: res.body.accessToken, userId: res.body.user.id };
@@ -46,11 +46,11 @@ describe('Workspace + Base + members (e2e)', () => {
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    ownerToken = (await register(ownerEmail, '所有者')).token;
-    const member = await register(memberEmail, '成员');
+    ownerToken = (await register(ownerAccount, '所有者')).token;
+    const member = await register(memberAccount, '成员');
     memberToken = member.token;
     memberUserId = member.userId;
-    outsiderToken = (await register(outsiderEmail, '外部人')).token;
+    outsiderToken = (await register(outsiderAccount, '外部人')).token;
   });
 
   afterAll(async () => {
@@ -92,7 +92,7 @@ describe('Workspace + Base + members (e2e)', () => {
     const invite = await request(app.getHttpServer())
       .post(`/workspaces/${workspaceId}/members`)
       .set(auth(ownerToken))
-      .send({ email: memberEmail, role: 'editor' });
+      .send({ account: memberAccount, role: 'editor' });
 
     expect(invite.status).toBe(201);
     expect(invite.body.role).toBe('editor');
@@ -122,8 +122,8 @@ describe('Workspace + Base + members (e2e)', () => {
       .set(auth(ownerToken));
     expect(members.status).toBe(200);
     expect(
-      members.body.map((item: { email: string }) => item.email),
-    ).toEqual(expect.arrayContaining([ownerEmail, memberEmail]));
+      members.body.map((item: { account: string }) => item.account),
+    ).toEqual(expect.arrayContaining([ownerAccount, memberAccount]));
 
     const remove = await request(app.getHttpServer())
       .delete(`/workspaces/${workspaceId}/members/${memberUserId}`)

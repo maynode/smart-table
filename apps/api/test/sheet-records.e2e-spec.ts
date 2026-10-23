@@ -36,19 +36,21 @@ describe('Sheets, fields and records (e2e)', () => {
     const owner = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `sheets-${stamp}@example.com`,
+        account: `sheets${stamp}`,
         password: 'Passw0rd!123',
         name: '表格所有者',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
 
     const outsider = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `sheets-out-${stamp}@example.com`,
+        account: `sheets_out${stamp}`,
         password: 'Passw0rd!123',
         name: '外部人',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     outsiderToken = outsider.body.accessToken;
 
     const workspace = await request(app.getHttpServer())

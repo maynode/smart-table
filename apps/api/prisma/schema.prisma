@@ -12,13 +12,18 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  name         String
-  wecomUserId  String?  @unique @map("wecom_user_id")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                  String   @id @default(uuid()) @db.Uuid
+  /// 登录账号（小写存储，不区分大小写）
+  account             String   @unique
+  passwordHash        String   @map("password_hash")
+  name                String
+  /// 密保问题（明文）
+  securityQuestion    String   @map("security_question")
+  /// 密保答案哈希（答案规范化后 argon2）
+  securityAnswerHash  String   @map("security_answer_hash")
+  wecomUserId         String?  @unique @map("wecom_user_id")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships WorkspaceMember[]
   comments    Comment[]
@@ -55,6 +60,8 @@ model WorkspaceMember {
   workspaceId String        @map("workspace_id") @db.Uuid
   userId      String        @map("user_id") @db.Uuid
   role        WorkspaceRole @default(editor)
+  /// 成员个人置顶时间；非空则在「我的工作区」列表置顶
+  pinnedAt    DateTime?     @map("pinned_at") @db.Timestamptz(6)
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -62,6 +69,7 @@ model WorkspaceMember {
 
   @@unique([workspaceId, userId])
   @@index([userId])
+  @@index([userId, pinnedAt])
   @@map("workspace_members")
 }
 

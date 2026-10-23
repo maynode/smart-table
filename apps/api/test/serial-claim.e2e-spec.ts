@@ -200,10 +200,11 @@ describe('Serial claim path (e2e)', () => {
     const owner = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `claim-${stamp}@example.com`,
+        account: `claim${stamp}`,
         password: 'Passw0rd!123',
         name: '领取管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
   });
 

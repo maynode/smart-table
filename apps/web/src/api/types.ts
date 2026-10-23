@@ -1,6 +1,6 @@
 export interface UserDto {
   id: string;
-  email: string;
+  account: string;
   name: string;
 }
 
@@ -10,6 +10,8 @@ export interface WorkspaceDto {
   createdAt: string;
   updatedAt: string;
   role?: 'owner' | 'admin' | 'editor' | 'viewer';
+  pinned?: boolean;
+  pinnedAt?: string | null;
 }
 
 export interface BaseDto {
@@ -93,7 +95,7 @@ export interface CommentDto {
 
 export interface MemberDto {
   userId: string;
-  email: string;
+  account: string;
   name: string;
   role: string;
   createdAt: string;
@@ -287,11 +289,11 @@ export interface PermissionSettingsDto {
     fieldRule: AclFieldRule | null;
   };
   everyone: AclConfig | null;
-  members: Array<AclConfig & { userId: string; name: string; email: string }>;
+  members: Array<AclConfig & { userId: string; name: string; account: string }>;
   workspaceMembers: Array<{
     userId: string;
     name: string;
-    email: string;
+    account: string;
     role: string;
   }>;
 }

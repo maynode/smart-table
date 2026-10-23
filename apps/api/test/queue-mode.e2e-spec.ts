@@ -37,10 +37,11 @@ describe('Queue submit mode (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `queue-${stamp}@example.com`,
+        account: `queue${stamp}`,
         password: 'Passw0rd!123',
         name: '队列管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
   });
 

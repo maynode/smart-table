@@ -32,19 +32,21 @@ describe('Grid shell support APIs (e2e)', () => {
     const user = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `shell-${stamp}@example.com`,
+        account: `shell${stamp}`,
         password: 'Passw0rd!123',
         name: '壳层用户',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = user.body.accessToken;
 
     const outsider = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        email: `shell-out-${stamp}@example.com`,
+        account: `shell_out${stamp}`,
         password: 'Passw0rd!123',
         name: '外部人',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     outsiderToken = outsider.body.accessToken;
 
     const workspace = await request(app.getHttpServer())

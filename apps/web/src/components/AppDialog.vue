@@ -1,17 +1,9 @@
 <script setup lang="ts">
-import { nextTick, watch } from 'vue';
+import { nextTick, ref, watch } from 'vue';
 import { resolveDialog, useAppDialogState } from '../ui/dialog';
 
 const state = useAppDialogState();
-const inputRef = (el: unknown) => {
-  if (el && state.open && state.mode === 'prompt') {
-    void nextTick(() => {
-      const node = el as HTMLInputElement;
-      node.focus();
-      node.select();
-    });
-  }
-};
+const inputEl = ref<HTMLInputElement | null>(null);
 
 watch(
   () => state.open,
@@ -19,12 +11,18 @@ watch(
     if (!open) return;
     if (state.mode === 'prompt') {
       state.value = state.defaultValue;
+      void nextTick(() => {
+        const node = inputEl.value;
+        if (!node) return;
+        node.focus();
+        node.select();
+      });
     }
   },
 );
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!state.open) return;
+  if (!state.open || state.busy) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     resolveDialog(false);
@@ -41,7 +39,7 @@ function onKeydown(event: KeyboardEvent): void {
       v-if="state.open"
       class="app-dialog-mask"
       data-testid="app-dialog"
-      @click.self="resolveDialog(false)"
+      @click.self="!state.busy && resolveDialog(false)"
       @keydown="onKeydown"
     >
       <section class="app-dialog" role="dialog" aria-modal="true">
@@ -53,10 +51,11 @@ function onKeydown(event: KeyboardEvent): void {
         </p>
         <input
           v-if="state.mode === 'prompt'"
-          :ref="inputRef"
+          ref="inputEl"
           v-model="state.value"
           class="app-dialog-input"
           data-testid="app-dialog-input"
+          :disabled="state.busy"
           @keydown="onKeydown"
         />
         <footer>
@@ -64,6 +63,7 @@ function onKeydown(event: KeyboardEvent): void {
             type="button"
             class="btn"
             data-testid="app-dialog-cancel"
+            :disabled="state.busy"
             @click="resolveDialog(false)"
           >
             {{ state.cancelLabel }}
@@ -73,6 +73,7 @@ function onKeydown(event: KeyboardEvent): void {
             class="btn"
             :class="state.danger ? 'btn-danger' : 'btn-primary'"
             data-testid="app-dialog-confirm"
+            :disabled="state.busy"
             @click="resolveDialog(true)"
           >
             {{ state.confirmLabel }}
@@ -129,6 +130,9 @@ function onKeydown(event: KeyboardEvent): void {
   outline: none;
   border-color: var(--brand, #2d8cf0);
   box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.15);
+}
+.app-dialog-input:disabled {
+  opacity: 0.7;
 }
 .app-dialog footer {
   display: flex;

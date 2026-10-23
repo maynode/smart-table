@@ -35,10 +35,11 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `charts-${stamp}@example.com`,
+        account: `charts${stamp}`,
         password: 'Passw0rd!123',
         name: '图表管理员',
-      });
+        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+        });
     token = owner.body.accessToken;
 
     const workspace = await http()
