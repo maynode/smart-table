@@ -174,7 +174,7 @@ describe('Duplicate phone guard (e2e)', () => {
       .post(`/public/forms/${shareToken}/submit`)
       .send({ cells: { [phoneFieldId]: '13800000000' } });
     expect(duplicate.status).toBe(409);
-    expect(duplicate.body.message).toContain('不可重复领取');
+    expect(duplicate.body.message).toContain('不可重复提交');
 
     const other = await request(app.getHttpServer())
       .post(`/public/forms/${shareToken}/submit`)

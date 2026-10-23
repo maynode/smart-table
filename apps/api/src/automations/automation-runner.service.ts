@@ -613,7 +613,10 @@ export class AutomationRunnerService {
       output: {
         stepId: step.id,
         type: 'sendMessage',
-        values: { 消息内容: text },
+        values: {
+          消息标题: title,
+          消息内容: text,
+        },
       },
     };
   }

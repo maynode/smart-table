@@ -85,9 +85,7 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await page.getByTestId('form-condition-value').fill('won');
   await page.getByTestId(`form-required-${noteField.id}`).check();
 
-  await page
-    .getByTestId('form-template-input')
-    .fill('<h2>提交成功</h2><p>你好 {{姓名}}，序列号 {{序列号}}</p>');
+  await expect(page.getByTestId('form-success-hint')).toContainText('发送消息');
   await page.getByTestId('form-audience').selectOption('workspace');
   await page.getByTestId('form-expires-at').fill('2026-12-31');
   await page.getByTestId('form-cover-input').setInputFiles({
@@ -151,12 +149,9 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
     })
     .toBeLessThan(3);
 
-  await page.getByRole('button', { name: '预览' }).click();
+  await page.getByTestId('form-tab-fill').click();
   await expect(page.getByTestId('form-success-preview')).toContainText(
-    'SN-000123',
-  );
-  await expect(page.getByTestId('form-success-preview')).toContainText(
-    '示例姓名',
+    '发送消息',
   );
 
   // Switch back to anyone so the public fill flow can run unauthenticated.
@@ -184,5 +179,5 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await expect(page.locator('[data-field-name="备注"]')).toBeVisible();
   await page.locator('[data-field-name="备注"] textarea').fill('已到访');
   await page.getByTestId('form-submit').click();
-  await expect(page.getByTestId('form-success')).toContainText('你好 张三');
+  await expect(page.getByTestId('form-success')).toContainText('提交成功');
 });

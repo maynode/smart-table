@@ -354,8 +354,7 @@ export class TemplatesService {
             audience: 'anyone',
             expiresAt: null,
           } as Prisma.InputJsonValue,
-          successTemplate:
-            '领取成功！你的序列号是 <strong>{{序列号}}</strong>，请截图保存。',
+          successTemplate: '',
           rejectDuplicatePhone: true,
         },
       });

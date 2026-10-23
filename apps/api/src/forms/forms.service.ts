@@ -19,6 +19,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import * as QRCode from 'qrcode';
 import {
   buildSuccessValues,
+  escapeHtml,
   isDisplayConditionRule,
   isFormFieldVisible,
   isFormFillableFieldType,
@@ -706,7 +707,8 @@ export class FormsService implements OnModuleDestroy {
               Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${form.sheetId}::uuid AND cells->>${phoneField.id} = ${phone} LIMIT 1`,
             );
             if (existing.length > 0) {
-              throw new ConflictException('该手机号不可重复领取');
+              const label = phoneField.name.trim() || '手机号';
+              throw new ConflictException(`该【${label}】不可重复提交`);
             }
           }
         }
@@ -846,6 +848,13 @@ export class FormsService implements OnModuleDestroy {
     sanitized: Record<string, unknown>,
     stepOutputs: Record<string, string>,
   ): string {
+    // 产品：成功页正文 = 自动化「发送消息」插值后的内容（与站内信一致）
+    const messageBody = stepOutputs['消息内容']?.trim();
+    if (messageBody) {
+      return escapeHtml(messageBody).replace(/\n/g, '<br />');
+    }
+
+    // 无发送消息步骤时回退到表单成功页模板 + 自动化扁平变量
     const formCellsByName: Record<string, unknown> = {};
     for (const field of form.sheet.fields) {
       if (Object.prototype.hasOwnProperty.call(sanitized, field.id)) {
@@ -857,7 +866,7 @@ export class FormsService implements OnModuleDestroy {
       stepOutputs,
     });
     return renderSuccessTemplate(
-      form.successTemplate || '提交成功',
+      form.successTemplate || '',
       successValues,
     );
   }

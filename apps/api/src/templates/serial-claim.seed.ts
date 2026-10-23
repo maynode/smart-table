@@ -177,8 +177,8 @@ export async function seedSerialClaim(
           audience: 'anyone',
           expiresAt: null,
         } as Prisma.InputJsonValue,
-        successTemplate:
-          '领取成功！你的序列号是 <strong>{{序列号}}</strong>，请截图保存。',
+        // 成功页优先展示「发送消息」插值结果；此处仅作无该步骤时的兜底
+        successTemplate: '',
         rejectDuplicatePhone: true,
       },
     });
@@ -235,7 +235,7 @@ export async function seedSerialClaim(
           {
             id: 'notify-claimer',
             type: 'sendMessage',
-            // WeCom: title blocks text「你的序列号为」+ content ref update.序列号
+            // WeCom: title「你的序列号为」+ content ref 修改步骤.序列号
             name: '你的序列号为',
             channel: 'doc',
             recipients: [{ source: 'trigger', field: '填写者' }],

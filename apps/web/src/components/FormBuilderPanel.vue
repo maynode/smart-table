@@ -62,7 +62,6 @@ const uploadingCover = ref(false);
 const error = ref('');
 const name = ref('');
 const coverUrl = ref('');
-const template = ref('');
 const rejectDuplicatePhone = ref(true);
 const shareEnabled = ref(true);
 const audience = ref<'anyone' | 'workspace'>('anyone');
@@ -92,7 +91,6 @@ watch(previewTab, (tab) => {
   }
   void loadPreviewExtras();
 });
-const successPreviewHtml = ref('');
 const previewValues = ref<Record<string, unknown>>({});
 const coverInput = ref<HTMLInputElement | null>(null);
 const showConditionsFor = ref<Record<string, boolean>>({});
@@ -129,9 +127,17 @@ const sheetFields = computed(() => localFields.value);
 const fieldById = computed(
   () => new Map(sheetFields.value.map((field) => [field.id, field])),
 );
-/** 同手机号去重是领取场景能力，仅表单含手机号字段时露出 */
-const formHasPhoneField = computed(() =>
-  items.value.some((item) => fieldById.value.get(item.fieldId)?.type === 'phone'),
+/** 同字段值去重是领取场景能力，仅表单含手机号字段时露出 */
+const formPhoneField = computed(() => {
+  for (const item of items.value) {
+    const field = fieldById.value.get(item.fieldId);
+    if (field?.type === 'phone') return field;
+  }
+  return null;
+});
+const formHasPhoneField = computed(() => formPhoneField.value != null);
+const phoneFieldLabel = computed(
+  () => formPhoneField.value?.name?.trim() || '手机号',
 );
 
 function emitSheetUpdated(): void {
@@ -430,9 +436,6 @@ async function load(): Promise<void> {
     form.value = forms.find((item) => item.sheetId === props.sheet?.id) ?? null;
     name.value = form.value?.name ?? `${props.sheet.name}收集表`;
     coverUrl.value = form.value?.coverUrl ?? '';
-    template.value =
-      form.value?.successPage.templateHtml ??
-      '<div class="success-shell"><div class="success-check">✓</div><h2>已提交</h2><p>你的序列号是 <strong>{{序列号}}</strong></p></div>';
     rejectDuplicatePhone.value = form.value?.rejectDuplicatePhone ?? true;
     shareEnabled.value = form.value?.share.enabled ?? true;
     audience.value = form.value?.share.audience ?? 'anyone';
@@ -505,7 +508,6 @@ function savePayload() {
       audience: audience.value,
       expiresAt: expiresAt.value || null,
     },
-    successPage: { templateHtml: template.value },
     rejectDuplicatePhone: rejectDuplicatePhone.value,
   };
 }
@@ -780,48 +782,6 @@ async function copyShareUrl(): Promise<void> {
   toast(ok ? '分享链接已复制' : '复制失败，请手动选中链接复制');
 }
 
-const successVariables = computed(() => {
-  const names = items.value
-    .map((item) => fieldName(item.fieldId))
-    .filter((name) => Boolean(name.trim()));
-  const extras = ['序列号'];
-  return [...new Set([...extras, ...names])];
-});
-
-function insertVariable(variable: string): void {
-  template.value = `${template.value}{{${variable}}}`;
-}
-
-async function previewSuccess(): Promise<void> {
-  if (!form.value) {
-    const saved = await save(false);
-    if (!saved) return;
-  }
-  try {
-    const sampleCells = Object.fromEntries(
-      items.value.map((item) => [
-        fieldName(item.fieldId),
-        previewValues.value[item.fieldId] ??
-          ({
-            phone: '13800000000',
-            email: 'demo@example.com',
-            number: 1,
-            date: '2026-10-22',
-            checkbox: true,
-          }[fieldById.value.get(item.fieldId)?.type ?? ''] ?? `示例${fieldName(item.fieldId)}`),
-      ]),
-    );
-    const response = await endpoints.previewFormSuccess(formId.value, {
-      formCells: sampleCells,
-      stepOutputs: { 序列号: 'SN-000123' },
-    });
-    successPreviewHtml.value = response.html;
-    previewTab.value = 'preview';
-  } catch (caught) {
-    error.value = errorOf(caught);
-  }
-}
-
 onMounted(load);
 </script>
 
@@ -1080,47 +1040,21 @@ onMounted(load);
                   type="checkbox"
                   data-testid="form-reject-duplicate"
                 />
-                同手机号仅可提交一次
+                同【{{ phoneFieldLabel }}】仅可提交一次
               </label>
               <p class="setting-hint">
-                领取类场景用：已提交过的手机号会被拒绝。普通问卷可关掉。
+                领取类场景用：已提交过的「{{ phoneFieldLabel }}」会被拒绝。普通问卷可关掉。
               </p>
             </template>
           </section>
 
-          <section class="builder-section success-settings">
+          <section class="builder-section">
             <div class="field-heading">
               <span class="section-title">成功页</span>
-              <button
-                class="nl-link"
-                type="button"
-                :disabled="saving"
-                @click="previewSuccess"
-              >
-                预览
-              </button>
             </div>
-            <p class="setting-hint">提交后展示；点击下方标签可插入字段变量。</p>
-            <div class="variable-actions">
-              <button
-                v-for="name in successVariables"
-                :key="name"
-                class="var-chip"
-                type="button"
-                @click="insertVariable(name)"
-              >
-                {{ name }}
-              </button>
-            </div>
-            <label class="builder-field">
-              <span class="sr-only">成功页 HTML 模板</span>
-              <textarea
-                v-model="template"
-                data-testid="form-template-input"
-                rows="5"
-                placeholder="例如：&lt;h2&gt;已提交&lt;/h2&gt;&lt;p&gt;序列号 {{序列号}}&lt;/p&gt;"
-              />
-            </label>
+            <p class="setting-hint" data-testid="form-success-hint">
+              提交后展示自动化「发送消息」步骤的内容（变量已替换）。请在自动化里配置文案。
+            </p>
           </section>
 
           <div class="builder-actions" :class="{ 'embedded-save': embedded }">
@@ -1290,21 +1224,10 @@ onMounted(load);
             />
           </div>
           <button class="preview-submit" type="button" disabled>提交</button>
+          <p class="setting-hint fill-success-hint" data-testid="form-success-preview">
+            提交成功后展示自动化「发送消息」中的文案。
+          </p>
         </div>
-        <section class="success-preview">
-          <header class="success-preview-head">
-            <h4>成功页预览</h4>
-            <button class="btn small" type="button" @click="previewSuccess">刷新预览</button>
-          </header>
-          <div
-            class="success-html"
-            data-testid="form-success-preview"
-            v-html="
-              successPreviewHtml ||
-              '<p class=&quot;muted&quot;>点左侧「预览」或上方「刷新预览」，用示例数据看插值结果。</p>'
-            "
-          ></div>
-        </section>
       </div>
 
       <!-- 非嵌入：底部分享条；嵌入模式用顶栏「分享表单」对话框 -->
@@ -2376,47 +2299,12 @@ onMounted(load);
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
-.live-preview,
-.success-settings {
+.live-preview {
   padding-top: 4px;
   border-top: 1px solid var(--border, #e5e6eb);
 }
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-.success-preview {
-  margin-top: 16px;
-  padding: 14px;
-  border: 1px solid #eaecf0;
-  border-radius: 10px;
-  background: #fff;
-}
-.success-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.live-preview h4,
-.success-preview h4 {
-  margin: 0;
-  font-size: 14px;
-}
-.success-html {
-  min-height: 150px;
-  padding: 16px;
-  border: 1px solid #eaecf0;
-  border-radius: 8px;
-  background: #fafbfc;
+.fill-success-hint {
+  margin: 12px 0 0;
 }
 .cover-editor {
   display: flex;
