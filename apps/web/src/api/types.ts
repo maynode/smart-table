@@ -441,19 +441,6 @@ export interface TemplateInstantiateResult {
   shareUrl?: string;
 }
 
-export interface CrossWorkspaceShareDto {
-  id: string;
-  objectType: 'base' | 'sheet';
-  objectId: string;
-  objectName: string;
-  role: 'view' | 'edit';
-  sourceWorkspaceId: string;
-  sourceWorkspaceName: string;
-  targetWorkspaceId: string;
-  targetWorkspaceName: string;
-  createdAt: string;
-}
-
 export interface PublicViewDto {
   id: string;
   sheetId: string;
@@ -479,90 +466,6 @@ export interface PublicViewData {
   }>;
   records: Array<{ id: string; cells: Record<string, unknown> }>;
   expiresAt: string | null;
-}
-
-export interface ApiKeyDto {
-  id: string;
-  name: string;
-  prefix: string;
-  scopes: string[];
-  lastUsedAt: string | null;
-  createdAt: string;
-  token?: string;
-}
-
-export interface WebhookDto {
-  id: string;
-  url: string;
-  secret: string;
-  events: string[];
-  active: boolean;
-  createdAt: string;
-}
-
-export interface WebhookDeliveryDto {
-  id: string;
-  webhookId: string;
-  event: string;
-  status: 'pending' | 'success' | 'failed';
-  attempts: number;
-  responseStatus: number | null;
-  error: string;
-  createdAt: string;
-}
-
-export interface QuotaLimits {
-  maxSeats: number;
-  maxStorageBytes: number;
-  maxAutomationRunsPerMonth: number;
-}
-
-export interface QuotaSnapshot {
-  workspaceId: string;
-  canEdit: boolean;
-  limits: QuotaLimits;
-  usage: {
-    seats: number;
-    storageBytes: number;
-    automationRunsThisMonth: number;
-  };
-  exceeded: {
-    seats: boolean;
-    storage: boolean;
-    automationRuns: boolean;
-  };
-}
-
-export interface DataSyncDto {
-  id: string;
-  sheetId: string;
-  name: string;
-  sourceType: 'http' | 'file';
-  config: {
-    url?: string;
-    headers?: Record<string, string>;
-    fileId?: string;
-  };
-  mapping: Record<string, string>;
-  matchFieldId: string | null;
-  mode: 'upsert' | 'replace';
-  cron: string | null;
-  enabled: boolean;
-  nextRunAt: string | null;
-  lastRunAt: string | null;
-  createdAt: string;
-}
-
-export interface DataSyncRunDto {
-  id: string;
-  syncId: string;
-  status: 'running' | 'success' | 'failed';
-  trigger: string;
-  rowsRead: number;
-  rowsWritten: number;
-  error: string;
-  startedAt: string;
-  finishedAt: string | null;
 }
 
 export interface NotificationDto {

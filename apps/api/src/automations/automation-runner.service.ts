@@ -41,7 +41,7 @@ export interface AutomationRunContext {
   idempotencyKey?: string;
 }
 
-type InternalStepOutput = StepOutput & { groupChatId?: string };
+type InternalStepOutput = StepOutput;
 
 interface ExecutionState {
   automation: AutomationDefinition;
@@ -403,10 +403,6 @@ export class AutomationRunnerService {
         return this.modifyRecords(step, state, tx);
       case 'sendMessage':
         return this.sendMessage(step, state, tx);
-      case 'startGroupChat':
-        return this.startGroupChat(step, state, tx);
-      case 'addGroupMembers':
-        return this.addGroupMembers(step, state, tx);
       case 'sendHttp':
         return this.sendHttp(step, state);
       default:
@@ -679,42 +675,6 @@ export class AutomationRunnerService {
         },
       },
     };
-  }
-
-  private async startGroupChat(
-    step: Extract<AutomationStep, { type: 'startGroupChat' }>,
-    state: ExecutionState,
-    tx: Prisma.TransactionClient,
-  ): Promise<StepExecution> {
-    const { groupChatId } = await this.notify.startGroupChat({
-      baseId: state.automation.baseId,
-      name: step.name,
-      memberIds: step.memberUserIds ?? [],
-    });
-
-    return {
-      output: { stepId: step.id, type: 'startGroupChat', groupChatId },
-    };
-  }
-
-  private async addGroupMembers(
-    step: Extract<AutomationStep, { type: 'addGroupMembers' }>,
-    state: ExecutionState,
-    tx: Prisma.TransactionClient,
-  ): Promise<StepExecution> {
-    const fromStep = step.fromStepId
-      ? (state.stepOutputs.get(step.fromStepId)?.groupChatId ?? undefined)
-      : undefined;
-    const groupChatId = step.groupChatId ?? fromStep;
-    if (!groupChatId) {
-      throw new Error('未找到目标群聊');
-    }
-
-    await this.notify.addGroupMembers({
-      groupChatId,
-      memberIds: step.memberUserIds ?? [],
-    });
-    return { output: { stepId: step.id, type: 'addGroupMembers', groupChatId } };
   }
 
   private async resolveTargetIds(

@@ -280,7 +280,7 @@ describe('Automation engine (e2e)', () => {
     expect(runs.body[0].steps[0].output.recordIds).toEqual([]);
   });
 
-  it('creates records, sends notifications, and starts group chats', async () => {
+  it('creates records and sends document notifications', async () => {
     const automation = await request(app.getHttpServer())
       .post('/automations')
       .set(auth())
@@ -307,18 +307,6 @@ describe('Automation engine (e2e)', () => {
             channel: 'doc',
             recipients: [{ source: 'fixed', userIds: [userId] }],
             content: { text: '领取成功，手机号 {{手机号}}，序列号 {{序列号}}' },
-          },
-          {
-            id: 'group',
-            type: 'startGroupChat',
-            name: '领取服务群',
-            memberUserIds: [userId],
-          },
-          {
-            id: 'add-group',
-            type: 'addGroupMembers',
-            fromStepId: 'group',
-            memberUserIds: [userId],
           },
         ],
       });
@@ -350,12 +338,8 @@ describe('Automation engine (e2e)', () => {
     const runs = await request(app.getHttpServer())
       .get(`/automations/${automation.body.id}/runs`)
       .set(auth());
-    expect(runs.body[0].steps).toHaveLength(4);
+    expect(runs.body[0].steps).toHaveLength(2);
     expect(runs.body[0].steps[1].type).toBe('sendMessage');
-    expect(runs.body[0].steps[2].output.groupChatId).toBeTruthy();
-    expect(runs.body[0].steps[3].output.groupChatId).toBe(
-      runs.body[0].steps[2].output.groupChatId,
-    );
   });
 
   it('keeps run logs with time/status/duration and enforces editor access', async () => {

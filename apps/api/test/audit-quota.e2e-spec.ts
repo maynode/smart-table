@@ -161,12 +161,12 @@ describe('Audit log and quotas (e2e)', () => {
       .set(auth())
       .send({})
       .expect(201);
-    const blockedRun = await http()
+    // 自动化运行次数不限额：第二次仍应成功
+    await http()
       .post(`/automations/${automation.body.id}/run`)
       .set(auth())
       .send({})
-      .expect(403);
-    expect(blockedRun.body.code).toBe('QUOTA_AUTOMATION_RUNS_EXCEEDED');
+      .expect(201);
 
     const form = await http()
       .post(`/forms/${randomUUID()}`)

@@ -86,17 +86,9 @@ export class QuotasService {
     }
   }
 
-  async assertAutomationRun(workspaceId: string): Promise<void> {
-    const [limits, usage] = await Promise.all([
-      this.resolvePolicy(workspaceId),
-      this.usage(workspaceId),
-    ]);
-    if (usage.automationRunsThisMonth >= limits.maxAutomationRunsPerMonth) {
-      throw new ForbiddenException({
-        code: 'QUOTA_AUTOMATION_RUNS_EXCEEDED',
-        message: `本月自动化运行配额已用尽（${usage.automationRunsThisMonth}/${limits.maxAutomationRunsPerMonth}）`,
-      });
-    }
+  /** 自动化运行次数不限额（仅统计用量，不拦截）. */
+  async assertAutomationRun(_workspaceId: string): Promise<void> {
+    return;
   }
 
   async assertStorage(workspaceId: string, bytes: number): Promise<void> {
@@ -136,8 +128,7 @@ export class QuotasService {
       exceeded: {
         seats: usage.seats >= limits.maxSeats,
         storage: usage.storageBytes >= limits.maxStorageBytes,
-        automationRuns:
-          usage.automationRunsThisMonth >= limits.maxAutomationRunsPerMonth,
+        automationRuns: false,
       },
     };
   }

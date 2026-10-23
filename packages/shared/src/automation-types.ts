@@ -90,8 +90,6 @@ export type AutomationStepType =
   | 'createRecord'
   | 'modifyRecords'
   | 'sendMessage'
-  | 'startGroupChat'
-  | 'addGroupMembers'
   | 'sendHttp';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -132,8 +130,6 @@ export interface Recipient {
   /** e.g. 填写者 on the created-record step. */
   field?: string;
   userIds?: string[];
-  /** Group message target. */
-  groupChatId?: string;
   label?: string;
 }
 
@@ -155,29 +151,15 @@ export interface MessageContent {
 
 export interface SendMessageStep extends BaseStep {
   type: 'sendMessage';
-  /** 文档消息 | 群消息 */
-  channel: 'doc' | 'group';
+  /** 文档消息（站内通知） */
+  channel: 'doc';
   recipients: Recipient[];
   content: MessageContent;
   /** Dashboard schedule push attaches the dashboard here. */
   attachments?: MessageAttachment[];
 }
 
-export interface StartGroupChatStep extends BaseStep {
-  type: 'startGroupChat';
-  name: string;
-  memberUserIds: string[];
-}
-
-export interface AddGroupMembersStep extends BaseStep {
-  type: 'addGroupMembers';
-  /** Optional: target group created by an earlier step. */
-  fromStepId?: string;
-  groupChatId?: string;
-  memberUserIds: string[];
-}
-
-/** WeCom X2.SEND_HTTP=7 — outbound webhook from a workflow step. */
+/** Outbound HTTP from a workflow step. */
 export interface SendHttpStep extends BaseStep {
   type: 'sendHttp';
   method: HttpMethod;
@@ -195,8 +177,6 @@ export type AutomationStep =
   | CreateRecordStep
   | ModifyRecordsStep
   | SendMessageStep
-  | StartGroupChatStep
-  | AddGroupMembersStep
   | SendHttpStep;
 
 export interface AutomationDefinition {

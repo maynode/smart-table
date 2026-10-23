@@ -83,12 +83,6 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
   );
   await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
-  // Share panel is a real, closable surface.
-  await page.getByTestId('share-open').click();
-  await expect(page.getByTestId('share-panel')).toBeVisible();
-  await page.getByTestId('share-close').click();
-  await expect(page.getByTestId('share-panel')).toHaveCount(0);
-
   // Invite, change role, then remove a workspace member.
   await page.getByTestId('more-open').click();
   await page.getByTestId('more-menu').getByText('成员与邀请').click();

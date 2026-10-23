@@ -24,9 +24,9 @@ GET /workspaces/:id/audit-logs?action=record.updated&objectType=record&actorId=&
 | --- | --- | --- |
 | 席位数 | 50 | `QUOTA_SEATS_EXCEEDED` |
 | 存储字节 | 10 GiB | `QUOTA_STORAGE_EXCEEDED` |
-| 每月自动化运行次数 | 10000 | `QUOTA_AUTOMATION_RUNS_EXCEEDED` |
+| 每月自动化运行次数 | **不限额**（仅统计用量） | — |
 
-默认值可用 `QUOTA_MAX_SEATS`、`QUOTA_MAX_STORAGE_BYTES`、`QUOTA_MAX_AUTOMATION_RUNS_PER_MONTH` 覆盖。
+默认值可用 `QUOTA_MAX_SEATS`、`QUOTA_MAX_STORAGE_BYTES` 覆盖。`maxAutomationRunsPerMonth` 字段仍可配置/展示历史策略，但运行时不再拦截。
 
 查询用量（工作区成员）：
 

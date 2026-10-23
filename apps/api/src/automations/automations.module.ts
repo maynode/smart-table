@@ -1,7 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
-import { WecomNotifyAdapter } from '../notify/wecom.adapter';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { QuotasModule } from '../quotas/quotas.module';
 import { AutomationQueueService } from './automation-queue.service';
@@ -28,14 +25,7 @@ import { NotificationsController } from './notifications.controller';
     LocalNotifyAdapter,
     {
       provide: NOTIFY_ADAPTER,
-      inject: [ConfigService, PrismaService],
-      useFactory: (config: ConfigService, prisma: PrismaService) => {
-        const mock = config.get<string>('WECOM_MOCK_NOTIFY_URL');
-        const enabled = config.get<string>('WECOM_ENABLED') === 'true';
-        return mock || enabled
-          ? new WecomNotifyAdapter(prisma, config)
-          : new LocalNotifyAdapter(prisma);
-      },
+      useExisting: LocalNotifyAdapter,
     },
   ],
   exports: [

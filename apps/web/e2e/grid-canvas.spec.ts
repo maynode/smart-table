@@ -196,12 +196,6 @@ test.describe('Canvas grid + enterprise shell', () => {
     ).toBeVisible();
     await page.locator('[data-testid="dashboard-close"]').click();
 
-    // Cross-workspace sharing UI is available from the top bar.
-    await page.locator('[data-testid="share-open"]').click();
-    await expect(page.locator('[data-testid="share-panel"]')).toBeVisible();
-    await expect(page.locator('[data-testid="share-type"]')).toBeVisible();
-    await page.locator('[data-testid="share-close"]').click();
-
     // Template library creates a new base and navigates into it.
     await page.locator('[data-testid="create-menu-toggle"]').click();
     await page.locator('[data-testid="template-open"]').click();

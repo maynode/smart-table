@@ -6,7 +6,6 @@ import AutomationEditor from './AutomationEditor.vue';
 import type {
   AutomationDto,
   AutomationRunDto,
-  QuotaSnapshot,
   SheetDto,
 } from '../api/types';
 import { confirmDialog } from '../ui/dialog';
@@ -17,7 +16,6 @@ const emit = defineEmits<{ close: [] }>();
 
 const automations = ref<AutomationDto[]>([]);
 const sheets = ref<SheetDto[]>([]);
-const quota = ref<QuotaSnapshot | null>(null);
 const runs = ref<Record<string, AutomationRunDto[]>>({});
 const loading = ref(true);
 const error = ref('');
@@ -50,36 +48,10 @@ const stepLabels: Record<string, string> = {
   createRecord: '新增记录',
   modifyRecords: '修改记录',
   sendMessage: '发送消息',
-  startGroupChat: '发起群聊',
-  addGroupMembers: '添加群成员',
 };
 
 const enabledCount = computed(
   () => automations.value.filter((item) => item.enabled).length,
-);
-
-const remainingRuns = computed(() => {
-  const snap = quota.value;
-  if (!snap) {
-    const used = automations.value.reduce(
-      (sum, item) => sum + (item.monthlyRunCount ?? 0),
-      0,
-    );
-    const caps = automations.value
-      .map((item) => item.monthlyQuota)
-      .filter((value): value is number => typeof value === 'number');
-    const limit = caps.length ? Math.min(...caps) : 10000;
-    return Math.max(0, limit - used);
-  }
-  return Math.max(
-    0,
-    snap.limits.maxAutomationRunsPerMonth -
-      snap.usage.automationRunsThisMonth,
-  );
-});
-
-const quotaLimit = computed(
-  () => quota.value?.limits.maxAutomationRunsPerMonth ?? 10000,
 );
 
 const filteredRuns = computed(() => {
@@ -210,14 +182,12 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    const [list, sheetList, base] = await Promise.all([
+    const [list, sheetList] = await Promise.all([
       endpoints.listAutomations(props.baseId),
       endpoints.listSheets(props.baseId),
-      endpoints.getBase(props.baseId),
     ]);
     automations.value = list;
     sheets.value = sheetList;
-    quota.value = await endpoints.getQuota(base.workspaceId).catch(() => null);
     const entries = await Promise.all(
       automations.value.map(async (automation) => {
         const runList = await endpoints.listAutomationRuns(automation.id, 10);
@@ -306,10 +276,7 @@ onMounted(load);
     <header v-if="!editorOpen" class="panel-header">
       <div class="panel-title-block">
         <h3>{{ runsViewAutomation ? '运行详情' : '自动化' }}</h3>
-        <p v-if="!runsViewAutomation" class="quota-line">
-          本月还可运行 {{ remainingRuns }} 次自动化流程，上限可增加至{{ quotaLimit }}次。
-        </p>
-        <p v-else class="quota-line">{{ runsViewAutomation.name }}</p>
+        <p v-if="runsViewAutomation" class="quota-line">{{ runsViewAutomation.name }}</p>
       </div>
       <button class="icon-btn close-btn" aria-label="关闭" @click="emit('close')">
         ×

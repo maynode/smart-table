@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { auth } from '../stores/auth';
 
 const router = useRouter();
-const route = useRoute();
-const wecomEnabled = ref(false);
-const wecomUrl = ref('');
 const mode = ref<'login' | 'register'>('login');
 const email = ref('');
 const password = ref('');
@@ -34,44 +31,11 @@ async function submit(): Promise<void> {
     busy.value = false;
   }
 }
-
-async function signInWithWecom(code: string): Promise<void> {
-  busy.value = true;
-  error.value = '';
-  try {
-    const result = await endpoints.loginWithWecom(code);
-    auth.signIn(result.accessToken, result.user);
-    await router.push('/');
-  } catch (caught) {
-    error.value =
-      caught instanceof ApiError ? caught.message : '企业微信登录失败';
-  } finally {
-    busy.value = false;
-  }
-}
-
-function startWecom(): void {
-  if (wecomUrl.value) window.location.href = wecomUrl.value;
-}
-
-onMounted(async () => {
-  const code = typeof route.query.code === 'string' ? route.query.code : '';
-  if (code) {
-    await signInWithWecom(code);
-    return;
-  }
-  try {
-    const config = await endpoints.getWecomConfig();
-    wecomEnabled.value = config.enabled;
-    wecomUrl.value = config.authorizeUrl;
-  } catch {
-    wecomEnabled.value = false;
-  }
-});
 </script>
 
 <template>
-  <div class="auth-page">    <div class="auth-card">
+  <div class="auth-page">
+    <div class="auth-card">
       <div class="auth-brand">
         <span class="brand-mark">▦</span>
         <div>
@@ -138,26 +102,7 @@ onMounted(async () => {
         </button>
       </form>
 
-      <button
-        v-if="wecomEnabled"
-        class="btn btn-ghost wecom-btn"
-        data-testid="wecom-login"
-        :disabled="busy"
-        @click="startWecom"
-      >
-        企业微信登录
-      </button>
-
       <p class="auth-footnote">私有化部署 · 数据保存在你自己的 PostgreSQL 中</p>
     </div>
   </div>
 </template>
-
-<style scoped>
-.wecom-btn {
-  width: 100%;
-  margin-top: 10px;
-  border: 1px solid #d0d3d9;
-  color: #1f2329;
-}
-</style>

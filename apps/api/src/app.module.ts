@@ -8,12 +8,9 @@ import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { AnalysisReportsModule } from './analysis-reports/analysis-reports.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
-import { ApiKeysModule } from './api-keys/api-keys.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
-import { OpenApiModule } from './openapi/openapi.module';
 import { AuditModule } from './audit/audit.module';
 import { QuotasModule } from './quotas/quotas.module';
-import { DataSyncModule } from './sync/data-sync.module';
 import { PublicViewsModule } from './public-views/public-views.module';
 import { SharingModule } from './sharing/sharing.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -47,12 +44,9 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AnalysisReportsModule,
     SharingModule,
     PublicViewsModule,
-    ApiKeysModule,
     WebhooksModule,
-    OpenApiModule,
     AuditModule,
     QuotasModule,
-    DataSyncModule,
     TemplatesModule,
   ],
   controllers: [HealthController],

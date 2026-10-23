@@ -25,15 +25,8 @@ import type {
   DashboardWidgetDto,
   TemplateDto,
   TemplateInstantiateResult,
-  CrossWorkspaceShareDto,
   PublicViewDto,
   PublicViewData,
-  ApiKeyDto,
-  WebhookDto,
-  WebhookDeliveryDto,
-  QuotaSnapshot,
-  DataSyncDto,
-  DataSyncRunDto,
   SavedViewDto,
   NotificationDto,
   AnalysisReportDto,
@@ -550,30 +543,6 @@ export const endpoints = {
       body,
     }),
 
-  listShares: (workspaceId: string, direction: 'in' | 'out' = 'out') =>
-    api<CrossWorkspaceShareDto[]>(
-      `/workspaces/${workspaceId}/shares?direction=${direction}`,
-    ),
-
-  createShare: (
-    workspaceId: string,
-    body: {
-      targetWorkspaceId: string;
-      objectType: 'base' | 'sheet';
-      objectId: string;
-      role: 'view' | 'edit';
-    },
-  ) =>
-    api<CrossWorkspaceShareDto>(`/workspaces/${workspaceId}/shares`, {
-      method: 'POST',
-      body,
-    }),
-
-  revokeShare: (shareId: string) =>
-    api<{ id: string; revoked: boolean }>(`/shares/${shareId}`, {
-      method: 'DELETE',
-    }),
-
   listPublicViews: (sheetId: string) =>
     api<PublicViewDto[]>(`/sheets/${sheetId}/public-views`),
 
@@ -597,121 +566,6 @@ export const endpoints = {
         password ? `?password=${encodeURIComponent(password)}` : ''
       }`,
     ),
-
-  listApiKeys: (workspaceId: string) =>
-    api<ApiKeyDto[]>(`/workspaces/${workspaceId}/api-keys`),
-
-  createApiKey: (
-    workspaceId: string,
-    body: { name: string; scopes?: Array<'read' | 'write'> },
-  ) =>
-    api<ApiKeyDto>(`/workspaces/${workspaceId}/api-keys`, {
-      method: 'POST',
-      body,
-    }),
-
-  revokeApiKey: (keyId: string) =>
-    api<{ id: string; revoked: boolean }>(`/api-keys/${keyId}`, {
-      method: 'DELETE',
-    }),
-
-  listWebhooks: (workspaceId: string) =>
-    api<WebhookDto[]>(`/workspaces/${workspaceId}/webhooks`),
-
-  createWebhook: (
-    workspaceId: string,
-    body: { url: string; events?: string[] },
-  ) =>
-    api<WebhookDto>(`/workspaces/${workspaceId}/webhooks`, {
-      method: 'POST',
-      body,
-    }),
-
-  deleteWebhook: (webhookId: string) =>
-    api<{ id: string; deleted: boolean }>(`/webhooks/${webhookId}`, {
-      method: 'DELETE',
-    }),
-
-  listWebhookDeliveries: (webhookId: string, status?: string) =>
-    api<WebhookDeliveryDto[]>(
-      `/webhooks/${webhookId}/deliveries${status ? `?status=${status}` : ''}`,
-    ),
-
-  retryWebhookDelivery: (deliveryId: string) =>
-    api<WebhookDeliveryDto>(`/webhook-deliveries/${deliveryId}/retry`, {
-      method: 'POST',
-    }),
-
-  getQuota: (workspaceId: string) =>
-    api<QuotaSnapshot>(`/workspaces/${workspaceId}/quota`),
-
-  updateInstallationQuota: (body: {
-    maxSeats?: number;
-    maxStorageBytes?: number;
-    maxAutomationRunsPerMonth?: number;
-  }) =>
-    api<{ key: string; maxSeats: number }>('/admin/quotas', {
-      method: 'PUT',
-      body: { scope: 'installation', ...body },
-    }),
-
-  listDataSyncs: (sheetId: string) =>
-    api<DataSyncDto[]>(`/sheets/${sheetId}/data-syncs`),
-
-  createDataSync: (
-    sheetId: string,
-    body: {
-      name: string;
-      sourceType: 'http' | 'file';
-      config: { url?: string; headers?: Record<string, string>; fileId?: string };
-      mapping: Record<string, string>;
-      matchFieldId?: string;
-      mode?: 'upsert' | 'replace';
-      cron?: string;
-    },
-  ) =>
-    api<DataSyncDto>(`/sheets/${sheetId}/data-syncs`, {
-      method: 'POST',
-      body,
-    }),
-
-  runDataSync: (syncId: string) =>
-    api<DataSyncRunDto>(`/data-syncs/${syncId}/run`, { method: 'POST' }),
-
-  listDataSyncRuns: (syncId: string) =>
-    api<DataSyncRunDto[]>(`/data-syncs/${syncId}/runs`),
-
-  deleteDataSync: (syncId: string) =>
-    api<{ id: string; deleted: boolean }>(`/data-syncs/${syncId}`, {
-      method: 'DELETE',
-    }),
-
-  uploadSyncFile: async (sheetId: string, file: File) => {
-    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
-    const form = new FormData();
-    form.append('file', file);
-    const token = getToken();
-    const response = await fetch(`${base}/sheets/${sheetId}/data-syncs/files`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form,
-    });
-    const text = await response.text();
-    const data = text ? (JSON.parse(text) as unknown) : null;
-    if (!response.ok) throw new ApiError(response.status, data);
-    return data as { id: string; filename: string; size: number };
-  },
-
-  getWecomConfig: () =>
-    api<{ enabled: boolean; authorizeUrl: string; redirectUri: string }>(
-      '/auth/wecom/config',
-    ),
-
-  loginWithWecom: (code: string) =>
-    api<AuthResult>('/auth/wecom/callback', {
-      method: 'POST',
-      body: { code },
-    }),
 
   listNotifications: (limit = 50) =>
     api<{ notifications: NotificationDto[] }>(

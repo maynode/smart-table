@@ -26,8 +26,6 @@ type StepType =
   | 'createRecord'
   | 'modifyRecords'
   | 'sendMessage'
-  | 'startGroupChat'
-  | 'addGroupMembers'
   | 'sendHttp';
 
 interface MappingRow {
@@ -45,15 +43,13 @@ interface UiStep {
   sheetId: string;
   limit: number;
   onEmpty: 'continue' | 'stop';
-  filterFieldId: string;
-  filterOperator: string;
-  filterValue: string;
+  /** 查找条件行（与触发器 FilterGroup 同形，扁平且/或）. */
+  filterRows: Array<{ fieldId: string; operator: string; value: string }>;
   /** Find-step filter conjunction (企微：满足任意/全部条件). */
   filterConjunction: 'and' | 'or';
   fromStepId: string;
   mappings: MappingRow[];
-  channel: 'doc' | 'group';
-  groupChatId: string;
+  channel: 'doc';
   text: string;
   recipientMode: 'trigger' | 'fixed';
   recipientField: string;
@@ -121,8 +117,6 @@ const stepTypes: Array<{
   { value: 'createRecord', label: '新增记录', icon: '➕', color: '#52c41a' },
   { value: 'modifyRecords', label: '修改记录', icon: '✏️', color: '#fa8c16' },
   { value: 'findRecords', label: '查找记录', icon: '🔍', color: '#722ed1' },
-  { value: 'startGroupChat', label: '发起群聊', icon: '👥', color: '#13c2c2' },
-  { value: 'addGroupMembers', label: '添加群成员', icon: '🙋', color: '#2f54eb' },
   { value: 'sendHttp', label: '发送HTTP请求', icon: '🌐', color: '#595959' },
 ];
 
@@ -181,14 +175,11 @@ function blankStep(type: StepType): UiStep {
     sheetId: sheets.value[0]?.id ?? '',
     limit: 1,
     onEmpty: 'continue',
-    filterFieldId: '',
-    filterOperator: 'equals',
-    filterValue: '',
+    filterRows: [{ fieldId: '', operator: 'equals', value: '' }],
     filterConjunction: 'and',
     fromStepId: '',
     mappings: [],
     channel: 'doc',
-    groupChatId: '',
     text: '',
     buttons: [],
     recipientMode: 'trigger',
@@ -307,35 +298,26 @@ function triggerSummary(): string {
   const sheet = sheetLabel(triggerSheetId.value);
   const conditions = triggerFilters.value
     .filter((row) => row.fieldId)
-    .map((row) => {
-      const field = fieldName(triggerSheetId.value, row.fieldId);
-      if (row.operator === 'isEmpty' || row.operator === 'isNotEmpty') {
-        return `${field}${operatorLabel(row.operator)}`;
-      }
-      const shown = choiceLabel(triggerSheetId.value, row.fieldId, row.value);
-      return `${field}${operatorLabel(row.operator)}「${shown}」`;
-    });
+    .map((row) => formatConditionRow(triggerSheetId.value, row));
   if (conditions.length === 0) {
     return `当「${sheet}」${when}`;
   }
-  return `当「${sheet}」${when}，且 ${conditions.join('，')}`;
+  const joiner = triggerConjunction.value === 'or' ? ' 或 ' : ' 且 ';
+  return `当「${sheet}」${when}，满足：${conditions.join(joiner)}`;
 }
 
 function stepSummary(step: UiStep): string {
   switch (step.type) {
     case 'findRecords': {
       const sheet = sheetLabel(step.sheetId);
-      if (!step.filterFieldId) {
+      const conditions = step.filterRows
+        .filter((row) => row.fieldId)
+        .map((row) => formatConditionRow(step.sheetId, row));
+      if (conditions.length === 0) {
         return `在「${sheet}」中查找最多 ${step.limit} 条记录`;
       }
-      const field = fieldName(step.sheetId, step.filterFieldId);
-      const shown = choiceLabel(step.sheetId, step.filterFieldId, step.filterValue);
-      const cond =
-        step.filterOperator === 'isEmpty' ||
-        step.filterOperator === 'isNotEmpty'
-          ? `${field}${operatorLabel(step.filterOperator)}`
-          : `${field}${operatorLabel(step.filterOperator)}「${shown}」`;
-      return `在「${sheet}」中查找 ${cond} 的记录（最多 ${step.limit} 条）`;
+      const joiner = step.filterConjunction === 'or' ? ' 或 ' : ' 且 ';
+      return `在「${sheet}」中查找 ${conditions.join(joiner)} 的记录（最多 ${step.limit} 条）`;
     }
     case 'createRecord': {
       const sheet = sheetLabel(step.sheetId);
@@ -365,12 +347,6 @@ function stepSummary(step: UiStep): string {
         ? `向${who}发送「${preview}${step.text.trim().length > 36 ? '…' : ''}」`
         : `向${who}发送消息`;
     }
-    case 'startGroupChat':
-      return step.name
-        ? `发起群聊「${step.name}」`
-        : '发起群聊';
-    case 'addGroupMembers':
-      return `向群聊添加 ${step.memberUserIds.length || '若干'} 名成员`;
     case 'sendHttp': {
       const url = step.httpUrl.trim() || '…';
       return `${step.httpMethod} ${url.length > 40 ? `${url.slice(0, 40)}…` : url}`;
@@ -418,6 +394,69 @@ function removeTriggerFilter(index: number): void {
   triggerFilters.value = triggerFilters.value.filter(
     (_, itemIndex) => itemIndex !== index,
   );
+  if (triggerFilters.value.length === 0) {
+    triggerFilters.value = [{ fieldId: '', operator: 'equals', value: '' }];
+  }
+}
+
+function addFindFilterRow(step: UiStep): void {
+  step.filterRows = [
+    ...step.filterRows,
+    { fieldId: '', operator: 'equals', value: '' },
+  ];
+}
+
+function removeFindFilterRow(step: UiStep, index: number): void {
+  step.filterRows = step.filterRows.filter((_, itemIndex) => itemIndex !== index);
+  if (step.filterRows.length === 0) {
+    step.filterRows = [{ fieldId: '', operator: 'equals', value: '' }];
+  }
+}
+
+type FilterRowInput = {
+  fieldId?: string;
+  operator?: string;
+  value?: unknown;
+  conditions?: unknown[];
+};
+
+function parseFilterRows(
+  filters:
+    | {
+        conjunction?: 'and' | 'or';
+        conditions?: FilterRowInput[];
+      }
+    | undefined,
+): {
+  conjunction: 'and' | 'or';
+  rows: Array<{ fieldId: string; operator: string; value: string }>;
+} {
+  const conjunction = filters?.conjunction === 'or' ? 'or' : 'and';
+  const rows = (filters?.conditions ?? [])
+    .filter((node) => node && !Array.isArray(node.conditions) && node.fieldId)
+    .map((condition) => ({
+      fieldId: condition.fieldId ?? '',
+      operator: condition.operator ?? 'equals',
+      value: condition.value === undefined ? '' : String(condition.value),
+    }));
+  return {
+    conjunction,
+    rows: rows.length
+      ? rows
+      : [{ fieldId: '', operator: 'equals', value: '' }],
+  };
+}
+
+function formatConditionRow(
+  sheetId: string,
+  row: { fieldId: string; operator: string; value: string },
+): string {
+  const field = fieldName(sheetId, row.fieldId);
+  if (row.operator === 'isEmpty' || row.operator === 'isNotEmpty') {
+    return `${field}${operatorLabel(row.operator)}`;
+  }
+  const shown = choiceLabel(sheetId, row.fieldId, row.value);
+  return `${field}${operatorLabel(row.operator)}「${shown}」`;
 }
 
 function fieldOptions(sheetId: string): FieldDto[] {
@@ -613,13 +652,13 @@ function filterEditorStep(): UiStep | null {
 }
 
 function findFilterSummary(step: UiStep): string {
-  if (!step.filterFieldId) return '满足条件的记录';
-  const field = fieldName(step.sheetId, step.filterFieldId);
-  if (step.filterOperator === 'isEmpty' || step.filterOperator === 'isNotEmpty') {
-    return `${field}${operatorLabel(step.filterOperator)}`;
-  }
-  const shown = choiceLabel(step.sheetId, step.filterFieldId, step.filterValue);
-  return `${field}${operatorLabel(step.filterOperator)}${shown}`;
+  const conditions = step.filterRows
+    .filter((row) => row.fieldId)
+    .map((row) => formatConditionRow(step.sheetId, row));
+  if (conditions.length === 0) return '满足条件的记录';
+  if (conditions.length === 1) return conditions[0];
+  const joiner = step.filterConjunction === 'or' ? ' 或 ' : ' 且 ';
+  return conditions.join(joiner);
 }
 
 function findStepOptionLabel(candidate: UiStep): string {
@@ -764,16 +803,7 @@ function buildSteps(): Array<Record<string, unknown>> {
           sheetId: step.sheetId,
           limit: step.limit,
           onEmpty: step.onEmpty,
-          filters: buildFilter(
-            [
-              {
-                fieldId: step.filterFieldId,
-                operator: step.filterOperator,
-                value: step.filterValue,
-              },
-            ],
-            step.filterConjunction,
-          ),
+          filters: buildFilter(step.filterRows, step.filterConjunction),
         };
       case 'createRecord':
         return {
@@ -812,21 +842,6 @@ function buildSteps(): Array<Record<string, unknown>> {
           },
         };
       }
-      case 'startGroupChat':
-        return {
-          id: step.id,
-          type: step.type,
-          name: step.name,
-          memberUserIds: step.memberUserIds,
-        };
-      case 'addGroupMembers':
-        return {
-          id: step.id,
-          type: step.type,
-          fromStepId: step.fromStepId || undefined,
-          groupChatId: step.groupChatId || undefined,
-          memberUserIds: step.memberUserIds,
-        };
       case 'sendHttp': {
         let headers: Record<string, string> | undefined;
         const rawHeaders = step.httpHeadersJson.trim();
@@ -895,9 +910,6 @@ function validate(): string {
         return `第 ${index + 1} 步消息内容不能为空`;
       }
     }
-    if (step.type === 'startGroupChat' && !step.name.trim()) {
-      return `第 ${index + 1} 步群聊名称不能为空`;
-    }
     if (step.type === 'sendHttp') {
       if (!step.httpUrl.trim()) {
         return `第 ${index + 1} 步 HTTP 请求缺少 URL`;
@@ -957,18 +969,16 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
   step.sheetId = String(raw.sheetId ?? '');
   step.limit = Number(raw.limit ?? 1) || 1;
   step.onEmpty = raw.onEmpty === 'stop' ? 'stop' : 'continue';
-  const filters = raw.filters as
-    | {
-        conjunction?: 'and' | 'or';
-        conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }>;
-      }
-    | undefined;
-  const firstFilter = filters?.conditions?.[0];
-  step.filterFieldId = firstFilter?.fieldId ?? '';
-  step.filterOperator = firstFilter?.operator ?? 'equals';
-  step.filterValue =
-    firstFilter?.value === undefined ? '' : String(firstFilter.value);
-  step.filterConjunction = filters?.conjunction === 'or' ? 'or' : 'and';
+  const parsedFilters = parseFilterRows(
+    raw.filters as
+      | {
+          conjunction?: 'and' | 'or';
+          conditions?: FilterRowInput[];
+        }
+      | undefined,
+  );
+  step.filterConjunction = parsedFilters.conjunction;
+  step.filterRows = parsedFilters.rows;
   const target = raw.target as { stepId?: string } | undefined;
   step.fromStepId = String(raw.fromStepId ?? target?.stepId ?? '');
   const content = raw.content as { text?: string } | undefined;
@@ -981,7 +991,7 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
         url: String(button.url ?? ''),
       }))
     : [];
-  step.channel = String(raw.channel ?? 'doc') === 'group' ? 'group' : 'doc';
+  step.channel = 'doc';
   const recipients = raw.recipients as
     | Array<{ source?: string; userIds?: string[]; field?: string }>
     | undefined;
@@ -992,7 +1002,6 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
   step.memberUserIds = Array.isArray(raw.memberUserIds)
     ? raw.memberUserIds.map(String)
     : [];
-  step.groupChatId = String(raw.groupChatId ?? '');
   step.name = String(raw.name ?? '');
   const cells = (raw.cells ?? {}) as Record<
     string,
@@ -1064,22 +1073,16 @@ async function load(): Promise<void> {
     triggerSheetId.value = String(trigger.sheetId ?? triggerSheetCandidate);
     cron.value = String(trigger.cron ?? '0 9 * * *');
     timezone.value = String(trigger.timezone ?? 'Asia/Shanghai');
-    const filters = trigger.filters as
-      | {
-          conjunction?: 'and' | 'or';
-          conditions?: Array<{ fieldId?: string; operator?: string; value?: unknown }>;
-        }
-      | undefined;
-    triggerConjunction.value = filters?.conjunction === 'or' ? 'or' : 'and';
-    triggerFilters.value =
-      filters?.conditions?.length
-        ? filters.conditions.map((condition) => ({
-            fieldId: condition.fieldId ?? '',
-            operator: condition.operator ?? 'equals',
-            value:
-              condition.value === undefined ? '' : String(condition.value),
-          }))
-        : [{ fieldId: '', operator: 'equals', value: '' }];
+    const parsedTriggerFilters = parseFilterRows(
+      trigger.filters as
+        | {
+            conjunction?: 'and' | 'or';
+            conditions?: FilterRowInput[];
+          }
+        | undefined,
+    );
+    triggerConjunction.value = parsedTriggerFilters.conjunction;
+    triggerFilters.value = parsedTriggerFilters.rows;
     onFindEmpty.value =
       automation.onFindEmpty === 'stop' ? 'stop' : 'continue';
     monthlyQuota.value = automation.monthlyQuota;
@@ -1183,13 +1186,31 @@ onMounted(load);
           </div>
 
           <div v-if="triggerType !== 'schedule'" class="nl-filters">
+            <div class="nl-sentence">
+              <span>满足以下</span>
+              <select
+                v-model="triggerConjunction"
+                class="nl-chip"
+                data-testid="trigger-filter-conjunction"
+              >
+                <option value="and">全部</option>
+                <option value="or">任意</option>
+              </select>
+              <span>条件</span>
+            </div>
             <div
               v-for="(filter, index) in triggerFilters"
               :key="index"
               class="nl-sentence"
               data-testid="trigger-condition"
             >
-              <span>{{ index === 0 ? '且同时满足' : '并且' }}</span>
+              <span>{{
+                index === 0
+                  ? '当'
+                  : triggerConjunction === 'or'
+                    ? '或者'
+                    : '并且'
+              }}</span>
               <select v-model="filter.fieldId" class="nl-chip" data-testid="trigger-filter-field">
                 <option value="">选择字段</option>
                 <option v-for="field in triggerFields" :key="field.id" :value="field.id">
@@ -1240,10 +1261,14 @@ onMounted(load);
               data-testid="trigger-add-filter"
               @click="addTriggerFilter"
             >
-              + 添加同时满足的条件
+              + 添加条件
             </button>
             <p class="nl-hint">
-              条件未满足时，任何编辑均不会触发后续操作
+              {{
+                triggerConjunction === 'or'
+                  ? '任一条件满足即可触发后续操作'
+                  : '条件未全部满足时，不会触发后续操作'
+              }}
             </p>
           </div>
         </div>
@@ -1475,34 +1500,6 @@ onMounted(load);
 
             <template v-else-if="step.type === 'sendMessage'">
               <div class="field-block">
-                <div class="field-label">发送方式</div>
-                <div class="channel-cards" data-testid="step-message-channel">
-                  <button
-                    type="button"
-                    class="channel-card"
-                    :class="{ active: step.channel === 'doc' }"
-                    data-testid="channel-doc"
-                    @click="step.channel = 'doc'"
-                  >
-                    <span class="channel-radio" />
-                    <span class="channel-title">文档消息</span>
-                    <span class="channel-desc">通过文档动态发送</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="channel-card"
-                    :class="{ active: step.channel === 'group' }"
-                    data-testid="channel-group"
-                    @click="step.channel = 'group'"
-                  >
-                    <span class="channel-radio" />
-                    <span class="channel-title">群消息</span>
-                    <span class="channel-desc">通过应用发送到群</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="field-block">
                 <div class="field-label">发送给</div>
                 <div class="recipient-row">
                   <select
@@ -1690,54 +1687,6 @@ onMounted(load);
               </div>
             </template>
 
-            <template v-else-if="step.type === 'startGroupChat'">
-              <div class="nl-sentence">
-                <span>发起群聊</span>
-                <input v-model="step.name" class="nl-chip nl-chip-input" placeholder="群聊名称" />
-              </div>
-              <div class="member-picker">
-                <label v-for="member in members" :key="member.userId" class="inline-check">
-                  <input
-                    type="checkbox"
-                    :checked="step.memberUserIds.includes(member.userId)"
-                    @change="toggleMember(step, member.userId)"
-                  />
-                  {{ member.name }}
-                </label>
-              </div>
-            </template>
-
-            <template v-else-if="step.type === 'addGroupMembers'">
-              <div class="nl-sentence">
-                <span>向</span>
-                <select v-model="step.fromStepId" class="nl-chip">
-                  <option value="">指定群聊 ID</option>
-                  <option
-                    v-for="candidate in steps.filter((item) => item.type === 'startGroupChat')"
-                    :key="candidate.id"
-                    :value="candidate.id"
-                  >
-                    第 {{ steps.findIndex((item) => item.id === candidate.id) + 2 }} 步 · 发起群聊
-                  </option>
-                </select>
-                <span>添加成员</span>
-              </div>
-              <label v-if="!step.fromStepId" class="form-field">
-                <span>群聊 ID</span>
-                <input v-model="step.groupChatId" placeholder="chat id" />
-              </label>
-              <div class="member-picker">
-                <label v-for="member in members" :key="member.userId" class="inline-check">
-                  <input
-                    type="checkbox"
-                    :checked="step.memberUserIds.includes(member.userId)"
-                    @change="toggleMember(step, member.userId)"
-                  />
-                  {{ member.name }}
-                </label>
-              </div>
-            </template>
-
             <template v-else-if="step.type === 'sendHttp'">
               <div class="nl-sentence">
                 <span>请求方法</span>
@@ -1866,9 +1815,21 @@ onMounted(load);
             </select>
             <span>条件</span>
           </div>
-          <div class="mapping-row">
+          <div
+            v-for="(filter, index) in filterEditorStep()!.filterRows"
+            :key="index"
+            class="mapping-row"
+            data-testid="step-filter-row"
+          >
+            <span class="muted">{{
+              index === 0
+                ? '当'
+                : filterEditorStep()!.filterConjunction === 'or'
+                  ? '或者'
+                  : '并且'
+            }}</span>
             <select
-              v-model="filterEditorStep()!.filterFieldId"
+              v-model="filter.fieldId"
               data-testid="step-filter-field"
             >
               <option value="">不筛选</option>
@@ -1881,8 +1842,8 @@ onMounted(load);
               </option>
             </select>
             <select
-              v-if="filterEditorStep()!.filterFieldId"
-              v-model="filterEditorStep()!.filterOperator"
+              v-if="filter.fieldId"
+              v-model="filter.operator"
               data-testid="step-filter-operator"
             >
               <option value="equals">等于</option>
@@ -1894,22 +1855,19 @@ onMounted(load);
             </select>
             <select
               v-if="
-                filterEditorStep()!.filterFieldId &&
-                filterEditorStep()!.filterOperator !== 'isEmpty' &&
-                filterEditorStep()!.filterOperator !== 'isNotEmpty' &&
-                fieldChoices(
-                  filterEditorStep()!.sheetId,
-                  filterEditorStep()!.filterFieldId,
-                ).length
+                filter.fieldId &&
+                filter.operator !== 'isEmpty' &&
+                filter.operator !== 'isNotEmpty' &&
+                fieldChoices(filterEditorStep()!.sheetId, filter.fieldId).length
               "
-              v-model="filterEditorStep()!.filterValue"
+              v-model="filter.value"
               data-testid="step-filter-value"
             >
               <option value="">选择选项</option>
               <option
                 v-for="choice in fieldChoices(
                   filterEditorStep()!.sheetId,
-                  filterEditorStep()!.filterFieldId,
+                  filter.fieldId,
                 )"
                 :key="choice.id"
                 :value="choice.id"
@@ -1919,15 +1877,31 @@ onMounted(load);
             </select>
             <input
               v-else-if="
-                filterEditorStep()!.filterFieldId &&
-                filterEditorStep()!.filterOperator !== 'isEmpty' &&
-                filterEditorStep()!.filterOperator !== 'isNotEmpty'
+                filter.fieldId &&
+                filter.operator !== 'isEmpty' &&
+                filter.operator !== 'isNotEmpty'
               "
-              v-model="filterEditorStep()!.filterValue"
+              v-model="filter.value"
               data-testid="step-filter-value"
               placeholder="值"
             />
+            <button
+              class="icon-btn danger"
+              type="button"
+              title="移除条件"
+              @click="removeFindFilterRow(filterEditorStep()!, index)"
+            >
+              ×
+            </button>
           </div>
+          <button
+            class="nl-add-link"
+            type="button"
+            data-testid="step-add-filter"
+            @click="addFindFilterRow(filterEditorStep()!)"
+          >
+            + 添加条件
+          </button>
           <label class="form-field" style="margin-top: 12px">
             <span>最多查找条数</span>
             <input

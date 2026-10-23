@@ -33,8 +33,6 @@ const STEP_TYPES = [
   'createRecord',
   'modifyRecords',
   'sendMessage',
-  'startGroupChat',
-  'addGroupMembers',
   'sendHttp',
 ];
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
@@ -353,18 +351,12 @@ export class AutomationsService {
       }
 
       if (type === 'sendMessage') {
-        if (raw.channel !== 'doc' && raw.channel !== 'group') {
-          throw new BadRequestException('消息渠道必须是 doc 或 group');
+        if (raw.channel !== 'doc') {
+          throw new BadRequestException('消息渠道仅支持文档消息');
         }
         const content = raw.content as Record<string, unknown> | undefined;
         if (!content || typeof content.text !== 'string') {
           throw new BadRequestException('消息内容缺少文本');
-        }
-      }
-
-      if (type === 'startGroupChat') {
-        if (typeof raw.name !== 'string' || !raw.name.trim()) {
-          throw new BadRequestException('群聊名称不能为空');
         }
       }
 

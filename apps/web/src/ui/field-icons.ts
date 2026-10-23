@@ -13,7 +13,6 @@ export function fieldTypeIcon(type: string): string {
     progress: '▮',
     date: '日',
     person: '人',
-    groupChat: '群',
     image: '图',
     file: '件',
     relation: '关',

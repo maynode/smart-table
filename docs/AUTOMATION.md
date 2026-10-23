@@ -10,7 +10,7 @@
 | `recordUpdated` | `sheetId`，可选 `filters` | 更新记录且满足条件时运行 |
 | `schedule` | `cron`、`timezone` | 定时运行（仪表盘定时推送复用） |
 
-条件使用 `FilterGroup`（AND/OR 嵌套，操作符与视图筛选一致）。触发器条件里可以写字段 id 或字段名，运行前会归一化为 id。
+条件使用 `FilterGroup`（`conjunction: and|or`，可嵌套；操作符与视图筛选一致）。编辑器触发器与「查找记录」均可选「全部 / 任意」并添加多条条件。触发器条件里可以写字段 id 或字段名，运行前会归一化为 id。
 
 ## 2. 六种动作
 

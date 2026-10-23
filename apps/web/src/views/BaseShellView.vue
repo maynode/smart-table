@@ -9,7 +9,6 @@ import PermissionsPanel from '../components/PermissionsPanel.vue';
 import DashboardPanel from '../components/DashboardPanel.vue';
 import AnalysisReportPanel from '../components/AnalysisReportPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
-import SharePanel from '../components/SharePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
 import { ApiError } from '../api/client';
@@ -100,7 +99,6 @@ const dashboardOpen = ref(false);
 const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
 const analysisOpen = ref(false);
 const templatesOpen = ref(false);
-const shareOpen = ref(false);
 const publicViewOpen = ref(false);
 
 const createMenuOpen = ref(false);
@@ -1071,13 +1069,6 @@ onBeforeUnmount(() => {
         <button class="topbar-btn" @click="openMembers">成员</button>
         <button
           class="topbar-btn"
-          data-testid="share-open"
-          @click="shareOpen = true"
-        >
-          分享
-        </button>
-        <button
-          class="topbar-btn"
           data-testid="comments-toggle"
           @click="openComments"
         >
@@ -1520,19 +1511,6 @@ onBeforeUnmount(() => {
         @close="analysisOpen = false"
       />
     </div>
-    <div
-      v-if="shareOpen"
-      class="modal-mask"
-      @click.self="shareOpen = false"
-    >
-      <SharePanel
-        :workspace-id="workspaceId"
-        :base-id="baseId"
-        :sheet-id="activeSheet?.id"
-        @close="shareOpen = false"
-      />
-    </div>
-
     <div
       v-if="publicViewOpen && activeSheet"
       class="modal-mask"
