@@ -250,7 +250,6 @@ const editorKind = computed(() => {
   if (type === 'select') return 'select';
   if (type === 'multiSelect') return 'multiSelect';
   if (type === 'person') return 'person';
-  if (type === 'groupChat') return 'groupChat';
   if (type === 'relation') return 'relation';
   if (type === 'location') return 'location';
   if (type === 'barcode') return 'barcode';
@@ -474,12 +473,13 @@ function formatCell(field: FieldDto, value: unknown): CellRender | null {
     return { text: textOf(value) };
   }
 
+  // groupChat 已停用新建/编辑，旧数据仅只读展示。
   if (field.type === 'groupChat') {
-    const ids = Array.isArray(value) ? value.map(String) : [String(value ?? '')];
+    const ids = Array.isArray(value) ? value.map(String) : [];
     const names = ids
       .filter(Boolean)
       .map((id) => props.personNames[id] ?? id);
-    return { text: names.join(', ') };
+    return { text: names.join(', ') || textOf(value) };
   }
 
   return { text: textOf(value) };
@@ -522,7 +522,8 @@ function beginEdit(row: number, col: number): void {
     field.type === 'createdAt' ||
     field.type === 'lastEditedAt' ||
     field.type === 'autoNumber' ||
-    field.type === 'ai'
+    field.type === 'ai' ||
+    field.type === 'groupChat'
   ) {
     return;
   }
@@ -554,31 +555,6 @@ function beginEdit(row: number, col: number): void {
       },
     };
     nextTick(() => editorInput.value?.focus());
-    return;
-  }
-
-  if (field.type === 'groupChat') {
-    const current = record.cells[field.id];
-    const value = Array.isArray(current)
-      ? JSON.stringify(current)
-      : current
-        ? JSON.stringify([String(current)])
-        : '[]';
-    engine.ensureCellVisible(row, col);
-    const groupRect = engine.cellRect(row, col);
-    editing.value = {
-      recordId: record.id,
-      row,
-      col,
-      field,
-      value,
-      style: {
-        left: `${groupRect.x}px`,
-        top: `${groupRect.y}px`,
-        width: `${Math.max(groupRect.width, 180)}px`,
-        height: `${Math.max(groupRect.height, 72)}px`,
-      },
-    };
     return;
   }
 
@@ -750,10 +726,7 @@ function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): vo
   if (current.field.type === 'checkbox') {
     nextValue =
       current.value === 'true' || current.value === '1' ? 'true' : 'false';
-  } else if (
-    current.field.type === 'multiSelect' ||
-    current.field.type === 'groupChat'
-  ) {
+  } else if (current.field.type === 'multiSelect') {
     try {
       nextValue = JSON.parse(current.value) as string[];
     } catch {
@@ -786,7 +759,6 @@ function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): vo
     }
   } else if (
     current.field.type === 'location' ||
-    current.field.type === 'groupChat' ||
     current.field.type === 'multiSelect'
   ) {
     if (JSON.stringify(previous ?? null) !== JSON.stringify(nextValue ?? null)) {
@@ -1519,29 +1491,6 @@ defineExpose({
         {{ choice.label }}
       </option>
     </select>
-
-    <div
-      v-else-if="editing && editorKind === 'groupChat'"
-      class="cell-editor multi-editor"
-      :style="editing.style"
-      data-testid="cell-editor-group"
-    >
-      <label
-        v-for="member in members"
-        :key="member.userId"
-        class="multi-option"
-      >
-        <input
-          type="checkbox"
-          :checked="multiSelected.includes(member.userId)"
-          @change="toggleMultiChoice(member.userId)"
-        />
-        {{ member.name }}
-      </label>
-      <button class="btn btn-primary multi-done" type="button" @click="commitEdit(true)">
-        完成
-      </button>
-    </div>
 
     <select
       v-else-if="editing && editorKind === 'select'"

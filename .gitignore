@@ -16,4 +16,5 @@ test-results/
 artifacts/perf/
 .data/
 .superpowers/
+.playwright-mcp/
 

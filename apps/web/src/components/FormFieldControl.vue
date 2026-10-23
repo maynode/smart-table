@@ -80,14 +80,6 @@ const personValue = computed({
   set: (id: string) => emit('update:modelValue', id || null),
 });
 
-const groupChatIds = computed({
-  get: () => {
-    const value = props.modelValue;
-    return Array.isArray(value) ? value.map(String) : [];
-  },
-  set: (ids: string[]) => emit('update:modelValue', ids),
-});
-
 const multiSelectIds = computed({
   get: () => {
     const value = props.modelValue;
@@ -211,23 +203,7 @@ function clearAttachment(): void {
       </option>
     </select>
 
-    <!-- 群聊：与表格一致，选成员列表（非真实企微群） -->
-    <div v-else-if="type === 'groupChat'" class="fill-choices">
-      <label
-        v-for="member in members"
-        :key="member.userId"
-        class="fill-choice"
-      >
-        <input
-          v-model="groupChatIds"
-          type="checkbox"
-          :value="member.userId"
-          :disabled="disabled"
-        />
-        {{ member.name }}
-      </label>
-      <p v-if="!members.length" class="hint">暂无工作区成员可选</p>
-    </div>
+    <p v-else-if="type === 'groupChat'" class="hint">群聊字段已停用，仅保留历史展示。</p>
 
     <!-- 关联 -->
     <select

@@ -388,7 +388,23 @@ async function commitCell(payload: {
       label: `${payload.field.name}: ${formatHistoryValue(previous)} → ${formatHistoryValue(coerced)}`,
     });
   } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      toast('记录已被他人修改，正在刷新…');
+      await reloadActiveRecords();
+      return;
+    }
     toast(messageOf(error));
+  }
+}
+
+async function reloadActiveRecords(): Promise<void> {
+  if (!activeSheet.value) return;
+  try {
+    const page = await endpoints.listRecords(activeSheet.value.id, null, 100);
+    records.value = page.records;
+    nextCursor.value = page.nextCursor;
+  } catch (reloadError) {
+    toast(messageOf(reloadError));
   }
 }
 
@@ -413,6 +429,11 @@ async function applyHistoryValue(
     );
     return true;
   } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      toast('记录版本已过期，已刷新最新内容');
+      await reloadActiveRecords();
+      return false;
+    }
     toast(messageOf(error));
     return false;
   }
