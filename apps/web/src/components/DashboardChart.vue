@@ -377,20 +377,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   height: 100%;
   min-height: 140px;
-  padding: 16px 18px;
+  padding: 20px 22px;
 }
 .metric-title {
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary, #646a73);
+  letter-spacing: 0.01em;
 }
 .metric-value {
-  font-size: 40px;
+  font-size: clamp(28px, 4.5vw, 42px);
   font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 .metric-delta {
   display: flex;
@@ -398,6 +401,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-tertiary, #8f959e);
 }
 .metric-delta.up {
@@ -408,30 +412,42 @@ onBeforeUnmount(() => {
 }
 .metric-delta em {
   font-style: normal;
+  font-weight: 400;
   color: var(--text-tertiary, #8f959e);
 }
 .metric-spark {
   width: 100%;
   height: 48px;
-  margin-top: 4px;
+  margin-top: 6px;
+  opacity: 0.9;
 }
 .text-widget {
-  padding: 20px 16px;
+  padding: 22px 18px;
   font-size: 14px;
-  line-height: 1.6;
-  color: #4e5969;
+  line-height: 1.65;
+  color: var(--text-primary, #1f2329);
   white-space: pre-wrap;
 }
 .chart-table {
   margin: 0;
-  padding: 12px 16px;
+  padding: 8px 16px 12px;
   list-style: none;
 }
 .chart-table li {
   display: flex;
   justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid #f2f4f7;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-light, #f0f2f5);
   font-size: 13px;
+  color: var(--text-primary, #1f2329);
+}
+.chart-table li:last-child {
+  border-bottom: none;
+}
+.chart-table li span:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-secondary, #646a73);
 }
 </style>

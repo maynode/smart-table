@@ -450,7 +450,7 @@ onMounted(loadDashboards);
 
     <div class="dashboard-body">
       <aside class="dashboard-list">
-        <button class="btn btn-primary" data-testid="dashboard-create" @click="createDashboard">
+        <button class="btn btn-primary dashboard-create" data-testid="dashboard-create" @click="createDashboard">
           + 新建{{ title }}
         </button>
         <button
@@ -463,9 +463,10 @@ onMounted(loadDashboards);
         >
           {{ dashboard.name }}
         </button>
-        <p v-if="!dashboards.length && !loading" class="empty-hint">
-          还没有{{ title }}，点击上方新建。
-        </p>
+        <div v-if="!dashboards.length && !loading" class="list-empty">
+          <p class="list-empty-title">还没有{{ title }}</p>
+          <p class="list-empty-hint">新建后可添加图表、调整布局与定时推送。</p>
+        </div>
       </aside>
 
       <div v-if="active" class="dashboard-main">
@@ -903,9 +904,10 @@ onMounted(loadDashboards);
               :metric="widget.metric"
             />
           </article>
-          <p v-if="!data?.widgets?.length" class="empty-hint">
-            暂无图表，添加一个后即可在画布上查看；拖动卡片可排序，↔/↕ 调整大小。
-          </p>
+          <div v-if="!data?.widgets?.length" class="canvas-empty">
+            <p class="list-empty-title">画布还是空的</p>
+            <p class="list-empty-hint">在上方选择图表类型并添加；添加后可拖动排序，用 ↔/↕ 调整大小。</p>
+          </div>
         </section>
 
         <section class="schedule-block">
@@ -956,8 +958,12 @@ onMounted(loadDashboards);
           </div>
         </section>
       </div>
-      <div v-else class="dashboard-main empty-hint">
-        选择或新建{{ title }}。
+      <div v-else class="dashboard-main dashboard-main-empty">
+        <p class="list-empty-title">未选择{{ title }}</p>
+        <p class="list-empty-hint">从左侧选择已有看板，或点击「新建」开始。</p>
+        <button class="btn btn-primary" type="button" @click="createDashboard">
+          + 新建{{ title }}
+        </button>
       </div>
     </div>
   </section>
@@ -991,26 +997,86 @@ onMounted(loadDashboards);
   min-height: 0;
 }
 .dashboard-list {
-  width: 220px;
-  padding: 12px;
+  width: 232px;
+  padding: 14px 12px;
   background: #fafbfc;
   border-right: 1px solid #e5e6eb;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dashboard-create {
+  width: 100%;
+  justify-content: center;
 }
 .dashboard-row {
   display: block;
   width: 100%;
-  margin-top: 8px;
-  padding: 9px 10px;
+  margin: 0;
+  padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   text-align: left;
+  font-size: 13px;
+  color: #1f2329;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dashboard-row:hover {
+  background: #f2f3f5;
 }
 .dashboard-row.active {
-  background: #eef4ff;
-  border-color: #cfe0ff;
+  background: #e8f3ff;
+  border-color: #91caff;
+  color: #1d6fdc;
+  font-weight: 600;
+}
+.dashboard-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
+}
+.list-empty,
+.canvas-empty,
+.dashboard-main-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 20px 12px;
+}
+.list-empty {
+  margin-top: 8px;
+  border: 1px dashed #e5e6eb;
+  border-radius: 10px;
+  background: #fff;
+}
+.canvas-empty {
+  margin-top: 16px;
+  padding: 36px 20px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+.dashboard-main-empty {
+  justify-content: center;
+  min-height: 280px;
+  gap: 10px;
+}
+.list-empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4e5969;
+}
+.list-empty-hint {
+  margin: 0;
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a9099;
 }
 .dashboard-main {
   flex: 1;
@@ -1019,9 +1085,10 @@ onMounted(loadDashboards);
 }
 .widget-builder,
 .schedule-block {
-  padding: 14px;
+  padding: 14px 16px;
   border: 1px solid #e5e6eb;
-  border-radius: 10px;
+  border-radius: 12px;
+  background: #fff;
 }
 .chart-config {
   display: grid;
@@ -1069,11 +1136,18 @@ onMounted(loadDashboards);
   color: var(--text-secondary, #646a73);
   cursor: pointer;
 }
+.config-tabs .tab:hover {
+  color: var(--text, #1f2329);
+}
 .config-tabs .tab.active {
   border-bottom-color: var(--brand, #2d8cf0);
   background: transparent;
-  color: var(--text, #1f2329);
+  color: var(--brand-strong, #1d6fdc);
   font-weight: 600;
+}
+.config-tabs .tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .preview-actions {
   display: flex;
@@ -1137,11 +1211,25 @@ onMounted(loadDashboards);
   font-size: 11px;
   color: #4e5969;
   cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.type-card:hover {
+  border-color: #c7d7f5;
+  background: #f7faff;
 }
 .type-card.active {
   border-color: #2d8cf0;
   background: #e8f3ff;
   color: #1d6fdc;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px #2d8cf0;
+}
+.type-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .type-icon {
   font-size: 16px;
@@ -1291,8 +1379,10 @@ onMounted(loadDashboards);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-top: 10px;
-  padding: 8px 10px;
+  padding: 10px 12px;
+  border: 1px solid #eef0f3;
   border-radius: 8px;
   background: #f8f9fb;
   font-size: 13px;
