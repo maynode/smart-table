@@ -74,8 +74,19 @@ const emit = defineEmits<{
   ];
   resizeField: [payload: { field: FieldDto; width: number }];
   rowsSelected: [recordIds: string[]];
-  /** 企微：向上/向下插入 N 行（末尾追加；无 order 字段时暂不按锚点重排）。 */
-  insertRows: [payload: { count: number; direction: 'above' | 'below' }];
+  /** 企微：向上/向下插入 N 行（相对 atIndex；无持久 order 时本地插入）。 */
+  insertRows: [
+    payload: { count: number; direction: 'above' | 'below'; atIndex?: number },
+  ];
+  insertColumns: [
+    payload: {
+      count: number;
+      direction: 'left' | 'right';
+      fieldId: string;
+    },
+  ];
+  deleteRecords: [recordIds: string[]];
+  deleteField: [field: FieldDto];
 }>();
 
 const insertMenu = ref<{
@@ -83,19 +94,42 @@ const insertMenu = ref<{
   left: number;
   aboveCount: number;
   belowCount: number;
+  atIndex?: number;
 } | null>(null);
 
-function openInsertMenu(anchor: { top: number; left: number }): void {
+const cellMenu = ref<{
+  top: number;
+  left: number;
+  row: number;
+  col: number;
+  field: FieldDto;
+  record: RecordDto;
+  aboveCount: number;
+  belowCount: number;
+  leftCount: number;
+  rightCount: number;
+} | null>(null);
+
+function openInsertMenu(
+  anchor: { top: number; left: number },
+  atIndex?: number,
+): void {
+  cellMenu.value = null;
   insertMenu.value = {
     top: anchor.top,
     left: anchor.left,
     aboveCount: 1,
     belowCount: 1,
+    atIndex,
   };
 }
 
 function closeInsertMenu(): void {
   insertMenu.value = null;
+}
+
+function closeCellMenu(): void {
+  cellMenu.value = null;
 }
 
 function confirmInsert(direction: 'above' | 'below'): void {
@@ -105,8 +139,69 @@ function confirmInsert(direction: 'above' | 'below'): void {
       ? insertMenu.value.aboveCount
       : insertMenu.value.belowCount;
   const count = Math.min(100, Math.max(1, Math.floor(Number(raw) || 1)));
+  const atIndex = insertMenu.value.atIndex;
   closeInsertMenu();
-  emit('insertRows', { count, direction });
+  emit('insertRows', { count, direction, atIndex });
+}
+
+function openCellMenu(
+  selection: { row: number; col: number },
+  anchor: { top: number; left: number },
+): void {
+  if (!props.editable) return;
+  const record = props.records[selection.row];
+  const field = visibleFields.value[selection.col];
+  if (!record || !field) return;
+  insertMenu.value = null;
+  cellMenu.value = {
+    top: Math.min(anchor.top, window.innerHeight - 320),
+    left: Math.min(anchor.left, window.innerWidth - 260),
+    row: selection.row,
+    col: selection.col,
+    field,
+    record,
+    aboveCount: 1,
+    belowCount: 1,
+    leftCount: 1,
+    rightCount: 1,
+  };
+}
+
+function cellMenuDeleteRow(): void {
+  const menu = cellMenu.value;
+  if (!menu) return;
+  closeCellMenu();
+  emit('deleteRecords', [menu.record.id]);
+}
+
+function cellMenuDeleteCol(): void {
+  const menu = cellMenu.value;
+  if (!menu) return;
+  closeCellMenu();
+  emit('deleteField', menu.field);
+}
+
+function cellMenuInsertRows(direction: 'above' | 'below'): void {
+  const menu = cellMenu.value;
+  if (!menu) return;
+  const raw = direction === 'above' ? menu.aboveCount : menu.belowCount;
+  const count = Math.min(100, Math.max(1, Math.floor(Number(raw) || 1)));
+  const atIndex = direction === 'above' ? menu.row : menu.row + 1;
+  closeCellMenu();
+  emit('insertRows', { count, direction, atIndex });
+}
+
+function cellMenuInsertCols(direction: 'left' | 'right'): void {
+  const menu = cellMenu.value;
+  if (!menu) return;
+  const raw = direction === 'left' ? menu.leftCount : menu.rightCount;
+  const count = Math.min(20, Math.max(1, Math.floor(Number(raw) || 1)));
+  closeCellMenu();
+  emit('insertColumns', {
+    count,
+    direction,
+    fieldId: menu.field.id,
+  });
 }
 
 const host = ref<HTMLDivElement | null>(null);
@@ -1125,7 +1220,8 @@ function createEngine(): void {
     onRowNumberClick: selectRow,
     onAddColumnClick: (anchor) => emit('addColumn', anchor),
     onFooterAddClick: openInsertMenu,
-    onRowInsertMenu: (_row, anchor) => openInsertMenu(anchor),
+    onRowInsertMenu: (row, anchor) => openInsertMenu(anchor, row),
+    onCellContextMenu: openCellMenu,
     onHeaderClick: (columnIndex, anchor) => {
       const field = visibleFields.value[columnIndex];
       if (field) emit('headerClick', { field, anchor });
@@ -1252,6 +1348,120 @@ defineExpose({
           @keydown.enter.prevent="confirmInsert('below')"
         />
         <span class="insert-menu-unit">行</span>
+      </button>
+    </div>
+
+    <div
+      v-if="cellMenu"
+      class="insert-menu-mask"
+      data-testid="cell-context-mask"
+      @mousedown.self="closeCellMenu"
+    />
+    <div
+      v-if="cellMenu"
+      class="insert-menu cell-context-menu"
+      data-testid="cell-context-menu"
+      :style="{ top: `${cellMenu.top}px`, left: `${cellMenu.left}px` }"
+      @click.stop
+    >
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-delete-row"
+        @click="cellMenuDeleteRow"
+      >
+        <span class="insert-menu-icon">⌫</span>
+        <span class="insert-menu-label">删除行</span>
+      </button>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-delete-col"
+        @click="cellMenuDeleteCol"
+      >
+        <span class="insert-menu-icon">⊟</span>
+        <span class="insert-menu-label">删除列</span>
+      </button>
+      <div class="insert-menu-divider"></div>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-insert-above"
+        @click="cellMenuInsertRows('above')"
+      >
+        <span class="insert-menu-icon">↑</span>
+        <span class="insert-menu-label">向上插入</span>
+        <input
+          v-model.number="cellMenu.aboveCount"
+          type="number"
+          min="1"
+          max="100"
+          class="insert-menu-count"
+          data-testid="cell-ctx-above-count"
+          @click.stop
+          @keydown.enter.prevent="cellMenuInsertRows('above')"
+        />
+        <span class="insert-menu-unit">行</span>
+      </button>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-insert-below"
+        @click="cellMenuInsertRows('below')"
+      >
+        <span class="insert-menu-icon">↓</span>
+        <span class="insert-menu-label">向下插入</span>
+        <input
+          v-model.number="cellMenu.belowCount"
+          type="number"
+          min="1"
+          max="100"
+          class="insert-menu-count"
+          data-testid="cell-ctx-below-count"
+          @click.stop
+          @keydown.enter.prevent="cellMenuInsertRows('below')"
+        />
+        <span class="insert-menu-unit">行</span>
+      </button>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-insert-left"
+        @click="cellMenuInsertCols('left')"
+      >
+        <span class="insert-menu-icon">←</span>
+        <span class="insert-menu-label">向左插入</span>
+        <input
+          v-model.number="cellMenu.leftCount"
+          type="number"
+          min="1"
+          max="20"
+          class="insert-menu-count"
+          data-testid="cell-ctx-left-count"
+          @click.stop
+          @keydown.enter.prevent="cellMenuInsertCols('left')"
+        />
+        <span class="insert-menu-unit">列</span>
+      </button>
+      <button
+        type="button"
+        class="insert-menu-row"
+        data-testid="cell-ctx-insert-right"
+        @click="cellMenuInsertCols('right')"
+      >
+        <span class="insert-menu-icon">→</span>
+        <span class="insert-menu-label">向右插入</span>
+        <input
+          v-model.number="cellMenu.rightCount"
+          type="number"
+          min="1"
+          max="20"
+          class="insert-menu-count"
+          data-testid="cell-ctx-right-count"
+          @click.stop
+          @keydown.enter.prevent="cellMenuInsertCols('right')"
+        />
+        <span class="insert-menu-unit">列</span>
       </button>
     </div>
     <input
@@ -1552,5 +1762,13 @@ defineExpose({
 }
 .insert-menu-unit {
   color: #646a73;
+}
+.insert-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: #eef0f3;
+}
+.cell-context-menu {
+  min-width: 240px;
 }
 </style>

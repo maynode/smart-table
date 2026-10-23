@@ -6,6 +6,7 @@ import {
   isFormFillableFieldType,
   type FieldType,
 } from 'shared';
+import { useFloatDrag } from '../composables/useFloatDrag';
 import { newId } from '../ui/id';
 
 interface ChoiceDraft {
@@ -292,7 +293,22 @@ function onKeydown(event: KeyboardEvent): void {
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
+const {
+  root: popoverRoot,
+  style: dragStyle,
+  onHandlePointerDown: onPopoverDrag,
+  reset: resetPopoverDrag,
+} = useFloatDrag();
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) resetPopoverDrag();
+  },
+);
+
 const style = computed(() => {
+  if (dragStyle.value) return dragStyle.value;
   if (!props.anchor) {
     return { top: '72px', left: '50%', transform: 'translateX(-50%)' };
   }
@@ -346,11 +362,19 @@ function iconFor(type: FieldType): string {
       @click.self="emit('close')"
     >
       <div
+        ref="popoverRoot"
         class="ftp-popover"
         data-testid="field-type-picker"
         :style="style"
         @click.stop
       >
+        <div
+          class="ftp-drag-handle panel-drag-handle"
+          title="拖动"
+          @pointerdown="onPopoverDrag"
+        >
+          <span class="ftp-drag-grip" aria-hidden="true"></span>
+        </div>
         <input
           ref="nameInput"
           v-model="name"
@@ -509,11 +533,32 @@ function iconFor(type: FieldType): string {
   width: 340px;
   max-height: min(560px, 84vh);
   overflow: auto;
-  padding: 12px 12px 8px;
+  padding: 4px 12px 8px;
   background: #fff;
   border: 1px solid #e5e6eb;
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(31, 35, 41, 0.16);
+}
+.ftp-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin: 0 -4px 4px;
+}
+.ftp-drag-grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #d0d3d6;
+}
+.panel-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.panel-drag-handle:active {
+  cursor: grabbing;
 }
 .ftp-name {
   width: 100%;

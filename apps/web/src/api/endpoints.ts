@@ -23,7 +23,6 @@ import type {
   DashboardDataDto,
   DashboardScheduleDto,
   DashboardWidgetDto,
-  FolderTreeDto,
   TemplateDto,
   TemplateInstantiateResult,
   CrossWorkspaceShareDto,
@@ -37,6 +36,8 @@ import type {
   DataSyncRunDto,
   SavedViewDto,
   NotificationDto,
+  AnalysisReportDto,
+  AnalysisReportListItemDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -131,10 +132,48 @@ export const endpoints = {
   listBases: (workspaceId: string) =>
     api<BaseDto[]>(`/workspaces/${workspaceId}/bases`),
 
-  createBase: (workspaceId: string, name: string) =>
-    api<BaseDto>(`/workspaces/${workspaceId}/bases`, { body: { name } }),
+  createBase: (
+    workspaceId: string,
+    name: string,
+    description?: string | null,
+  ) =>
+    api<BaseDto>(`/workspaces/${workspaceId}/bases`, {
+      body: { name, description: description ?? null },
+    }),
 
   getBase: (baseId: string) => api<BaseDto>(`/bases/${baseId}`),
+
+  renameBase: (baseId: string, name: string) =>
+    api<BaseDto>(`/bases/${baseId}`, {
+      method: 'PATCH',
+      body: { name },
+    }),
+
+  updateBase: (
+    baseId: string,
+    body: { name?: string; description?: string | null },
+  ) =>
+    api<BaseDto>(`/bases/${baseId}`, {
+      method: 'PATCH',
+      body,
+    }),
+
+  deleteBase: (baseId: string) =>
+    api<{ id: string; deleted: boolean }>(`/bases/${baseId}`, {
+      method: 'DELETE',
+    }),
+
+  moveBase: (baseId: string, workspaceId: string) =>
+    api<BaseDto>(`/bases/${baseId}/move`, {
+      method: 'POST',
+      body: { workspaceId },
+    }),
+
+  reorderBases: (workspaceId: string, orderedIds: string[]) =>
+    api<BaseDto[]>(`/workspaces/${workspaceId}/bases/reorder`, {
+      method: 'POST',
+      body: { orderedIds },
+    }),
 
   listSheets: (baseId: string) =>
     api<SheetDto[]>(`/bases/${baseId}/sheets`),
@@ -497,43 +536,14 @@ export const endpoints = {
       { method: 'POST' },
     ),
 
-  listFolderTree: (workspaceId: string) =>
-    api<FolderTreeDto>(`/workspaces/${workspaceId}/folders`),
-
-  createFolder: (
-    workspaceId: string,
-    body: { name: string; parentId?: string | null },
-  ) =>
-    api<FolderTreeDto['folders'][number]>(`/workspaces/${workspaceId}/folders`, {
-      method: 'POST',
-      body,
-    }),
-
-  updateFolder: (
-    folderId: string,
-    body: { name?: string; parentId?: string | null },
-  ) =>
-    api<FolderTreeDto['folders'][number]>(`/folders/${folderId}`, {
-      method: 'PATCH',
-      body,
-    }),
-
-  deleteFolder: (folderId: string) =>
-    api<{ id: string; deleted: boolean }>(`/folders/${folderId}`, {
-      method: 'DELETE',
-    }),
-
-  moveBaseToFolder: (baseId: string, folderId: string | null) =>
-    api<{ id: string; name: string; folderId: string | null }>(
-      `/bases/${baseId}/move`,
-      { method: 'POST', body: { folderId } },
-    ),
-
   listTemplates: () => api<TemplateDto[]>('/templates'),
 
   instantiateTemplate: (
     key: string,
-    body: { workspaceId: string; folderId?: string | null },
+    body: {
+      workspaceId: string;
+      name?: string;
+    },
   ) =>
     api<TemplateInstantiateResult>(`/templates/${key}/instantiate`, {
       method: 'POST',
@@ -710,4 +720,30 @@ export const endpoints = {
 
   markNotificationRead: (id: string) =>
     api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
+
+  listAnalysisReports: (baseId: string) =>
+    api<AnalysisReportListItemDto[]>(`/bases/${baseId}/analysis-reports`),
+
+  createAnalysisReport: (baseId: string, name?: string) =>
+    api<AnalysisReportDto>(`/bases/${baseId}/analysis-reports`, {
+      method: 'POST',
+      body: { name },
+    }),
+
+  getAnalysisReport: (id: string) =>
+    api<AnalysisReportDto>(`/analysis-reports/${id}`),
+
+  answerAnalysisReport: (
+    id: string,
+    body: { optionId?: string; text?: string; skip?: boolean },
+  ) =>
+    api<AnalysisReportDto>(`/analysis-reports/${id}/answer`, {
+      method: 'POST',
+      body,
+    }),
+
+  generateAnalysisReport: (id: string) =>
+    api<AnalysisReportDto>(`/analysis-reports/${id}/generate`, {
+      method: 'POST',
+    }),
 };

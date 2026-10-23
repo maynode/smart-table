@@ -230,6 +230,14 @@ export class SheetsService {
     const order =
       dto.order ?? (await this.prisma.field.count({ where: { sheetId } }));
 
+    // 指定 order 时腾出位置（向左/向右插入列）。
+    if (dto.order !== undefined) {
+      await this.prisma.field.updateMany({
+        where: { sheetId, order: { gte: order } },
+        data: { order: { increment: 1 } },
+      });
+    }
+
     return this.prisma.field.create({
       data: {
         sheetId,

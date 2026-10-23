@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CanvasGrid from './CanvasGrid.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FieldOptionsEditor from './FieldOptionsEditor.vue';
+import { useFloatDrag } from '../composables/useFloatDrag';
 import { toast } from '../ui/toast';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import type { GridStats } from '../grid-canvas/engine';
@@ -49,7 +50,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   addRow: [];
-  insertRows: [payload: { count: number; direction: 'above' | 'below' }];
+  insertRows: [
+    payload: { count: number; direction: 'above' | 'below'; atIndex?: number },
+  ];
+  insertColumns: [
+    payload: {
+      count: number;
+      direction: 'left' | 'right';
+      fieldId: string;
+    },
+  ];
   loadMore: [];
   refresh: [];
   undo: [];
@@ -66,7 +76,12 @@ const emit = defineEmits<{
   query: [query: ViewQuery];
   queryChange: [query: ViewQuery];
   createField: [
-    payload: { name: string; type: FieldType; options?: Record<string, unknown> },
+    payload: {
+      name: string;
+      type: FieldType;
+      options?: Record<string, unknown>;
+      order?: number;
+    },
   ];
   updateField: [
     payload: {
@@ -100,6 +115,35 @@ const fieldMenuId = ref<string | null>(null);
 const undoAvailable = ref(false);
 const redoAvailable = ref(false);
 const historyEntries = ref<EditHistoryEntry[]>([]);
+
+const {
+  root: settingsRoot,
+  style: settingsDragStyle,
+  onHandlePointerDown: onSettingsDrag,
+  reset: resetSettingsDrag,
+} = useFloatDrag();
+const {
+  root: viewPanelRoot,
+  style: viewPanelDragStyle,
+  onHandlePointerDown: onViewPanelDrag,
+  reset: resetViewPanelDrag,
+} = useFloatDrag();
+const {
+  root: historyRoot,
+  style: historyDragStyle,
+  onHandlePointerDown: onHistoryDrag,
+  reset: resetHistoryDrag,
+} = useFloatDrag();
+
+watch(settingsOpen, (open) => {
+  if (open) resetSettingsDrag();
+});
+watch(activePanel, (panel) => {
+  if (panel) resetViewPanelDrag();
+});
+watch(historyOpen, (open) => {
+  if (open) resetHistoryDrag();
+});
 
 function syncHistoryState(): void {
   undoAvailable.value = canUndo();
@@ -392,32 +436,57 @@ function emitQuery(): void {
   emit('queryChange', query);
 }
 
-function applyFilters(): void {
+/** 预览：表格立刻按当前条件刷新，面板保持打开便于继续改。 */
+function previewFilters(): boolean {
   if (activeFilterCount.value === 0) {
     guardError('请至少选择一个筛选字段');
-    return;
+    return false;
   }
   emitQuery();
+  return true;
+}
+
+function applyFilters(): void {
+  if (!previewFilters()) return;
+  activePanel.value = null;
+}
+
+function previewSorts(): boolean {
+  if (activeSortCount.value === 0) {
+    guardError('请至少选择一个排序字段');
+    return false;
+  }
+  emitQuery();
+  return true;
 }
 
 function applySorts(): void {
-  if (activeSortCount.value === 0) {
-    guardError('请至少选择一个排序字段');
-    return;
-  }
+  if (!previewSorts()) return;
+  activePanel.value = null;
+}
+
+function previewGroups(): boolean {
   emitQuery();
+  return true;
 }
 
 function applyGroups(): void {
+  previewGroups();
+  activePanel.value = null;
+}
+
+function previewColors(): boolean {
+  if (activeColorCount.value === 0) {
+    guardError('请至少选择一条填色规则');
+    return false;
+  }
   emitQuery();
+  return true;
 }
 
 function applyColors(): void {
-  if (activeColorCount.value === 0) {
-    guardError('请至少选择一条填色规则');
-    return;
-  }
-  emitQuery();
+  if (!previewColors()) return;
+  activePanel.value = null;
 }
 
 function addFilter(): void {
@@ -472,8 +541,15 @@ function setRowHeight(height: 'short' | 'medium' | 'tall'): void {
   emitQuery();
 }
 
+function maxFreezeColumns(): number {
+  return Math.max(0, props.fields.filter((field) => !field.hidden).length);
+}
+
 function setFreezeColumnCount(count: number): void {
-  freezeColumnCount.value = Math.max(0, Math.min(3, Math.floor(count)));
+  freezeColumnCount.value = Math.max(
+    0,
+    Math.min(maxFreezeColumns(), Math.floor(count)),
+  );
   emitQuery();
 }
 
@@ -530,17 +606,193 @@ function applySavedQuery(query: ViewQuery): void {
   }
   freezeColumnCount.value = Math.max(
     0,
-    Math.min(3, Number(cloned.freezeColumnCount) || 0),
+    Math.min(maxFreezeColumns(), Number(cloned.freezeColumnCount) || 0),
   );
   emitQuery();
+}
+
+const columnMenu = ref<{
+  field: FieldDto;
+  top: number;
+  left: number;
+} | null>(null);
+const columnMenuSortOpen = ref(false);
+
+function openColumnMenu(payload: {
+  field: FieldDto;
+  anchor: { top: number; left: number };
+}): void {
+  closeOverlaysExcept('columnMenu');
+  columnMenuSortOpen.value = false;
+  const left = Math.min(payload.anchor.left, window.innerWidth - 240);
+  const top = Math.min(payload.anchor.top, window.innerHeight - 280);
+  columnMenu.value = {
+    field: payload.field,
+    top: Math.max(8, top),
+    left: Math.max(8, left),
+  };
+}
+
+function closeColumnMenu(): void {
+  columnMenu.value = null;
+  columnMenuSortOpen.value = false;
+}
+
+function uniqueFieldName(base: string): string {
+  const names = new Set(props.fields.map((field) => field.name));
+  if (!names.has(base)) return base;
+  let index = 2;
+  while (names.has(`${base} ${index}`)) index += 1;
+  return `${base} ${index}`;
+}
+
+function cellDisplayText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (item && typeof item === 'object' && 'name' in item) {
+          return String((item as { name: unknown }).name ?? '');
+        }
+        return String(item ?? '');
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
+  if (typeof value === 'object' && value && 'name' in value) {
+    return String((value as { name: unknown }).name ?? '');
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
+function duplicateColumn(field: FieldDto): void {
+  const options = { ...(field.options ?? {}) } as Record<string, unknown>;
+  delete options.width;
+  delete options.asParentField;
+  emit('createField', {
+    name: uniqueFieldName(`${field.name} 副本`),
+    type: field.type as FieldType,
+    options,
+  });
+  closeColumnMenu();
+}
+
+function autoFitColumnWidth(field: FieldDto): void {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.font = '600 12px "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  let max = context.measureText(field.name).width + 52;
+  context.font = '13px "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  for (const record of props.records) {
+    const text = cellDisplayText(record.cells?.[field.id]);
+    if (!text) continue;
+    max = Math.max(max, context.measureText(text).width + 28);
+  }
+  const width = Math.min(480, Math.max(80, Math.ceil(max)));
+  onColumnResize({ field, width });
+  closeColumnMenu();
+  toast(`已调整「${field.name}」列宽`);
+}
+
+function freezeToColumn(field: FieldDto): void {
+  const visible = props.fields.filter((item) => !item.hidden);
+  const index = visible.findIndex((item) => item.id === field.id);
+  if (index < 0) return;
+  setFreezeColumnCount(index + 1);
+  closeColumnMenu();
+  toast(`已冻结至「${field.name}」`);
+}
+
+function hideColumn(field: FieldDto): void {
+  emit('toggleField', { field, hidden: true });
+  closeColumnMenu();
+}
+
+function deleteColumn(field: FieldDto): void {
+  closeColumnMenu();
+  deletingField.value = field;
+}
+
+function sortColumn(field: FieldDto, direction: 'asc' | 'desc'): void {
+  sorts.value = [{ fieldId: field.id, direction, mode: 'value' }];
+  emitQuery();
+  closeColumnMenu();
+}
+
+function editColumnFromMenu(field: FieldDto): void {
+  const menu = columnMenu.value;
+  closeColumnMenu();
+  openFieldEditor({
+    field,
+    anchor: menu
+      ? { top: menu.top, left: menu.left }
+      : { top: 80, left: 200 },
+  });
 }
 
 function currentQuery(): ViewQuery {
   return buildQuery();
 }
 
+type OverlayKind =
+  | 'settings'
+  | 'panel'
+  | 'fieldPicker'
+  | 'options'
+  | 'search'
+  | 'history'
+  | 'columnMenu';
+
+/** 工具栏弹层互斥：打开任一前关掉其它。 */
+function closeOverlaysExcept(keep?: OverlayKind): void {
+  if (keep !== 'settings') {
+    settingsOpen.value = false;
+    fieldMenuId.value = null;
+  }
+  if (keep !== 'panel') activePanel.value = null;
+  if (keep !== 'fieldPicker') {
+    fieldPickerOpen.value = false;
+    editingField.value = null;
+  }
+  if (keep !== 'options') optionsField.value = null;
+  if (keep !== 'search') searchOpen.value = false;
+  if (keep !== 'history') historyOpen.value = false;
+  if (keep !== 'columnMenu') {
+    columnMenu.value = null;
+    columnMenuSortOpen.value = false;
+  }
+}
+
+function toggleSettings(): void {
+  const next = !settingsOpen.value;
+  closeOverlaysExcept(next ? 'settings' : undefined);
+  settingsOpen.value = next;
+}
+
 function togglePanel(panel: typeof activePanel.value): void {
-  activePanel.value = activePanel.value === panel ? null : panel;
+  if (!panel) return;
+  const next = activePanel.value === panel ? null : panel;
+  closeOverlaysExcept(next ? 'panel' : undefined);
+  activePanel.value = next;
+}
+
+function toggleSearch(): void {
+  const next = !searchOpen.value;
+  closeOverlaysExcept(next ? 'search' : undefined);
+  searchOpen.value = next;
+}
+
+function toggleHistory(): void {
+  const next = !historyOpen.value;
+  closeOverlaysExcept(next ? 'history' : undefined);
+  historyOpen.value = next;
 }
 
 function toggleField(field: FieldDto): void {
@@ -564,6 +816,7 @@ function handleViewport(stats: GridStats): void {
 function openFieldPicker(
   eventOrAnchor?: MouseEvent | { top: number; left: number },
 ): void {
+  closeOverlaysExcept('fieldPicker');
   editingField.value = null;
   fieldPickerMode.value = 'create';
   if (eventOrAnchor && 'top' in eventOrAnchor && 'left' in eventOrAnchor) {
@@ -585,6 +838,7 @@ function openFieldEditor(payload: {
   field: FieldDto;
   anchor: { top: number; left: number };
 }): void {
+  closeOverlaysExcept('fieldPicker');
   editingField.value = payload.field;
   fieldPickerMode.value = 'edit';
   fieldPickerAnchor.value = payload.anchor;
@@ -592,6 +846,8 @@ function openFieldEditor(payload: {
 }
 
 function openFieldEditorFromSettings(field: FieldDto): void {
+  // 从表格设置进字段编辑：关掉设置，只留选择器
+  closeOverlaysExcept('fieldPicker');
   editingField.value = field;
   fieldPickerMode.value = 'edit';
   const el = addFieldBtn.value;
@@ -603,6 +859,7 @@ function openFieldEditorFromSettings(field: FieldDto): void {
 }
 
 function openOptions(field: FieldDto): void {
+  closeOverlaysExcept('options');
   optionsField.value = field;
 }
 
@@ -689,7 +946,8 @@ defineExpose({
       <button
         class="btn"
         data-testid="table-settings"
-        @click="settingsOpen = !settingsOpen"
+        :class="{ 'btn-active': settingsOpen }"
+        @click="toggleSettings"
       >
         表格设置
       </button>
@@ -765,7 +1023,8 @@ defineExpose({
           title="历史"
           aria-label="历史"
           data-testid="grid-history"
-          @click="historyOpen = !historyOpen; searchOpen = false"
+          :class="{ 'btn-active': historyOpen }"
+          @click="toggleHistory"
         >
           ⏱
         </button>
@@ -784,7 +1043,7 @@ defineExpose({
           title="搜索"
           aria-label="搜索"
           data-testid="grid-search"
-          @click="searchOpen = !searchOpen; historyOpen = false"
+          @click="toggleSearch"
         >
           ⌕
         </button>
@@ -826,8 +1085,14 @@ defineExpose({
       </button>
     </div>
 
-    <div v-if="historyOpen" class="history-panel" data-testid="grid-history-panel">
-      <header>
+    <div
+      v-if="historyOpen"
+      ref="historyRoot"
+      class="history-panel"
+      data-testid="grid-history-panel"
+      :style="historyDragStyle"
+    >
+      <header class="panel-drag-handle" @pointerdown="onHistoryDrag">
         <strong>编辑历史</strong>
         <button class="icon-btn" @click="historyOpen = false">×</button>
       </header>
@@ -873,8 +1138,14 @@ defineExpose({
       @save="saveOptions"
     />
 
-    <div v-if="settingsOpen" class="settings-popover" data-testid="table-settings-panel">
-      <header class="settings-head">
+    <div
+      v-if="settingsOpen"
+      ref="settingsRoot"
+      class="settings-popover"
+      data-testid="table-settings-panel"
+      :style="settingsDragStyle"
+    >
+      <header class="settings-head panel-drag-handle" @pointerdown="onSettingsDrag">
         <strong>表格设置</strong>
         <button class="icon-btn" @click="settingsOpen = false">×</button>
       </header>
@@ -997,10 +1268,15 @@ defineExpose({
 
     <div
       v-if="activePanel"
+      ref="viewPanelRoot"
       class="view-panel"
       :data-testid="`view-panel-${activePanel}`"
+      :style="viewPanelDragStyle"
     >
-      <header class="view-panel-title">
+      <header
+        class="view-panel-title panel-drag-handle"
+        @pointerdown="onViewPanelDrag"
+      >
         {{
           activePanel === 'filter'
             ? '筛选'
@@ -1061,9 +1337,14 @@ defineExpose({
         </div>
         <div class="panel-actions">
           <button class="btn" data-testid="filter-add" @click="addFilter">+ 添加条件</button>
-          <button class="btn btn-primary" data-testid="filter-apply" @click="applyFilters">
-            应用筛选
-          </button>
+          <div class="panel-actions-end">
+            <button class="btn" data-testid="filter-preview" @click="previewFilters">
+              预览
+            </button>
+            <button class="btn btn-primary" data-testid="filter-apply" @click="applyFilters">
+              应用
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1094,9 +1375,12 @@ defineExpose({
         </div>
         <div class="panel-actions">
           <button class="btn" data-testid="sort-add" @click="addSort">+ 添加排序</button>
-          <button class="btn btn-primary" data-testid="sort-apply" @click="applySorts">
-            应用排序
-          </button>
+          <div class="panel-actions-end">
+            <button class="btn" data-testid="sort-preview" @click="previewSorts">预览</button>
+            <button class="btn btn-primary" data-testid="sort-apply" @click="applySorts">
+              应用
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1117,9 +1401,12 @@ defineExpose({
         </div>
         <div class="panel-actions">
           <button class="btn" @click="addGroup">+ 添加分组</button>
-          <button class="btn btn-primary" data-testid="group-apply" @click="applyGroups">
-            应用分组
-          </button>
+          <div class="panel-actions-end">
+            <button class="btn" data-testid="group-preview" @click="previewGroups">预览</button>
+            <button class="btn btn-primary" data-testid="group-apply" @click="applyGroups">
+              应用
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1202,9 +1489,12 @@ defineExpose({
         </div>
         <div class="panel-actions">
           <button class="btn" data-testid="color-add" @click="addColorRule">+ 添加规则</button>
-          <button class="btn btn-primary" data-testid="color-apply" @click="applyColors">
-            应用填色
-          </button>
+          <div class="panel-actions-end">
+            <button class="btn" data-testid="color-preview" @click="previewColors">预览</button>
+            <button class="btn btn-primary" data-testid="color-apply" @click="applyColors">
+              应用
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1231,10 +1521,13 @@ defineExpose({
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
         @add-column="openFieldPicker"
-        @header-click="openFieldEditor"
+        @header-click="openColumnMenu"
         @resize-field="onColumnResize"
         @rows-selected="onRowsSelected"
         @insert-rows="emit('insertRows', $event)"
+        @insert-columns="emit('insertColumns', $event)"
+        @delete-records="emit('deleteRecords', $event)"
+        @delete-field="deletingField = $event"
       />
     </div>
 
@@ -1242,6 +1535,107 @@ defineExpose({
     <span class="sr-only" data-testid="record-count">
       记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
     </span>
+
+    <div
+      v-if="columnMenu"
+      class="column-menu-mask"
+      data-testid="column-menu-mask"
+      @click="closeColumnMenu"
+    ></div>
+    <div
+      v-if="columnMenu"
+      class="column-menu"
+      data-testid="column-menu"
+      :style="{ top: `${columnMenu.top}px`, left: `${columnMenu.left}px` }"
+      @click.stop
+    >
+      <div class="column-menu-tools">
+        <button
+          type="button"
+          class="column-tool"
+          title="创建副本"
+          data-testid="column-menu-duplicate"
+          @click="duplicateColumn(columnMenu.field)"
+        >
+          <span class="column-tool-icon" aria-hidden="true">⧉+</span>
+        </button>
+        <button
+          type="button"
+          class="column-tool"
+          title="自动调整列宽"
+          data-testid="column-menu-autofit"
+          @click="autoFitColumnWidth(columnMenu.field)"
+        >
+          <span class="column-tool-icon" aria-hidden="true">⇔</span>
+        </button>
+        <button
+          type="button"
+          class="column-tool"
+          title="冻结至此列"
+          data-testid="column-menu-freeze"
+          @click="freezeToColumn(columnMenu.field)"
+        >
+          <span class="column-tool-icon" aria-hidden="true">▣</span>
+        </button>
+        <button
+          type="button"
+          class="column-tool"
+          title="隐藏"
+          data-testid="column-menu-hide"
+          @click="hideColumn(columnMenu.field)"
+        >
+          <span class="column-tool-icon" aria-hidden="true">👁‍🗨</span>
+        </button>
+        <span class="column-tool-sep" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="column-tool danger"
+          title="删除"
+          data-testid="column-menu-delete"
+          @click="deleteColumn(columnMenu.field)"
+        >
+          <span class="column-tool-icon" aria-hidden="true">🗑</span>
+        </button>
+      </div>
+      <button
+        type="button"
+        class="column-menu-row"
+        data-testid="column-menu-edit"
+        @click="editColumnFromMenu(columnMenu.field)"
+      >
+        <span class="column-menu-icon">✎</span>
+        <span class="column-menu-label">编辑字段</span>
+      </button>
+      <div
+        class="column-menu-row has-sub"
+        :class="{ open: columnMenuSortOpen }"
+        data-testid="column-menu-sort"
+        @mouseenter="columnMenuSortOpen = true"
+        @focusin="columnMenuSortOpen = true"
+      >
+        <span class="column-menu-icon">↕</span>
+        <span class="column-menu-label">排序</span>
+        <span class="column-menu-caret">›</span>
+        <div v-if="columnMenuSortOpen" class="column-submenu" data-testid="column-menu-sort-sub">
+          <button
+            type="button"
+            class="column-menu-row"
+            data-testid="column-menu-sort-asc"
+            @click="sortColumn(columnMenu.field, 'asc')"
+          >
+            A → Z
+          </button>
+          <button
+            type="button"
+            class="column-menu-row"
+            data-testid="column-menu-sort-desc"
+            @click="sortColumn(columnMenu.field, 'desc')"
+          >
+            Z → A
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="deletingField" class="confirm-mask" @click.self="deletingField = null">
       <div class="confirm-card" data-testid="delete-field-confirm">
@@ -1560,6 +1954,14 @@ defineExpose({
   font-weight: 600;
   border-bottom: 1px solid #eef0f3;
 }
+.panel-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.panel-drag-handle:active {
+  cursor: grabbing;
+}
 .view-panel-body {
   display: flex;
   flex-direction: column;
@@ -1607,8 +2009,14 @@ defineExpose({
 .panel-actions {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
   margin-top: 2px;
+}
+.panel-actions-end {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 .row-height-options {
   display: flex;
@@ -1708,5 +2116,105 @@ defineExpose({
 }
 .clear-view {
   color: #1d6fdc;
+}
+.column-menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.column-menu {
+  position: fixed;
+  z-index: 56;
+  min-width: 200px;
+  padding: 6px 0 8px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(31, 35, 41, 0.14);
+}
+.column-menu-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid #eef0f3;
+}
+.column-tool {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #1f2329;
+  cursor: pointer;
+}
+.column-tool:hover {
+  background: #f2f3f5;
+}
+.column-tool.danger:hover {
+  background: #fff1f0;
+  color: #d4380d;
+}
+.column-tool-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.column-tool-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: #e5e6eb;
+}
+.column-menu-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: #1f2329;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.column-menu-row:hover,
+.column-menu-row.open {
+  background: #f5f6f7;
+}
+.column-menu-icon {
+  width: 18px;
+  color: #646a73;
+  text-align: center;
+}
+.column-menu-label {
+  flex: 1;
+}
+.column-menu-caret {
+  color: #8f959e;
+  font-size: 16px;
+}
+.column-menu-row.has-sub {
+  cursor: default;
+}
+.column-submenu {
+  position: absolute;
+  top: -4px;
+  left: calc(100% - 4px);
+  min-width: 96px;
+  padding: 6px 0;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
+}
+.column-submenu .column-menu-row {
+  justify-content: center;
+  padding: 0 12px;
 }
 </style>

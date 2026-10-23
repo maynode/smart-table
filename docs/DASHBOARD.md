@@ -1,6 +1,8 @@
-# 仪表盘与分析报告
+# 仪表盘
 
-对齐企微智能表格的仪表盘/分析报告对象：一个 Base 内可创建多个仪表盘，每个仪表盘是一块自由画布，可添加多张图表；分析报告复用同一套对象与图表引擎。
+对齐企微智能表格的仪表盘：一个 Base 内可创建多个仪表盘，每个仪表盘是一块自由画布，可添加多张图表。
+
+侧栏「分析报告」为独立的对话 + Markdown 能力，见 [ANALYSIS-REPORT.md](./ANALYSIS-REPORT.md)（不再复用本页的图表引擎）。
 
 ## 1. 图表类型
 
@@ -51,4 +53,4 @@ ClickHouse 适配器有独立单测（`apps/api/src/analytics/clickhouse-analyti
 
 ## 4. 权限
 
-仪表盘/分析报告作为内容权限对象（`object_type = dashboard`），与工作表/表单共用 `content_permissions` 档位与成员额外权限；图表查询读取工作表时还会再次校验该工作表的读权限，避免借图表绕过行/列权限。
+仪表盘作为内容权限对象（`object_type = dashboard`），与工作表/表单共用 `content_permissions` 档位与成员额外权限；图表查询读取工作表时还会再次校验该工作表的读权限，避免借图表绕过行/列权限。AI 分析报告按 Base 成员角色鉴权，见 ANALYSIS-REPORT.md。

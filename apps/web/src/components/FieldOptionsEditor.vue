@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, FieldOptionChoice, SheetDto } from '../api/types';
+import { useFloatDrag } from '../composables/useFloatDrag';
 import { newId } from '../ui/id';
 
 const props = defineProps<{
@@ -42,6 +43,20 @@ const lookupAggregate = ref<'first' | 'count' | 'sum' | 'min' | 'max' | 'array'>
 const targetFields = ref<FieldDto[]>([]);
 const loadingTarget = ref(false);
 const error = ref('');
+
+const {
+  root: modalRoot,
+  style: modalDragStyle,
+  onHandlePointerDown: onModalDrag,
+  reset: resetModalDrag,
+} = useFloatDrag();
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) resetModalDrag();
+  },
+);
 
 const fieldType = computed(() => props.field?.type ?? '');
 const isAi = computed(() => fieldType.value === 'ai');
@@ -332,7 +347,9 @@ onMounted(() => {
 <template>
   <div v-if="open && needsConfig" class="options-mask" @click.self="emit('close')">
     <section
+      ref="modalRoot"
       class="options-modal"
+      :style="modalDragStyle"
       :data-testid="
         isAi
           ? 'ai-field-options-editor'
@@ -345,7 +362,7 @@ onMounted(() => {
                 : 'field-options-editor'
       "
     >
-      <header>
+      <header class="panel-drag-handle" @pointerdown="onModalDrag">
         <div>
           <h3>{{ title }}</h3>
           <p class="muted">
@@ -603,6 +620,14 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+.panel-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.panel-drag-handle:active {
+  cursor: grabbing;
 }
 .options-modal h3 {
   margin: 0 0 4px;

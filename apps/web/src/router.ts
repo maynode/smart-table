@@ -16,8 +16,10 @@ export const router = createRouter({
     },
     {
       path: '/workspaces/:workspaceId',
-      name: 'workspace',
-      component: () => import('./views/WorkspaceView.vue'),
+      redirect: (to) => ({
+        path: '/',
+        query: { ws: String(to.params.workspaceId) },
+      }),
     },
     {
       path: '/workspaces/:workspaceId/bases/:baseId',

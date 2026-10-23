@@ -196,39 +196,11 @@ test.describe('Canvas grid + enterprise shell', () => {
     ).toBeVisible();
     await page.locator('[data-testid="dashboard-close"]').click();
 
-    // Folders nest and can own the current base.
-    await page.locator('[data-testid="create-menu-toggle"]').click();
-    await page.locator('[data-testid="folder-open"]').click();
-    await expect(page.locator('[data-testid="folder-panel"]')).toBeVisible();
-    await page.locator('[data-testid="folder-create-name"]').fill('E2E 文件夹');
-    await page.locator('[data-testid="folder-create-root"]').click();
-    await expect(page.locator('[data-testid="folder-row"]').first()).toContainText(
-      'E2E 文件夹',
-    );
-    await page.locator('[data-testid="folder-move-base"]').click();
-    await expect(page.locator('[data-testid="folder-panel"]')).toContainText(
-      '序列号领取',
-    );
-    await page.locator('[data-testid="folder-close"]').click();
-
     // Cross-workspace sharing UI is available from the top bar.
     await page.locator('[data-testid="share-open"]').click();
     await expect(page.locator('[data-testid="share-panel"]')).toBeVisible();
     await expect(page.locator('[data-testid="share-type"]')).toBeVisible();
     await page.locator('[data-testid="share-close"]').click();
-
-    // Developer panel issues a one-time API key.
-    await page.locator('[data-testid="developer-open"]').click();
-    await expect(page.locator('[data-testid="developer-panel"]')).toBeVisible();
-    await page.locator('[data-testid="api-key-create"]').click();
-    await expect(page.locator('[data-testid="api-key-token"]')).toContainText('st_');
-    await page.locator('[data-testid="developer-close"]').click();
-    await page.locator('[data-testid="quota-open"]').click();
-    await expect(page.locator('[data-testid="quota-panel"]')).toBeVisible();
-    await page.locator('[data-testid="quota-close"]').click();
-    await page.locator('[data-testid="sync-open"]').click();
-    await expect(page.locator('[data-testid="sync-panel"]')).toBeVisible();
-    await page.locator('[data-testid="sync-close"]').click();
 
     // Template library creates a new base and navigates into it.
     await page.locator('[data-testid="create-menu-toggle"]').click();

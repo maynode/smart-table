@@ -2,10 +2,13 @@
 import { computed, onMounted, ref } from 'vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import type { TemplateDto, TemplateInstantiateResult } from '../api/types';
 
-const props = defineProps<{ workspaceId: string }>();
+const props = defineProps<{
+  workspaceId: string;
+}>();
 const emit = defineEmits<{
   close: [];
   created: [result: TemplateInstantiateResult];
@@ -33,12 +36,19 @@ async function load(): Promise<void> {
 }
 
 async function useTemplate(template: TemplateDto): Promise<void> {
+  const name = (
+    await promptDialog('新建 Base 名称', template.name, {
+      confirmLabel: '创建',
+    })
+  )?.trim();
+  if (!name) return;
   busyKey.value = template.key;
   try {
     const result = await endpoints.instantiateTemplate(template.key, {
       workspaceId: props.workspaceId,
+      name,
     });
-    toast(`已从「${template.name}」创建 Base`);
+    toast(`已从「${template.name}」创建「${name}」`);
     emit('created', result);
   } catch (error) {
     toast(messageOf(error));

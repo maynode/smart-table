@@ -26,7 +26,7 @@ export class TemplatesController {
     @CurrentUser() user: JwtPayload,
     @Param('key') key: string,
     @Body()
-    body: { workspaceId: string; folderId?: string | null },
+    body: { workspaceId: string; name?: string },
   ) {
     if (!body.workspaceId) {
       throw new BadRequestException('workspaceId 不能为空');
@@ -35,7 +35,7 @@ export class TemplatesController {
       body.workspaceId,
       user.sub,
       key,
-      body.folderId,
+      body.name,
     );
   }
 }

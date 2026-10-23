@@ -8,6 +8,8 @@ Prisma schema 是结构唯一事实源：`apps/api/prisma/schema.prisma`。热�
 User ──< WorkspaceMember >── Workspace ──< Base ──< Sheet ──< Field
                                              │        └──< RecordRow
                                              ├──< Form ──< FormSubmission
+                                             ├──< Dashboard ──< DashboardWidget
+                                             ├──< AnalysisReport
                                              └──< Automation ──< AutomationRun ──< AutomationRunStep
 User ──< Comment            User ──< Notification            GroupChat
 ```
@@ -33,7 +35,7 @@ User ──< Comment            User ──< Notification            GroupChat
 
 | 列 | 类型 | 说明 |
 | --- | --- | --- |
-| object_type / object_id | text / uuid | 受控对象（sheet、form；仪表盘/报告复用同一表） |
+| object_type / object_id | text / uuid | 受控对象（sheet、form、dashboard；AI 分析报告不走本表，见 ANALYSIS-REPORT.md） |
 | subject_type / subject_id | text / text | `everyone`（subject_id 为空串）或 `member`（用户 id） |
 | level | text | `full` / `edit` / `view` / `none` |
 | record_rule | jsonb | `{mode: all\|condition\|own, filter?, canAdd?, canDelete?}`；own 依据 `records.created_by` |
@@ -87,6 +89,9 @@ User ──< Comment            User ──< Notification            GroupChat
 
 ### notifications / group_chats
 `notifications(user_id, created_at)` 索引；`group_chats.member_ids` 为 JSONB（本地 NotifyAdapter）。
+
+### analysis_reports
+对话式 AI 分析报告（与 `dashboards` 分离）。`messages` / `steps` / `sheet_ids` 为 JSON；`report_markdown` 为生成正文；`status`：`draft|asking|exploring|generating|ready|failed`。详见 [ANALYSIS-REPORT.md](./ANALYSIS-REPORT.md)。
 
 ## 3. 索引与并发
 

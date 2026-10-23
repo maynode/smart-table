@@ -10,15 +10,14 @@ export interface WorkspaceDto {
   createdAt: string;
   updatedAt: string;
   role?: 'owner' | 'admin' | 'editor' | 'viewer';
-  /** 新建时自动挂上的序列号领取演示 */
-  defaultBaseId?: string;
-  shareUrl?: string;
 }
 
 export interface BaseDto {
   id: string;
   workspaceId: string;
   name: string;
+  description?: string | null;
+  sortOrder?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -425,19 +424,6 @@ export interface DashboardScheduleDto {
   }>;
 }
 
-export interface FolderNodeDto {
-  id: string;
-  name: string;
-  parentId: string | null;
-  bases: Array<{ id: string; name: string }>;
-  children: FolderNodeDto[];
-}
-
-export interface FolderTreeDto {
-  folders: FolderNodeDto[];
-  unfiled: Array<{ id: string; name: string }>;
-}
-
 export interface TemplateDto {
   key: string;
   name: string;
@@ -586,4 +572,55 @@ export interface NotificationDto {
   data: Record<string, unknown>;
   readAt: string | null;
   createdAt: string;
+}
+
+export type AnalysisReportStatus =
+  | 'draft'
+  | 'asking'
+  | 'exploring'
+  | 'generating'
+  | 'ready'
+  | 'failed';
+
+export interface AnalysisStepDto {
+  id: string;
+  label: string;
+  status: 'pending' | 'active' | 'done';
+}
+
+export interface AnalysisMessageOptionDto {
+  id: string;
+  label: string;
+}
+
+export interface AnalysisMessageDto {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  kind?: 'text' | 'choice';
+  options?: AnalysisMessageOptionDto[];
+  createdAt: string;
+}
+
+export interface AnalysisReportDto {
+  id: string;
+  baseId: string;
+  name: string;
+  status: AnalysisReportStatus;
+  messages: AnalysisMessageDto[];
+  steps: AnalysisStepDto[];
+  sheetIds: string[];
+  reportMarkdown: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalysisReportListItemDto {
+  id: string;
+  baseId: string;
+  name: string;
+  status: AnalysisReportStatus;
+  createdAt: string;
+  updatedAt: string;
 }

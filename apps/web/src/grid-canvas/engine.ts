@@ -160,6 +160,11 @@ export interface CanvasGridOptions {
     row: number,
     anchor: { top: number; left: number },
   ) => void;
+  /** 单元格右键：删除行/列、插入行/列。 */
+  onCellContextMenu?: (
+    selection: Selection,
+    anchor: { top: number; left: number },
+  ) => void;
   /**
    * Drag the selection fill-handle (bottom-right square) to extend a value
    * across rows in the same column — WeCom / spreadsheet fill gesture.
@@ -185,6 +190,8 @@ const FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 const COLORS = {
+  /** 表格外右侧空白（企微：+ 列之后不再画表头/底栏/竖线）。 */
+  page: '#f5f6f8',
   background: '#ffffff',
   headerBackground: '#f7f7f8',
   border: '#e5e6eb',
@@ -512,6 +519,15 @@ export class CanvasGridEngine {
     return Math.max(0, width - this.rowGutterWidth);
   }
 
+  /**
+   * 表格内容右缘（含「+」加列）：屏幕坐标。右侧留白不画成假列。
+   */
+  private tableRight(width: number): number {
+    const edge =
+      this.rowGutterWidth + this.columnAxis.totalSize - this.scrollX;
+    return Math.min(width, Math.max(this.rowGutterWidth, edge));
+  }
+
   scrollTo(x: number, y: number): void {
     this.scroller.scrollLeft = x;
     this.scroller.scrollTop = y;
@@ -602,19 +618,47 @@ export class CanvasGridEngine {
 
   private readonly onContextMenu = (event: MouseEvent): void => {
     const point = this.localPoint(event);
-    if (point.x >= this.rowGutterWidth) return;
     if (point.y < this.headerHeight) return;
     if (point.y >= this.footerTop(this.host.clientHeight)) return;
+
+    const rect = this.host.getBoundingClientRect();
+
+    // 行号区：插入行菜单
+    if (point.x < this.rowGutterWidth) {
+      const row = this.rowAxis.indexAt(
+        point.y - this.headerHeight + this.scrollY,
+      );
+      if (row < 0 || row >= this.rowAxis.count) return;
+      event.preventDefault();
+      this.options.onRowInsertMenu?.(row, {
+        top: rect.top + point.y,
+        left: rect.left + this.rowGutterWidth + 4,
+      });
+      return;
+    }
+
+    // 单元格区：完整右键菜单
     const row = this.rowAxis.indexAt(
       point.y - this.headerHeight + this.scrollY,
     );
-    if (row < 0 || row >= this.rowAxis.count) return;
+    const col = this.columnIndexAtScreenX(point.x);
+    if (
+      row < 0 ||
+      row >= this.rowAxis.count ||
+      col < 0 ||
+      col >= this.columns.length
+    ) {
+      return;
+    }
+    if (this.columns[col]?.id === ADD_FIELD_COLUMN_ID) return;
     event.preventDefault();
-    const rect = this.host.getBoundingClientRect();
-    this.options.onRowInsertMenu?.(row, {
+    this.selection = { row, col };
+    this.options.onSelectionChange?.(this.selection);
+    this.options.onCellContextMenu?.(this.selection, {
       top: rect.top + point.y,
-      left: rect.left + this.rowGutterWidth + 4,
+      left: rect.left + point.x,
     });
+    this.invalidate();
   };
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -898,17 +942,27 @@ export class CanvasGridEngine {
     const gutter = this.rowGutterWidth;
     const frozenW = this.frozenWidth();
     const scrollLeft = gutter + frozenW;
+    const tableRight = this.tableRight(width);
+    const tableWidth = Math.max(0, tableRight);
+    const bodyBottom = this.footerTop(height);
+    const tableBottom = Math.min(
+      height,
+      bodyBottom + this.footerHeight(),
+    );
 
-    context.fillStyle = COLORS.background;
+    // 整屏底色；表格本体只画到最后一列右缘，右侧 / 表下保持空白。
+    context.fillStyle = COLORS.page;
     context.fillRect(0, 0, width, height);
+    context.fillStyle = COLORS.background;
+    context.fillRect(0, 0, tableWidth, tableBottom);
 
     context.fillStyle = COLORS.headerBackground;
-    context.fillRect(0, 0, width, this.headerHeight);
+    context.fillRect(0, 0, tableWidth, this.headerHeight);
     context.strokeStyle = COLORS.border;
     context.lineWidth = 1;
     context.beginPath();
     context.moveTo(0, this.headerHeight - 0.5);
-    context.lineTo(width, this.headerHeight - 0.5);
+    context.lineTo(tableWidth, this.headerHeight - 0.5);
     context.stroke();
 
     context.font = `600 12px ${FONT_STACK}`;
@@ -921,7 +975,7 @@ export class CanvasGridEngine {
     context.rect(
       scrollLeft,
       0,
-      Math.max(0, width - scrollLeft),
+      Math.max(0, tableRight - scrollLeft),
       this.headerHeight,
     );
     context.clip();
@@ -946,11 +1000,15 @@ export class CanvasGridEngine {
     }
 
     // Body ends at footer top — 行少时紧贴末行，不在中间灌空行线。
-    const bodyBottom = this.footerTop(height);
     const bodyH = Math.max(0, bodyBottom - this.headerHeight);
     context.save();
     context.beginPath();
-    context.rect(scrollLeft, this.headerHeight, Math.max(0, width - scrollLeft), bodyH);
+    context.rect(
+      scrollLeft,
+      this.headerHeight,
+      Math.max(0, tableRight - scrollLeft),
+      bodyH,
+    );
     context.clip();
 
     context.strokeStyle = COLORS.border;
@@ -960,12 +1018,17 @@ export class CanvasGridEngine {
         this.headerHeight + this.rowAxis.offset(row + 1) - this.scrollY - 0.5;
       if (y < this.headerHeight || y > bodyBottom) continue;
       context.moveTo(scrollLeft, y);
-      context.lineTo(width, y);
+      context.lineTo(tableRight, y);
     }
     for (let col = bodyColumnStart; col < columns.end; col += 1) {
       const x = this.columnScreenX(col + 1) - 0.5;
+      if (x > tableRight) continue;
       context.moveTo(x, this.headerHeight);
       context.lineTo(x, bodyBottom);
+    }
+    if (tableRight < width) {
+      context.moveTo(tableRight - 0.5, 0);
+      context.lineTo(tableRight - 0.5, bodyBottom);
     }
     context.stroke();
 
@@ -980,7 +1043,7 @@ export class CanvasGridEngine {
         dataColumns.length === 0
           ? '点击「+ 添加字段」开始建表'
           : '暂无记录，点击「+ 添加一行」',
-        scrollLeft + Math.max(0, width - scrollLeft) / 2,
+        scrollLeft + Math.max(0, tableRight - scrollLeft) / 2,
         this.headerHeight + this.rowHeight * 2,
       );
       context.textAlign = 'start';
@@ -1193,6 +1256,7 @@ export class CanvasGridEngine {
     const gutter = this.rowGutterWidth;
     const frozenW = this.frozenWidth();
     const scrollLeft = gutter + frozenW;
+    const tableRight = this.tableRight(width);
 
     const paintRows = (
       clipX: number,
@@ -1238,7 +1302,7 @@ export class CanvasGridEngine {
 
     paintRows(
       scrollLeft,
-      Math.max(0, width - scrollLeft),
+      Math.max(0, tableRight - scrollLeft),
       bodyColumnStart,
       columns.end,
       false,
@@ -1294,16 +1358,21 @@ export class CanvasGridEngine {
     const paintOn = (context: CanvasRenderingContext2D) => {
       context.save();
       context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      const tableRight = this.tableRight(width);
 
       context.fillStyle = COLORS.headerBackground;
-      context.fillRect(0, y, width, footerH);
+      context.fillRect(0, y, tableRight, footerH);
       context.strokeStyle = COLORS.border;
       context.lineWidth = 1;
       context.beginPath();
       context.moveTo(0, y + 0.5);
-      context.lineTo(width, y + 0.5);
+      context.lineTo(tableRight, y + 0.5);
       context.moveTo(0, footerBottom - 0.5);
-      context.lineTo(width, footerBottom - 0.5);
+      context.lineTo(tableRight, footerBottom - 0.5);
+      if (tableRight < width) {
+        context.moveTo(tableRight - 0.5, y);
+        context.lineTo(tableRight - 0.5, footerBottom);
+      }
       context.stroke();
 
       context.beginPath();
@@ -1313,7 +1382,7 @@ export class CanvasGridEngine {
       }
       for (let col = bodyColumnStart; col < columns.end; col += 1) {
         const x = this.columnScreenX(col + 1) - 0.5;
-        if (x < gutter || x > width) continue;
+        if (x < gutter || x > tableRight) continue;
         context.moveTo(x, y);
         context.lineTo(x, footerBottom);
       }
@@ -1382,7 +1451,7 @@ export class CanvasGridEngine {
       context.rect(
         gutter + frozenW,
         y,
-        Math.max(0, width - gutter - frozenW),
+        Math.max(0, tableRight - gutter - frozenW),
         footerH,
       );
       context.clip();
@@ -1416,12 +1485,13 @@ export class CanvasGridEngine {
     const rect = this.cellRect(row, col);
     if (rect.y + rect.height < this.headerHeight) return;
 
+    const tableRight = this.tableRight(width);
     context.save();
     context.beginPath();
     context.rect(
       this.rowGutterWidth,
       this.headerHeight,
-      Math.max(0, width - this.rowGutterWidth),
+      Math.max(0, tableRight - this.rowGutterWidth),
       Math.max(0, this.footerTop(height) - this.headerHeight),
     );
     context.clip();

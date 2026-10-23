@@ -167,33 +167,34 @@ export class TemplatesService {
     workspaceId: string,
     userId: string,
     key: string,
-    folderId?: string | null,
+    name?: string | null,
   ) {
     await this.workspaces.requireMember(workspaceId, userId, 'editor');
     const template = TEMPLATE_CATALOG.find((item) => item.key === key);
     if (!template) throw new BadRequestException('模板不存在');
-    if (folderId) {
-      const folder = await this.prisma.folder.findUnique({
-        where: { id: folderId },
-      });
-      if (!folder || folder.workspaceId !== workspaceId) {
-        throw new BadRequestException('目标文件夹不存在');
-      }
-    }
+    const baseName = (name ?? '').trim() || template.name;
     if (template.serialClaim) {
-      return this.instantiateSerialClaim(workspaceId, template, folderId);
+      return this.instantiateSerialClaim(workspaceId, template, baseName);
     }
-    return this.instantiateSimple(workspaceId, template, folderId);
+    return this.instantiateSimple(workspaceId, template, baseName);
   }
 
   private async instantiateSimple(
     workspaceId: string,
     template: TemplateDefinition,
-    folderId?: string | null,
+    baseName?: string,
   ) {
     const result = await this.prisma.$transaction(async (tx) => {
+      const max = await tx.base.aggregate({
+        where: { workspaceId },
+        _max: { sortOrder: true },
+      });
       const base = await tx.base.create({
-        data: { workspaceId, name: template.name, folderId: folderId ?? null },
+        data: {
+          workspaceId,
+          name: baseName ?? template.name,
+          sortOrder: (max._max.sortOrder ?? -1) + 1,
+        },
       });
       const sheets: Array<{ id: string; name: string }> = [];
       for (const sheetDefinition of template.sheets) {
@@ -238,11 +239,19 @@ export class TemplatesService {
   private async instantiateSerialClaim(
     workspaceId: string,
     template: TemplateDefinition,
-    folderId?: string | null,
+    baseName?: string,
   ) {
     const result = await this.prisma.$transaction(async (tx) => {
+      const max = await tx.base.aggregate({
+        where: { workspaceId },
+        _max: { sortOrder: true },
+      });
       const base = await tx.base.create({
-        data: { workspaceId, name: template.name, folderId: folderId ?? null },
+        data: {
+          workspaceId,
+          name: baseName ?? template.name,
+          sortOrder: (max._max.sortOrder ?? -1) + 1,
+        },
       });
       const codeSheet = await tx.sheet.create({
         data: { baseId: base.id, name: '码库' },

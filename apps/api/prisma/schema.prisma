@@ -42,7 +42,6 @@ model Workspace {
 
   members WorkspaceMember[]
   bases   Base[]
-  folders Folder[]
   sharesOut CrossWorkspaceShare[] @relation("ShareSourceWorkspace")
   sharesIn  CrossWorkspaceShare[] @relation("ShareTargetWorkspace")
   apiKeys   ApiKey[]
@@ -70,6 +69,8 @@ model Base {
   id          String   @id @default(uuid()) @db.Uuid
   workspaceId String   @map("workspace_id") @db.Uuid
   name        String
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -79,30 +80,10 @@ model Base {
   forms  Form[]
   automations Automation[]
   dashboards Dashboard[]
-  folderId String? @map("folder_id") @db.Uuid
-  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  analysisReports AnalysisReport[]
 
-  @@index([workspaceId])
-  @@index([folderId])
+  @@index([workspaceId, sortOrder])
   @@map("bases")
-}
-
-model Folder {
-  id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
-  parentId    String?  @map("parent_id") @db.Uuid
-  name        String
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
-  children  Folder[]  @relation("FolderChildren")
-  bases     Base[]
-
-  @@index([workspaceId])
-  @@index([parentId])
-  @@map("folders")
 }
 
 model Sheet {
@@ -354,6 +335,28 @@ model Dashboard {
 
   @@index([baseId])
   @@map("dashboards")
+}
+
+/// AI 分析报告：对话 + Markdown 报告（与仪表盘分离）
+model AnalysisReport {
+  id             String   @id @default(uuid()) @db.Uuid
+  baseId         String   @map("base_id") @db.Uuid
+  name           String
+  /// draft | asking | exploring | generating | ready | failed
+  status         String   @default("draft")
+  messages       Json     @default("[]")
+  steps          Json     @default("[]")
+  sheetIds       Json     @default("[]") @map("sheet_ids")
+  reportMarkdown String?  @map("report_markdown") @db.Text
+  error          String?  @db.Text
+  createdBy      String?  @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@index([baseId])
+  @@map("analysis_reports")
 }
 
 model DashboardWidget {

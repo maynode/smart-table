@@ -6,8 +6,8 @@ import { CommentsModule } from './comments/comments.module';
 import { AutomationsModule } from './automations/automations.module';
 import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
+import { AnalysisReportsModule } from './analysis-reports/analysis-reports.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
-import { FoldersModule } from './folders/folders.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { OpenApiModule } from './openapi/openapi.module';
@@ -44,7 +44,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     PermissionsModule,
     ViewsModule,
     DashboardsModule,
-    FoldersModule,
+    AnalysisReportsModule,
     SharingModule,
     PublicViewsModule,
     ApiKeysModule,

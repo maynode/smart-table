@@ -7,13 +7,11 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 
-describe('Folders and template library (e2e)', () => {
+describe('Template library (e2e)', () => {
   let app: NestFastifyApplication;
   const stamp = Date.now();
   let token: string;
   let workspaceId: string;
-  let rootFolderId: string;
-  let childFolderId: string;
   let templateBaseId: string;
   let serialBaseId: string;
 
@@ -34,67 +32,20 @@ describe('Folders and template library (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        email: `folders-${stamp}@example.com`,
+        email: `templates-${stamp}@example.com`,
         password: 'Passw0rd!123',
-        name: '文件夹管理员',
+        name: '模板管理员',
       });
     token = owner.body.accessToken;
     const workspace = await http()
       .post('/workspaces')
       .set(auth())
-      .send({ name: `文件夹工作区${stamp}` });
+      .send({ name: `模板工作区${stamp}` });
     workspaceId = workspace.body.id;
   });
 
   afterAll(async () => {
     if (app) await app.close();
-  });
-
-  it('nests folders and moves a base into a child folder', async () => {
-    const root = await http()
-      .post(`/workspaces/${workspaceId}/folders`)
-      .set(auth())
-      .send({ name: '运营' })
-      .expect(201);
-    rootFolderId = root.body.id;
-    const child = await http()
-      .post(`/workspaces/${workspaceId}/folders`)
-      .set(auth())
-      .send({ name: '重点客户', parentId: rootFolderId })
-      .expect(201);
-    childFolderId = child.body.id;
-
-    const base = await http()
-      .post(`/workspaces/${workspaceId}/bases`)
-      .set(auth())
-      .send({ name: '手工 Base' })
-      .expect(201);
-    await http()
-      .post(`/bases/${base.body.id}/move`)
-      .set(auth())
-      .send({ folderId: childFolderId })
-      .expect(201);
-
-    const tree = await http()
-      .get(`/workspaces/${workspaceId}/folders`)
-      .set(auth())
-      .expect(200);
-    const rootNode = tree.body.folders.find(
-      (item: { id: string }) => item.id === rootFolderId,
-    );
-    expect(rootNode.children[0].name).toBe('重点客户');
-    expect(rootNode.children[0].bases[0].name).toBe('手工 Base');
-
-    await http()
-      .patch(`/folders/${rootFolderId}`)
-      .set(auth())
-      .send({ parentId: childFolderId })
-      .expect(400);
-    await http()
-      .post(`/workspaces/${workspaceId}/folders`)
-      .set(auth())
-      .send({ name: '重复层级', parentId: rootFolderId })
-      .expect(201);
   });
 
   it('lists templates and instantiates the serial claim template', async () => {
@@ -107,21 +58,21 @@ describe('Folders and template library (e2e)', () => {
     const created = await http()
       .post('/templates/serial-claim/instantiate')
       .set(auth())
-      .send({ workspaceId, folderId: childFolderId })
+      .send({ workspaceId, name: '领取演示' })
       .expect(201);
     serialBaseId = created.body.baseId;
     expect(created.body.codes).toBe(100);
-    expect(created.body.sheets.map((sheet: { name: string }) => sheet.name)).toEqual([
-      '码库',
-      '收集表单',
-    ]);
+    expect(
+      created.body.sheets.map((sheet: { name: string }) => sheet.name),
+    ).toEqual(['码库', '收集表单']);
     expect(created.body.shareUrl).toContain('/fill/');
 
     const base = await http()
       .get(`/bases/${serialBaseId}`)
       .set(auth())
       .expect(200);
-    expect(base.body.folderId).toBe(childFolderId);
+    expect(base.body.name).toBe('领取演示');
+    expect(base.body.workspaceId).toBe(workspaceId);
 
     const sheets = await http()
       .get(`/bases/${serialBaseId}/sheets`)
@@ -136,13 +87,25 @@ describe('Folders and template library (e2e)', () => {
       .expect(200);
     expect(records.body.records).toHaveLength(100);
     expect(records.body.records[0].claimStatus).toBe('unclaimed');
+  });
 
+  it('instantiates with custom name and supports base rename', async () => {
     const customer = await http()
       .post('/templates/customer-crm/instantiate')
       .set(auth())
-      .send({ workspaceId })
+      .send({ workspaceId, name: '我的客户库' })
       .expect(201);
     templateBaseId = customer.body.baseId;
+    const renamed = await http()
+      .get(`/bases/${templateBaseId}`)
+      .set(auth())
+      .expect(200);
+    expect(renamed.body.name).toBe('我的客户库');
+    await http()
+      .patch(`/bases/${templateBaseId}`)
+      .set(auth())
+      .send({ name: '客户库改名' })
+      .expect(200);
     const customerSheets = await http()
       .get(`/bases/${templateBaseId}/sheets`)
       .set(auth())
@@ -154,39 +117,11 @@ describe('Folders and template library (e2e)', () => {
     expect(customerRecords.body.records).toHaveLength(2);
   });
 
-  it('deleting a folder reparents contents and rejects unknown templates', async () => {
-    await http().delete(`/folders/${childFolderId}`).set(auth()).expect(200);
-    const tree = await http()
-      .get(`/workspaces/${workspaceId}/folders`)
-      .set(auth())
-      .expect(200);
-    const rootNode = tree.body.folders.find(
-      (item: { id: string }) => item.id === rootFolderId,
-    );
-    expect(rootNode.bases.map((base: { id: string }) => base.id)).toContain(
-      serialBaseId,
-    );
-
+  it('rejects unknown templates', async () => {
     await http()
       .post('/templates/nope/instantiate')
       .set(auth())
       .send({ workspaceId })
       .expect(400);
-  });
-
-  it('rejects folder mutations from non-members', async () => {
-    const outsider = await http()
-      .post('/auth/register')
-      .send({
-        email: `folder-outsider-${stamp}@example.com`,
-        password: 'Passw0rd!123',
-        name: '局外人',
-      })
-      .expect(201);
-    await http()
-      .post(`/workspaces/${workspaceId}/folders`)
-      .set({ Authorization: `Bearer ${outsider.body.accessToken}` })
-      .send({ name: '越权文件夹' })
-      .expect(403);
   });
 });

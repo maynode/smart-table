@@ -7,13 +7,10 @@ import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import DashboardPanel from '../components/DashboardPanel.vue';
-import FolderPanel from '../components/FolderPanel.vue';
+import AnalysisReportPanel from '../components/AnalysisReportPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import SharePanel from '../components/SharePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
-import DeveloperPanel from '../components/DeveloperPanel.vue';
-import QuotaPanel from '../components/QuotaPanel.vue';
-import SyncPanel from '../components/SyncPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
@@ -101,13 +98,10 @@ const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
 const dashboardOpen = ref(false);
 const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
-const foldersOpen = ref(false);
+const analysisOpen = ref(false);
 const templatesOpen = ref(false);
 const shareOpen = ref(false);
 const publicViewOpen = ref(false);
-const developerOpen = ref(false);
-const quotaOpen = ref(false);
-const syncOpen = ref(false);
 
 const createMenuOpen = ref(false);
 
@@ -116,9 +110,7 @@ const createMenuItems = [
   { icon: '📊', label: '仪表盘', action: 'dashboard' as const },
   { icon: '📝', label: '收集表单', action: 'form' as const },
   { icon: '📈', label: '分析报告', action: 'report' as const },
-  { icon: '📁', label: '文件夹', action: 'folder' as const },
   { icon: '📥', label: '导入表格', action: 'import' as const },
-  { icon: '🔄', label: '同步数据', action: 'sync' as const },
   { icon: '🧩', label: '从模板新建', action: 'template' as const },
 ];
 
@@ -249,6 +241,7 @@ async function addRow(): Promise<void> {
 async function insertRows(payload: {
   count: number;
   direction: 'above' | 'below';
+  atIndex?: number;
 }): Promise<void> {
   if (!activeSheet.value) return;
   const count = Math.min(100, Math.max(1, Math.floor(payload.count || 1)));
@@ -259,9 +252,65 @@ async function insertRows(payload: {
         await endpoints.createRecord(activeSheet.value.id, {}),
       );
     }
-    // 无行 order 字段：新建记录按 id 排在末尾；上下插入 UI 先统一追加。
-    records.value = [...records.value, ...created];
+    // 无持久行 order：按 atIndex 插入本地列表，刷新后仍按 id 排序。
+    if (typeof payload.atIndex === 'number') {
+      const index = Math.max(
+        0,
+        Math.min(records.value.length, Math.floor(payload.atIndex)),
+      );
+      records.value = [
+        ...records.value.slice(0, index),
+        ...created,
+        ...records.value.slice(index),
+      ];
+    } else {
+      records.value = [...records.value, ...created];
+    }
     toast(count === 1 ? '已添加一行' : `已添加 ${count} 行`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function insertColumns(payload: {
+  count: number;
+  direction: 'left' | 'right';
+  fieldId: string;
+}): Promise<void> {
+  if (!activeSheet.value) return;
+  const target = (activeSheet.value.fields ?? []).find(
+    (field) => field.id === payload.fieldId,
+  );
+  if (!target) return;
+  const count = Math.min(20, Math.max(1, Math.floor(payload.count || 1)));
+  const order =
+    payload.direction === 'left' ? target.order : target.order + 1;
+  const usedNames = new Set(
+    (activeSheet.value.fields ?? []).map((field) => field.name),
+  );
+  const nextName = (): string => {
+    const base = '文本';
+    if (!usedNames.has(base)) {
+      usedNames.add(base);
+      return base;
+    }
+    let index = 2;
+    while (usedNames.has(`${base} ${index}`)) index += 1;
+    const name = `${base} ${index}`;
+    usedNames.add(name);
+    return name;
+  };
+  try {
+    for (let i = 0; i < count; i += 1) {
+      await endpoints.createField(activeSheet.value.id, {
+        name: nextName(),
+        type: 'text',
+        options: { width: 180 },
+        order,
+      });
+    }
+    await selectSheet(activeSheet.value.id, false);
+    toast(count === 1 ? '已插入一列' : `已插入 ${count} 列`);
   } catch (error) {
     toast(messageOf(error));
   }
@@ -871,25 +920,17 @@ function handleCreateAction(
     importInput.value?.click();
     return;
   }
-  if (action === 'dashboard' || action === 'report') {
-    dashboardKind.value = action === 'report' ? 'report' : 'dashboard';
+  if (action === 'dashboard') {
+    dashboardKind.value = 'dashboard';
     dashboardOpen.value = true;
     return;
   }
-  if (action === 'folder') {
-    foldersOpen.value = true;
+  if (action === 'report') {
+    analysisOpen.value = true;
     return;
   }
   if (action === 'template') {
     templatesOpen.value = true;
-    return;
-  }
-  if (action === 'sync') {
-    if (!activeSheet.value) {
-      toast('请先选择一张工作表');
-      return;
-    }
-    syncOpen.value = true;
   }
 }
 
@@ -1015,7 +1056,10 @@ onBeforeUnmount(() => {
       <div class="topbar-left">
         <span class="brand-mark small">▦</span>
         <nav class="breadcrumb">
-          <button class="crumb-link" @click="router.push('/')">
+          <button
+            class="crumb-link"
+            @click="router.push({ path: '/', query: { ws: workspaceId } })"
+          >
             {{ workspace?.name ?? '工作区' }}
           </button>
           <span class="crumb-sep">/</span>
@@ -1045,28 +1089,6 @@ onBeforeUnmount(() => {
           @click="permissionsOpen = true"
         >
           内容权限
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="sync-open"
-          :disabled="!activeSheet"
-          @click="syncOpen = true"
-        >
-          同步数据
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="quota-open"
-          @click="quotaOpen = true"
-        >
-          配额
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="developer-open"
-          @click="developerOpen = true"
-        >
-          开发者
         </button>
         <button
           class="topbar-btn"
@@ -1108,8 +1130,6 @@ onBeforeUnmount(() => {
             >
               公开只读视图
             </button>
-            <button @click="quotaOpen = true; moreOpen = false">工作区配额</button>
-            <button @click="developerOpen = true; moreOpen = false">开发者 / OpenAPI</button>
             <button @click="exportActiveSheet(); moreOpen = false">导出 Excel</button>
             <div class="more-sep"></div>
             <button
@@ -1244,13 +1264,9 @@ onBeforeUnmount(() => {
                     ? 'dashboard-open'
                     : item.action === 'report'
                       ? 'report-open'
-                      : item.action === 'folder'
-                        ? 'folder-open'
-                        : item.action === 'template'
-                          ? 'template-open'
-                          : item.action === 'sync'
-                            ? 'sidebar-sync-open'
-                            : undefined
+                      : item.action === 'template'
+                        ? 'template-open'
+                        : undefined
               "
               @click="handleCreateAction(item.action)"
             >
@@ -1318,6 +1334,7 @@ onBeforeUnmount(() => {
             :upload-attachment="uploadToSheet"
             @add-row="addRow"
             @insert-rows="insertRows"
+            @insert-columns="insertColumns"
             @load-more="loadMore"
             @refresh="refreshSheet"
             @undo="undoEdit"
@@ -1350,6 +1367,7 @@ onBeforeUnmount(() => {
           :upload-attachment="uploadToSheet"
           @add-row="addRow"
           @insert-rows="insertRows"
+          @insert-columns="insertColumns"
           @load-more="loadMore"
           @refresh="refreshSheet"
           @undo="undoEdit"
@@ -1492,17 +1510,16 @@ onBeforeUnmount(() => {
       />
     </div>
     <div
-      v-if="foldersOpen"
+      v-if="analysisOpen"
       class="modal-mask"
-      @click.self="foldersOpen = false"
+      @click.self="analysisOpen = false"
     >
-      <FolderPanel
-        :workspace-id="workspaceId"
+      <AnalysisReportPanel
         :base-id="baseId"
-        @close="foldersOpen = false"
+        :sheets="sheets"
+        @close="analysisOpen = false"
       />
     </div>
-
     <div
       v-if="shareOpen"
       class="modal-mask"
@@ -1513,36 +1530,6 @@ onBeforeUnmount(() => {
         :base-id="baseId"
         :sheet-id="activeSheet?.id"
         @close="shareOpen = false"
-      />
-    </div>
-
-    <div
-      v-if="syncOpen && activeSheet"
-      class="modal-mask"
-      @click.self="syncOpen = false"
-    >
-      <SyncPanel
-        :sheet-id="activeSheet.id"
-        :fields="activeSheet.fields ?? []"
-        @close="syncOpen = false"
-      />
-    </div>
-
-    <div v-if="quotaOpen" class="modal-mask" @click.self="quotaOpen = false">
-      <QuotaPanel
-        :workspace-id="workspace?.id ?? ''"
-        @close="quotaOpen = false"
-      />
-    </div>
-
-    <div
-      v-if="developerOpen"
-      class="modal-mask"
-      @click.self="developerOpen = false"
-    >
-      <DeveloperPanel
-        :workspace-id="workspace?.id ?? ''"
-        @close="developerOpen = false"
       />
     </div>
 

@@ -580,6 +580,7 @@ h3 {
 .canvas-grid-host {
   position: absolute;
   inset: 0;
+  background: #f5f6f8;
 }
 
 .cell-editor {
