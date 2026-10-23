@@ -53,7 +53,7 @@ describe('W4 platform capabilities (e2e)', () => {
     const sheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: 'W4 表' });
+      .send({ name: 'W4 表', seed: false });
     sheetId = sheet.body.id;
   });
 

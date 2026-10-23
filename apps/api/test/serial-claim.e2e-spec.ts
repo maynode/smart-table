@@ -47,7 +47,7 @@ describe('Serial claim path (e2e)', () => {
     const formSheet = await request(app.getHttpServer())
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
     const phone = await request(app.getHttpServer())
       .post(`/sheets/${formSheet.body.id}/fields`)
       .set(auth())
@@ -60,7 +60,7 @@ describe('Serial claim path (e2e)', () => {
     const codeSheet = await request(app.getHttpServer())
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
     const serial = await request(app.getHttpServer())
       .post(`/sheets/${codeSheet.body.id}/fields`)
       .set(auth())

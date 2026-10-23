@@ -1435,7 +1435,7 @@ onBeforeUnmount(() => {
           <div class="comment-author">{{ comment.author.name }}</div>
           <p class="comment-body" v-html="formatCommentBody(comment.body)"></p>
         </li>
-        <li v-if="comments.length === 0" class="muted">还没有评论。</li>
+        <li v-if="comments.length === 0" class="muted">还没有评论，在下方输入开始讨论。</li>
       </ul>
       <form class="comment-form" @submit.prevent="postComment">
         <div class="comment-compose">
@@ -1633,6 +1633,17 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 4px 16px rgba(31, 35, 41, 0.08);
+  animation: shell-menu-in 0.14s ease;
+}
+@keyframes shell-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .create-menu-item {
   display: flex;
@@ -1667,6 +1678,7 @@ onBeforeUnmount(() => {
   border-radius: 9px;
   background: #fff;
   box-shadow: 0 12px 36px rgba(15, 23, 42, 0.18);
+  animation: shell-menu-in 0.14s ease;
 }
 .more-menu button {
   height: 32px;

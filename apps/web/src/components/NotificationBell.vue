@@ -138,25 +138,45 @@ onBeforeUnmount(() => {
   top: calc(100% + 6px);
   right: 0;
   z-index: 40;
-  width: 320px;
+  width: 340px;
   max-height: 420px;
   overflow: auto;
   background: #fff;
   border: 1px solid #e5e6eb;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+  animation: notify-in 0.14s ease;
+}
+
+@keyframes notify-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .notify-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid #f0f0f0;
+  background: #fafbfc;
+  position: sticky;
+  top: 0;
+}
+
+.notify-header strong {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .notify-empty {
-  padding: 24px 12px;
+  padding: 36px 16px;
   color: #8f959e;
   text-align: center;
   font-size: 13px;
@@ -169,9 +189,10 @@ onBeforeUnmount(() => {
 }
 
 .notify-item {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid #f5f6f7;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
 
 .notify-item:hover {
@@ -180,6 +201,7 @@ onBeforeUnmount(() => {
 
 .notify-item.unread {
   background: #f0f7ff;
+  box-shadow: inset 3px 0 0 #3370ff;
 }
 
 .notify-title {

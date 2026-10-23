@@ -90,7 +90,7 @@ describe('Content permissions object ACL (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth(ownerToken))
-      .send({ name: '权限表' })
+      .send({ name: '权限表', seed: false })
       .expect(201);
     sheetId = sheet.body.id;
 

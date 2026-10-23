@@ -968,6 +968,7 @@ onUnmounted(() => {
   background: transparent;
   cursor: pointer;
   text-align: left;
+  transition: background 0.12s ease;
 }
 
 .ws-item:hover {
@@ -1156,6 +1157,18 @@ onUnmounted(() => {
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.14);
   z-index: 30;
+  animation: hub-menu-in 0.14s ease;
+}
+
+@keyframes hub-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .menu button {

@@ -54,7 +54,7 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '销售数据' });
+      .send({ name: '销售数据', seed: false });
     sheetId = sheet.body.id;
     const region = await http()
       .post(`/sheets/${sheetId}/fields`)

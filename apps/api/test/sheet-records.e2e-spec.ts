@@ -74,7 +74,7 @@ describe('Sheets, fields and records (e2e)', () => {
     const sheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth(token))
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
 
     expect(sheet.status).toBe(201);
     expect(sheet.body.name).toBe('码库');

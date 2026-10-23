@@ -194,7 +194,7 @@ onMounted(load);
   width: min(620px, 92vw);
   max-height: 80vh;
   overflow: auto;
-  padding: 20px;
+  padding: 20px 22px 22px;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 24px 72px rgba(15, 23, 42, 0.22);
@@ -203,19 +203,29 @@ onMounted(load);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 4px;
 }
 .members-head h3 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #1f2329);
 }
 .members-head p {
   margin: 0;
-  color: #8f959e;
+  color: var(--text-tertiary, #8f959e);
   font-size: 12px;
+  line-height: 1.5;
 }
 .invite-form {
   display: flex;
   gap: 8px;
   margin: 16px 0 4px;
+  padding: 12px;
+  background: #f7f8fa;
+  border-radius: 10px;
+  border: 1px solid var(--border-light, #eef0f3);
 }
 .invite-form input {
   flex: 1;
@@ -223,33 +233,49 @@ onMounted(load);
   padding: 0 10px;
   border: 1px solid #d0d3d9;
   border-radius: 7px;
+  background: #fff;
+  font-size: 13px;
+}
+.invite-form input:focus,
+.invite-form select:focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
 }
 .invite-form select {
   height: 34px;
   border: 1px solid #d0d3d9;
   border-radius: 7px;
+  background: #fff;
+  font-size: 13px;
+  padding: 0 8px;
 }
 .invite-error {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   color: #d92d20;
   font-size: 12px;
 }
 .member-list {
   list-style: none;
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   padding: 0;
 }
 .member-list li {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
-  padding: 0 4px;
-  border-bottom: 1px solid #f0f1f3;
+  min-height: 54px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border-bottom: 1px solid transparent;
+  transition: background 0.12s ease;
+}
+.member-list li:hover {
+  background: #f7f8fa;
 }
 .avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -257,6 +283,7 @@ onMounted(load);
   background: #e8f3ff;
   color: #1d6fdc;
   font-weight: 600;
+  font-size: 13px;
   flex: none;
 }
 .member-main {
@@ -264,23 +291,49 @@ onMounted(load);
   flex: 1;
   min-width: 0;
   flex-direction: column;
+  gap: 2px;
+}
+.member-main strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1f2329);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .member-main small {
-  color: #8f959e;
+  color: var(--text-tertiary, #8f959e);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .member-list select {
   height: 30px;
   border: 1px solid #d0d3d9;
   border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  padding: 0 6px;
 }
 .role-badge {
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: #f2f3f5;
-  color: #646a73;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: #eef3ff;
+  color: #245bdb;
   font-size: 12px;
+  font-weight: 500;
 }
 .icon-btn.danger {
   color: #d4380d;
+  opacity: 0.7;
+}
+.member-list li:hover .icon-btn.danger {
+  opacity: 1;
+}
+.muted {
+  margin: 12px 4px 0;
+  color: var(--text-tertiary, #8f959e);
+  font-size: 13px;
 }
 </style>

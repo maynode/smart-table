@@ -162,13 +162,21 @@ onMounted(load);
 .panel-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid #e5e6eb;
 }
+.panel-header strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2329;
+}
 .panel-subtitle {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: #8a9099;
   font-size: 12px;
+  line-height: 1.5;
 }
 .public-body {
   display: grid;
@@ -181,7 +189,7 @@ onMounted(load);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px;
+  padding: 16px 18px;
   overflow: auto;
 }
 .public-form {
@@ -191,45 +199,78 @@ onMounted(load);
 .public-form h4,
 .public-list h4 {
   margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
 }
 .public-form label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   font-size: 12px;
   color: #646a73;
 }
 .public-form input {
-  height: 32px;
-  padding: 0 8px;
+  height: 34px;
+  padding: 0 10px;
   border: 1px solid #d0d3d9;
-  border-radius: 6px;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 13px;
+}
+.public-form input:focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
+}
+.public-form .btn-primary {
+  margin-top: 6px;
+  align-self: stretch;
 }
 .public-row {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px;
+  padding: 12px 14px;
   border: 1px solid #eef0f3;
-  border-radius: 8px;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.public-row:hover {
+  border-color: #d0d7e3;
+  background: #fafbfc;
+}
+.public-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
 }
 .public-row small {
   display: block;
-  margin: 3px 0;
+  margin: 4px 0 6px;
   color: #8a9099;
+  font-size: 12px;
 }
 .public-row a {
   color: #2d6cdf;
   font-size: 12px;
   word-break: break-all;
+  text-decoration: none;
+}
+.public-row a:hover {
+  text-decoration: underline;
 }
 .row-actions {
   display: flex;
   gap: 6px;
   align-items: flex-start;
+  flex-shrink: 0;
 }
 .empty-hint {
+  margin: 24px 0;
   color: #8a9099;
-  font-size: 12px;
+  font-size: 13px;
+  text-align: center;
 }
 </style>

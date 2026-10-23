@@ -56,6 +56,18 @@ function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : '网络错误';
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  asking: '待确认',
+  exploring: '分析中',
+  generating: '生成中',
+  ready: '已完成',
+  failed: '失败',
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
+
 async function scrollChat(): Promise<void> {
   await nextTick();
   chatEnd.value?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -174,6 +186,7 @@ onMounted(async () => {
 
     <div class="analysis-body">
       <aside class="analysis-list" v-if="list.length > 1">
+        <div class="list-head">历史</div>
         <button
           v-for="item in list"
           :key="item.id"
@@ -182,8 +195,8 @@ onMounted(async () => {
           :class="{ active: active?.id === item.id }"
           @click="openReport(item.id)"
         >
-          <span>{{ item.name }}</span>
-          <small>{{ item.status }}</small>
+          <span class="list-name">{{ item.name }}</span>
+          <small class="list-status" :data-status="item.status">{{ statusLabel(item.status) }}</small>
         </button>
       </aside>
 
@@ -204,10 +217,12 @@ onMounted(async () => {
         ></div>
         <div v-else class="report-canvas empty">
           <template v-if="active?.error">
+            <div class="empty-icon error" aria-hidden="true">!</div>
             <p class="empty-state-title">生成失败</p>
             <p class="empty-state-hint">{{ active.error }}</p>
           </template>
           <template v-else>
+            <div class="empty-icon" aria-hidden="true">◇</div>
             <p class="empty-state-title">暂无报告</p>
             <p class="empty-state-hint">
               在右侧对话中确认要分析的工作表后，Markdown 报告会显示在这里。
@@ -321,12 +336,17 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #eef0f3;
+  border-bottom: 1px solid var(--border-light, #eef0f3);
 }
 .analysis-top-left {
   display: flex;
   align-items: baseline;
   gap: 10px;
+}
+.analysis-top-left strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #1f2329);
 }
 .analysis-top-actions {
   display: flex;
@@ -334,7 +354,7 @@ onMounted(async () => {
   gap: 8px;
 }
 .muted {
-  color: #8f959e;
+  color: var(--text-tertiary, #8f959e);
   font-size: 12px;
 }
 .analysis-body {
@@ -343,45 +363,87 @@ onMounted(async () => {
   display: flex;
 }
 .analysis-list {
-  width: 160px;
-  border-right: 1px solid #eef0f3;
+  width: 168px;
+  border-right: 1px solid var(--border-light, #eef0f3);
   overflow: auto;
-  padding: 8px;
+  padding: 10px 8px;
+  background: #fafbfc;
+}
+.list-head {
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary, #8f959e);
+  text-transform: uppercase;
 }
 .list-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: 4px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   text-align: left;
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.12s ease;
 }
-.list-item:hover,
+.list-item:hover {
+  background: #f0f2f5;
+}
 .list-item.active {
-  background: #f2f3f5;
+  background: #e8f0ff;
 }
-.list-item small {
-  color: #8f959e;
+.list-name {
+  color: var(--text-primary, #1f2329);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.list-item.active .list-name {
+  color: #245bdb;
+}
+.list-status {
+  font-size: 11px;
+  color: var(--text-tertiary, #8f959e);
+}
+.list-status[data-status='ready'] {
+  color: #0f9d58;
+}
+.list-status[data-status='failed'] {
+  color: #d4380d;
+}
+.list-status[data-status='exploring'],
+.list-status[data-status='generating'] {
+  color: #3370ff;
 }
 .analysis-main {
   flex: 1.2;
   min-width: 0;
-  background: #f7f8fa;
-  border-right: 1px solid #eef0f3;
+  background: #f5f6f8;
+  border-right: 1px solid var(--border-light, #eef0f3);
 }
 .report-canvas {
   height: 100%;
   overflow: auto;
-  padding: 24px 28px;
+  padding: 28px 32px;
   font-size: 14px;
-  line-height: 1.6;
-  color: #1f2329;
+  line-height: 1.65;
+  color: var(--text-primary, #1f2329);
+  background: #fff;
+  margin: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light, #eef0f3);
+  box-sizing: border-box;
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
 }
 .report-canvas.loading,
 .report-canvas.empty {
@@ -390,30 +452,49 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 32px 24px;
-  color: #646a73;
+  padding: 40px 28px;
+  color: var(--text-secondary, #646a73);
   text-align: center;
+  background: transparent;
+  border: 1px dashed #d9dee8;
+}
+.empty-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #eef3ff;
+  color: #3370ff;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.empty-icon.error {
+  background: #fff1f0;
+  color: #d4380d;
 }
 .report-canvas.empty .empty-state-title {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: #4e5969;
+  color: var(--text-secondary, #4e5969);
 }
 .report-canvas.empty .empty-state-hint {
   margin: 0;
-  max-width: 320px;
+  max-width: 300px;
   font-size: 13px;
   line-height: 1.55;
-  color: #8a9099;
+  color: var(--text-tertiary, #8a9099);
 }
 .spinner {
-  width: 42px;
-  height: 42px;
-  border: 3px solid #d9dee8;
+  width: 36px;
+  height: 36px;
+  border: 3px solid #e5e8ef;
   border-top-color: #3370ff;
   border-radius: 50%;
-  animation: spin 0.9s linear infinite;
+  animation: spin 0.85s linear infinite;
 }
 @keyframes spin {
   to {
@@ -422,43 +503,58 @@ onMounted(async () => {
 }
 .report-canvas :deep(h1) {
   font-size: 22px;
-  margin: 0 0 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 14px;
+  line-height: 1.3;
 }
 .report-canvas :deep(h2) {
-  font-size: 17px;
-  margin: 20px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 22px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-light, #f0f2f5);
 }
 .report-canvas :deep(h3) {
-  font-size: 15px;
-  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 16px 0 6px;
 }
 .report-canvas :deep(p),
 .report-canvas :deep(ul),
 .report-canvas :deep(ol) {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
+}
+.report-canvas :deep(li) {
+  margin-bottom: 4px;
 }
 .report-canvas :deep(blockquote) {
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  background: #eef3ff;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: #f5f8ff;
   border-left: 3px solid #3370ff;
-  color: #4e5969;
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary, #4e5969);
 }
 .report-canvas :deep(.md-table) {
   width: 100%;
   border-collapse: collapse;
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   font-size: 13px;
   background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
 }
 .report-canvas :deep(.md-table th),
 .report-canvas :deep(.md-table td) {
-  border: 1px solid #e5e6eb;
-  padding: 6px 8px;
+  border: 1px solid #e8eaed;
+  padding: 8px 10px;
   text-align: left;
 }
 .report-canvas :deep(.md-table th) {
-  background: #f2f3f5;
+  background: #f7f8fa;
+  font-weight: 600;
+  color: var(--text-secondary, #646a73);
 }
 .analysis-chat {
   width: 340px;
@@ -468,17 +564,24 @@ onMounted(async () => {
   background: #fff;
 }
 .chat-head {
-  padding: 12px 14px;
-  border-bottom: 1px solid #eef0f3;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light, #eef0f3);
+}
+.chat-head strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1f2329);
 }
 .steps {
-  padding: 10px 14px;
-  border-bottom: 1px solid #eef0f3;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light, #eef0f3);
   font-size: 12px;
+  background: #fafbfc;
 }
 .steps-title {
-  color: #8f959e;
-  margin-bottom: 6px;
+  color: var(--text-tertiary, #8f959e);
+  margin-bottom: 8px;
+  font-weight: 500;
 }
 .steps ol {
   list-style: none;
@@ -488,84 +591,119 @@ onMounted(async () => {
 .steps li {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 0;
-  color: #8f959e;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--text-tertiary, #8f959e);
 }
 .steps li.active {
-  color: #1f2329;
+  color: var(--text-primary, #1f2329);
   font-weight: 600;
 }
 .steps li.done {
-  color: #52c41a;
+  color: #0f9d58;
 }
 .step-mark {
-  width: 14px;
-  text-align: center;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 10px;
+  background: #f0f2f5;
+  flex-shrink: 0;
+}
+.steps li.active .step-mark {
+  background: #e8f0ff;
+  color: #3370ff;
+}
+.steps li.done .step-mark {
+  background: #e6f7ef;
+  color: #0f9d58;
 }
 .messages {
   flex: 1;
   overflow: auto;
-  padding: 12px 14px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 .bubble {
   max-width: 100%;
 }
+.bubble.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
 .bubble-role {
   font-size: 11px;
-  color: #8f959e;
+  color: var(--text-tertiary, #8f959e);
   margin-bottom: 4px;
 }
 .bubble.user .bubble-body {
   background: #e8f3ff;
-  margin-left: auto;
+  color: #1f2329;
 }
 .bubble-body {
   display: inline-block;
-  padding: 8px 10px;
+  max-width: 100%;
+  padding: 9px 12px;
   border-radius: 10px;
   background: #f5f6f7;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
 }
 .choice-list {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: 100%;
 }
 .choice-row {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid #e5e6eb;
+  padding: 9px 11px;
+  border: 1px solid var(--border-light, #e5e6eb);
   border-radius: 8px;
   font-size: 13px;
   cursor: pointer;
   background: #fff;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .choice-row:hover {
   border-color: #3370ff;
   background: #f5f8ff;
 }
+.choice-row:has(input:checked) {
+  border-color: #3370ff;
+  background: #eef3ff;
+  box-shadow: 0 0 0 1px #3370ff inset;
+}
 .other-input {
   width: 100%;
-  height: 32px;
+  height: 34px;
   padding: 0 10px;
   border: 1px solid #d0d3d6;
   border-radius: 6px;
   font-size: 13px;
+  box-sizing: border-box;
+}
+.other-input:focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.15);
 }
 .chat-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 10px 14px;
-  border-top: 1px solid #eef0f3;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-light, #eef0f3);
+  background: #fafbfc;
 }
 </style>

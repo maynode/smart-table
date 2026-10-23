@@ -581,13 +581,21 @@ onMounted(loadObjects);
   font-size: 14px;
 }
 .home-object-row:hover {
-  background: #f7f8fa;
+  background: #f5f8ff;
+}
+.home-object-row:hover .home-object-icon {
+  background: #e8f0ff;
+  color: #3370ff;
+}
+.home-object-row:hover .home-object-level {
+  color: #3370ff;
 }
 .home-object-name {
   display: inline-flex;
   align-items: center;
   gap: 10px;
   color: #1f2329;
+  font-weight: 500;
 }
 .home-object-icon {
   width: 28px;
@@ -598,6 +606,7 @@ onMounted(loadObjects);
   border-radius: 8px;
   background: #f2f3f5;
   color: #646a73;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .home-object-level {
   display: inline-flex;
@@ -617,7 +626,13 @@ onMounted(loadObjects);
   min-height: 52px;
   color: #1d6fdc;
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.member-extra:hover {
+  background: #f5f8ff;
+  border-color: #91caff;
 }
 .back-link {
   margin: 0 0 8px;
@@ -798,6 +813,7 @@ input[type='radio'] {
   gap: 10px;
   padding: 14px 22px;
   border-top: 1px solid #e5e6eb;
+  background: #fafbfc;
 }
 .empty-hint {
   font-size: 12px;

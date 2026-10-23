@@ -65,7 +65,7 @@ describe('Performance foundation (e2e)', () => {
     const formSheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
     const phone = await http()
       .post(`/sheets/${formSheet.body.id}/fields`)
       .set(auth())
@@ -73,7 +73,7 @@ describe('Performance foundation (e2e)', () => {
     const codeSheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
     const serial = await http()
       .post(`/sheets/${codeSheet.body.id}/fields`)
       .set(auth())

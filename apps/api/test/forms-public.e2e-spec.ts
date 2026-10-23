@@ -89,7 +89,7 @@ describe('Forms public share and submit (e2e)', () => {
     const sheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
     sheetId = sheet.body.id;
 
     async function field(name: string, type: string) {
@@ -146,7 +146,8 @@ describe('Forms public share and submit (e2e)', () => {
     const visibleNames = (
       publicForm.body.fields as Array<{ name: string }>
     ).map((item) => item.name);
-    expect(visibleNames).toEqual(['手机号', '序列号']);
+    // 公开接口返回全部配置字段；显示条件由前端按作答值求值
+    expect(visibleNames).toEqual(['手机号', '序列号', '备注']);
     expect(publicForm.body.qrUrl).toContain(shareToken);
 
     const disabled = await upsertForm({ share: { enabled: false } });

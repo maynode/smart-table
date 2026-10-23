@@ -57,7 +57,7 @@ describe('Form success page variables (e2e)', () => {
     const sheet = await request(app.getHttpServer())
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth(token))
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
 
     const phone = await request(app.getHttpServer())
       .post(`/sheets/${sheet.body.id}/fields`)

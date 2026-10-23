@@ -58,7 +58,7 @@ describe('Audit log and quotas (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '配额表' })
+      .send({ name: '配额表', seed: false })
       .expect(201);
     sheetId = sheet.body.id;
     const field = await http()

@@ -50,7 +50,7 @@ describe('View query (e2e)', () => {
     const codeSheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '码库' })
+      .send({ name: '码库', seed: false })
       .expect(201);
     const serial = await http()
       .post(`/sheets/${codeSheet.body.id}/fields`)
@@ -66,7 +66,7 @@ describe('View query (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '主表' })
+      .send({ name: '主表', seed: false })
       .expect(201);
     sheetId = sheet.body.id;
 

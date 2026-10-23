@@ -57,7 +57,7 @@ describe('Duplicate phone guard (e2e)', () => {
     const formSheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
     formSheetId = formSheet.body.id;
     const phone = await request(app.getHttpServer())
       .post(`/sheets/${formSheetId}/fields`)
@@ -68,7 +68,7 @@ describe('Duplicate phone guard (e2e)', () => {
     const codeSheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
     codeSheetId = codeSheet.body.id;
     const serial = await request(app.getHttpServer())
       .post(`/sheets/${codeSheetId}/fields`)

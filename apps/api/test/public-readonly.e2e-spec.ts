@@ -50,7 +50,7 @@ describe('Public read-only views (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${base.body.id}/sheets`)
       .set(auth())
-      .send({ name: '公开数据' });
+      .send({ name: '公开数据', seed: false });
     sheetId = sheet.body.id;
     const visible = await http()
       .post(`/sheets/${sheetId}/fields`)

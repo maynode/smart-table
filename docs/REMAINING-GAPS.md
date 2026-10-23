@@ -91,7 +91,7 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 | 4 | **Docker 镜像与源码一致** | `docker compose build api web claim-worker` → `up -d`；smoke：`/health`、`/metrics`、公开表单提交、自动化运行 | `:8080`（或 compose 对外口）跑的是本轮镜像，不是旧镜像；开发验收仍以 Vite `:5173` + API `:3000` 为准 |
 | 5 | **W6 最终报告** | 变更摘要、验证命令与结果、客观限制、启动步骤 | 单独报告文档落地，并可被交接引用 |
 
-**2026-10-22 已部分跑过（不能代替 P0 全量）：** `vue-tsc` 通过；web `vitest`；`api` `ai-field.spec` 4/4；`pnpm --filter api build`（需先 `prisma:generate`）；Playwright 分套件曾 9/9。全量 API e2e / 新鲜 perf / Docker rebuild / W6 报告仍待做。
+**2026-10-23 P0 进度：** 全量 API e2e **20/20 套件、47/47 通过**（需本机 Redis `:6380`；e2e 建表传 `seed: false` 避免空白表 5 空行干扰断言）。`vue-tsc` + web `vitest` 9/9 已复跑。Playwright 全量 / 新鲜 perf / Docker / W6 仍待做。
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 
@@ -143,22 +143,13 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 
 | 命令 | 结果 |
 |------|------|
-| `pnpm --filter shared test` | 18/18 passed（cron parser） |
-| `pnpm --filter api build` | passed (`nest build`) |
-| `pnpm --filter api exec jest --config ./test/jest-e2e.json --runInBand test/w4-platform.e2e-spec.ts` | 5/5 passed |
-| `pnpm --filter web exec playwright test e2e/grid-canvas.spec.ts` | 2/2 passed |
-| `pnpm --filter web exec playwright test e2e/grid-w1.spec.ts` | 2/2 passed |
-| `pnpm --filter web exec playwright test e2e/form-builder-w2.spec.ts` | 1/1 passed |
-| `pnpm --filter web exec playwright test e2e/automation-w3.spec.ts` | 1/1 passed |
-| `pnpm --filter web exec playwright test e2e/platform-w4.spec.ts` | 1/1 passed |
-| `pnpm --filter web exec playwright test e2e/serial-claim.spec.ts` | 1/1 passed |
-| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-22 复跑）**：含 W1–W4、serial-claim、grid-perf；e2e 用 `seed: false` 建空表，AppDialog/`field-more` 菜单对齐 |
-| `pnpm --filter web exec vue-tsc --noEmit -p tsconfig.json` | passed |
-| `pnpm --filter web exec vitest run` | 9/9 passed（P1 后） |
-| 全量 API e2e | 未跑绿；此前 wecom-oauth 一次 flake；见 P0-1 |
-| `metric-widget` 单测 | 4/4 passed |
-| `charts.e2e-spec.ts`（含 NUMBER） | 4/4 passed |
-| `vue-tsc` / web `vitest`（P1 后） | passed / 9/9 |
+| `pnpm --filter web exec vue-tsc --noEmit` | **passed（2026-10-23）** |
+| `pnpm --filter web exec vitest run` | **9/9 passed（2026-10-23）** |
+| `pnpm --filter api test:e2e --runInBand` | **20/20 suites、47/47 passed（2026-10-23）**；前置：`docker start smart-table-redis`（`:6380`）；修复：e2e 建表补 `seed: false`；`forms-public` 断言改为公开接口返回全部配置字段 |
+| 全量 `pnpm --filter web exec playwright test` | 进行中 / 待写回 |
+| `pnpm --filter shared test` | 18/18 passed（cron parser；历史） |
+| `pnpm --filter api build` | passed (`nest build`；历史) |
+| `charts.e2e-spec.ts`（含 NUMBER） | 含于全量 API e2e |
 
 ---
 

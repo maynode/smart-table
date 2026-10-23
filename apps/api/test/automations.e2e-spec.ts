@@ -65,7 +65,7 @@ describe('Automation engine (e2e)', () => {
     const formSheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '收集表单' });
+      .send({ name: '收集表单', seed: false });
     formSheetId = formSheet.body.id;
     const phone = await request(app.getHttpServer())
       .post(`/sheets/${formSheetId}/fields`)
@@ -76,7 +76,7 @@ describe('Automation engine (e2e)', () => {
     const codeSheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
     codeSheetId = codeSheet.body.id;
 
     const serial = await request(app.getHttpServer())
@@ -128,7 +128,7 @@ describe('Automation engine (e2e)', () => {
     const emptySheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '空码库' });
+      .send({ name: '空码库', seed: false });
     emptySheetId = emptySheet.body.id;
     await request(app.getHttpServer())
       .post(`/sheets/${emptySheetId}/fields`)
@@ -138,7 +138,7 @@ describe('Automation engine (e2e)', () => {
     const outputSheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name: '领取流水' });
+      .send({ name: '领取流水', seed: false });
     outputSheetId = outputSheet.body.id;
     const outputField = await request(app.getHttpServer())
       .post(`/sheets/${outputSheetId}/fields`)

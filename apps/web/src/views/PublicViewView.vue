@@ -111,54 +111,83 @@ onMounted(() => load());
 <style scoped>
 .public-view-page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: linear-gradient(180deg, #eef2f7 0%, #f5f7fa 180px);
   color: #1f2329;
 }
 .public-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   padding: 14px 22px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.92);
   border-bottom: 1px solid #e5e6eb;
   font-size: 13px;
   color: #646a73;
+  backdrop-filter: blur(8px);
+}
+.public-header strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
 }
 .password-card {
   width: min(420px, 90vw);
-  margin: 80px auto;
-  padding: 26px;
-  border-radius: 12px;
+  margin: 88px auto;
+  padding: 28px 26px;
+  border-radius: 14px;
   background: #fff;
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.1);
   text-align: center;
+  border: 1px solid #eef0f3;
+}
+.password-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.password-card p {
+  margin: 0;
+  color: #8a9099;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .password-card input {
   width: 100%;
-  height: 36px;
-  margin: 14px 0;
-  padding: 0 10px;
+  height: 38px;
+  margin: 16px 0 12px;
+  padding: 0 12px;
   border: 1px solid #d0d3d9;
   border-radius: 8px;
   box-sizing: border-box;
+  font-size: 14px;
+}
+.password-card input:focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
 }
 .view-title {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 12px;
   max-width: 1100px;
-  margin: 24px auto 10px;
+  margin: 28px auto 12px;
   padding: 0 18px;
 }
 .view-title h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 .view-title small {
   color: #8a9099;
+  font-size: 12px;
 }
 .table-wrap {
   max-width: 1100px;
-  margin: 0 auto 40px;
+  margin: 0 auto 48px;
   padding: 0 18px;
   overflow: auto;
 }
@@ -166,26 +195,35 @@ table {
   width: 100%;
   border-collapse: collapse;
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 2px 16px rgba(15, 23, 42, 0.06);
   font-size: 13px;
+  border: 1px solid #eef0f3;
 }
 th,
 td {
-  padding: 10px 12px;
+  padding: 11px 14px;
   border-bottom: 1px solid #f0f1f3;
   text-align: left;
   white-space: nowrap;
 }
 th {
-  background: #fafbfc;
+  background: #f7f8fa;
   color: #646a73;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 12px;
+}
+tbody tr:hover td {
+  background: #fafbfc;
+}
+tbody tr:last-child td {
+  border-bottom: none;
 }
 .empty {
-  padding: 40px;
+  padding: 48px 24px;
   color: #8a9099;
   text-align: center;
+  font-size: 13px;
 }
 </style>

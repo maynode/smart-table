@@ -70,7 +70,7 @@ describe('Excel import/export roundtrip (e2e)', () => {
     const sheet = await http()
       .post(`/bases/${baseId}/sheets`)
       .set(auth())
-      .send({ name })
+      .send({ name, seed: false })
       .expect(201);
     return sheet.body.id as string;
   }

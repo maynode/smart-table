@@ -60,7 +60,7 @@ describe('Grid shell support APIs (e2e)', () => {
     const sheet = await request(app.getHttpServer())
       .post(`/bases/${baseId}/sheets`)
       .set(auth(token))
-      .send({ name: '码库' });
+      .send({ name: '码库', seed: false });
     sheetId = sheet.body.id;
 
     const field = await request(app.getHttpServer())
