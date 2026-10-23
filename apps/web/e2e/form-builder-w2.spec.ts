@@ -27,10 +27,11 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
       data: { name: 'W2 Base' },
     })
   ).json();
+  // 产品模型：收集表单是独立 sheet（名「收集表单」），不再对普通表弹 FormBuilder
   const sheet = await (
     await api.post(`/bases/${base.id}/sheets`, {
       headers,
-      data: { name: '活动报名', seed: false },
+      data: { name: '收集表单', seed: false },
     })
   ).json();
   async function createField(data: Record<string, unknown>) {
@@ -62,17 +63,15 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await page.goto(
     `/workspaces/${workspace.id}/bases/${base.id}?sheet=${sheet.id}`,
   );
-  await page.getByTestId('create-menu-toggle').click();
-  await page.getByTestId('forms-open').click();
   await expect(page.getByTestId('form-builder')).toBeVisible();
+  await expect(page.getByTestId(`form-field-${noteField.id}`)).toBeVisible();
 
   await page.getByTestId('form-name-input').fill('到访登记表');
 
   // Remove and re-add a field to prove visual field management.
   await page.getByTestId(`form-remove-${noteField.id}`).click();
   await expect(page.getByTestId(`form-field-${noteField.id}`)).toHaveCount(0);
-  await page.getByTestId('form-add-field-select').selectOption(noteField.id);
-  await page.getByTestId('form-add-field').click();
+  await page.locator('.available-row', { hasText: '备注' }).click();
   await expect(page.getByTestId(`form-field-${noteField.id}`)).toBeVisible();
 
   // Reorder: move 备注 above 状态, then select it and add a display condition.
@@ -101,8 +100,11 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   });
   await expect(page.locator('.cover-preview')).toBeVisible();
   await page.getByTestId('form-builder-save').click();
-  await expect(page.getByTestId('form-share-url')).toContainText('/fill/');
-  await expect(page.getByTestId('form-share-qr')).toBeVisible();
+  // 嵌入模式分享链接在「分享表单」对话框里
+  await page.getByTestId('form-share-open').click();
+  await expect(page.getByTestId('form-share-url-dialog')).toContainText('/fill/');
+  await expect(page.getByTestId('form-share-qr-dialog')).toBeVisible();
+  await page.getByTestId('form-share-dialog').getByLabel('关闭').click();
 
   await expect
     .poll(async () => {
@@ -149,7 +151,7 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
     })
     .toBeLessThan(3);
 
-  await page.getByRole('button', { name: '预览成功页' }).click();
+  await page.getByRole('button', { name: '预览' }).click();
   await expect(page.getByTestId('form-success-preview')).toContainText(
     'SN-000123',
   );
@@ -171,11 +173,13 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
     .toBe('anyone');
 
   // Public form respects the visual display condition.
-  const shareUrl = await page.getByTestId('form-share-url').textContent();
-  await page.goto(shareUrl!);
+  await page.getByTestId('form-share-open').click();
+  const shareUrl = await page.getByTestId('form-share-url-dialog').textContent();
+  await page.goto(shareUrl!.trim());
   await expect(page.getByRole('heading', { name: '到访登记表' })).toBeVisible();
   await expect(page.locator('[data-field-name="备注"]')).toHaveCount(0);
-  await page.locator('[data-field-name="姓名"] input').fill('张三');
+  // 文本字段公开填写页用 textarea
+  await page.locator('[data-field-name="姓名"] textarea').fill('张三');
   await page.getByTestId('form-select').selectOption('won');
   await expect(page.locator('[data-field-name="备注"]')).toBeVisible();
   await page.locator('[data-field-name="备注"] textarea').fill('已到访');

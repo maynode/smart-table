@@ -119,10 +119,12 @@ test.describe('Canvas grid + enterprise shell', () => {
       })
       .toBe(true);
 
-    // Click a column header to rename the field.
+    // 列头点击打开列菜单 → 编辑字段 → 字段选择器改名
     await page.locator('[data-testid="canvas-grid"]').click({
       position: { x: 120, y: 20 },
     });
+    await expect(page.getByTestId('column-menu')).toBeVisible();
+    await page.getByTestId('column-menu-edit').click();
     await expect(page.locator('[data-testid="field-type-picker"]')).toBeVisible();
     await page.locator('[data-testid="field-name-input"]').fill('序列号改');
     await page.locator('[data-testid="field-name-input"]').press('Enter');
@@ -171,14 +173,13 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('.modal')).toContainText('网格测试员');
     await page.locator('.modal .icon-btn').click();
 
-    // Content permissions lists this base's sheet and exposes the ACL editor.
+    // Content permissions: home lists objects; drill into detail for ACL level.
     await page.locator('[data-testid="permissions-open"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeVisible();
-    await expect(
-      page
-        .locator('[data-testid="permission-object-row"]')
-        .filter({ hasText: '码库' }),
-    ).toBeVisible();
+    await page
+      .locator('[data-testid="permission-object-row"]')
+      .filter({ hasText: '码库' })
+      .click();
     await expect(page.locator('[data-testid="permission-level"]')).toBeVisible();
     await page.locator('[data-testid="permissions-close"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
@@ -204,6 +205,7 @@ test.describe('Canvas grid + enterprise shell', () => {
       .locator('[data-testid="template-card"][data-key="project-tasks"]')
       .locator('[data-testid="template-use"]')
       .click();
+    await page.getByTestId('app-dialog-confirm').click();
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
     await expect(page).toHaveURL(/\/bases\/[0-9a-f-]+/);
 

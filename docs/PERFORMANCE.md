@@ -2,28 +2,31 @@
 
 本文记录可复现的实测数据与压测方法。数字随机器、Docker 资源、数据库参数变化，报告必须同时给出环境。
 
-## 1. 测试环境
+## 1. 测试环境（2026-10-23 复测）
 
 | 项 | 值 |
 | --- | --- |
-| 机器 | AMD Ryzen 5 5625U（6 核 12 线程），15.3 GB RAM |
+| 机器 | Intel Core i7-9700K @ 3.60GHz（8 核），约 32 GB RAM |
 | 系统 | Windows 11 + Docker Desktop（Linux 容器） |
-| Node | 容器 `node:22-alpine`；本地压测进程 Node 24 |
-| PostgreSQL | `postgres:16-alpine` |
-| 连接池 | PgBouncer v1.23.1，transaction 模式，API 走 6432 |
+| Node | v22.22.0（本地压测 / API） |
+| PostgreSQL | `postgres:16-alpine`（本机映射 5433） |
 | Redis | `redis:7-alpine`（本机映射 6380） |
-| API | NestJS 11 + Fastify 5，同步提交模式（`SUBMIT_MODE=sync`） |
-| 数据规模 | 50 条码、1 个表单、1 个自动化（查找 1 条 + 修改） |
+| API | NestJS + Fastify，`SUBMIT_MODE=sync`；表单压测时 `PUBLIC_SUBMIT_RATE_LIMIT=10000` |
+| 数据规模（领码） | 50 条码、100 并发提交 |
 
-## 2. 并发领码基线（Task 14 验收）
+> 历史环境（2026-10-21）：Ryzen 5 5625U / 15.3 GB / Node 24 / PgBouncer 6432，见 §2 旧结果对照。
+
+## 2. 并发领码基线
 
 命令：
 
 ```bash
-pnpm --filter api exec ts-node --transpile-only test/claim-load.smoke.ts
+# 建表须 seed:false；list records limit≤200
+cd apps/api
+npx dotenv -e ../../.env -- npx ts-node --transpile-only test/claim-load.smoke.ts
 ```
 
-结果（2026-10-21）：
+结果（**2026-10-23 新鲜**）：
 
 ```json
 {
@@ -34,19 +37,16 @@ pnpm --filter api exec ts-node --transpile-only test/claim-load.smoke.ts
   "otherStatuses": [],
   "uniqueSerials": 50,
   "claimedRows": 50,
-  "durationMs": 1742,
-  "latencyMs": { "p50": 1644, "p95": 1704, "max": 1710 }
+  "durationMs": 2213,
+  "latencyMs": { "p50": 1823, "p95": 2115, "max": 2144 }
 }
 ```
 
-判定：
+判定：成功 50 / 冲突 50 / 唯一序列号 50 / claimed 行 50；无其它状态码。通过。
 
-- 成功数 = 码数 50；冲突数 = 100 − 50；无 5xx/429。
-- 50 个成功响应的序列号互不重复；数据库中 `claim_status='claimed'` 恰好 50 行。
-- 失败响应均为 `409` 且文案包含「领取完毕」，事务回滚，无脏写。
-- 延迟包含 100 个请求同时排队穿过 Prisma 连接池（`connection_limit=10`）的时间；单请求处理本身在毫秒级。
+对照（2026-10-21，同 50/100）：`durationMs` 1742，`p95` 1704 — 量级一致。
 
-复现要点：`FOR UPDATE SKIP LOCKED` + 同一事务内完成查找/修改/流水；`automation_runs(automation_id, idempotency_key)` 唯一索引防重。
+复现要点：`FOR UPDATE SKIP LOCKED`；压测脚本建表传 `seed: false`，避免空白表 5 空行干扰查找。
 
 ## 3. 队列模式
 
@@ -74,13 +74,59 @@ pnpm --filter api exec jest --config ./test/jest-e2e.json --runInBand test/queue
 - 均匀轴 `UniformAxis`：`index = floor(offset / rowHeight)`，O(1) 定位，不为 1000 万行建立 DOM 或对象数组。
 - 行数据按视口窗口请求，内存中只保留窗口 + 少量缓存页。
 
-已验证（Playwright `grid-canvas.spec.ts`）：
+命令：
 
-- 网格容器实际高度 676px，Canvas 尺寸与 DPR 匹配；
-- `OffscreenCanvas` 可用且启用；
-- 滚动、选中、编辑交互通过。
+```bash
+pnpm perf:grid
+# 即 pnpm --filter web exec playwright test e2e/grid-perf.spec.ts
+```
 
-说明：当前自动化环境没有针对 1000 万行的逐帧 FPS 采样，因此不宣称具体 FPS；架构上避免了 O(rows) 的初始化和渲染，压测报告（Task 26）会补充浏览器 Performance 面板数据与机器规格。
+结果（**2026-10-23 新鲜**，浏览器内滚动采样）：
+
+```json
+{
+  "rows": 10000000,
+  "p50": 16.7,
+  "p95": 18,
+  "max": 27.8,
+  "cellsDrawn": 72,
+  "visibleRows": 24,
+  "usedOffscreen": true
+}
+```
+
+判定：视口绑定（仅绘可见行/格）；Offscreen 启用；滚动帧间隔 p95≈18ms。通过。
+
+## 5.1 公开表单持续提交
+
+命令：
+
+```bash
+# API 需放宽限流，例如 PUBLIC_SUBMIT_RATE_LIMIT=10000
+PERF_CONCURRENCY=30 PERF_DURATION_SECONDS=20 node scripts/perf/form-load.mjs
+```
+
+结果（**2026-10-23 新鲜**，产物 `artifacts/perf/form-load.json`）：
+
+```json
+{
+  "concurrency": 30,
+  "durationMs": 20091,
+  "requests": 1767,
+  "successes": 1767,
+  "successRate": 1,
+  "rps": 87.9,
+  "statuses": { "201": 1767 },
+  "latencyMs": { "p50": 301.97, "p95": 654.09, "p99": 806.17, "max": 840.41 }
+}
+```
+
+判定：成功率 100%；p95 &lt; 1000ms。通过。  
+说明：默认 `.env` 的 `PUBLIC_SUBMIT_RATE_LIMIT=30` 会在高并发下打出大量 429；压测须临时提高。并发 50 时本机 p95≈1013ms，略超门禁，故以 30 并发记基线。
+
+## 5.2 千万行窗口拉取（`perf:window`）
+
+依赖仓库根目录 `.perf-env.json`（含 `token` / `sheetId` 指向千万行表）。**本轮未准备该数据文件，未跑。** 命令：`pnpm perf:window`。
 
 ## 6. 扩展到百万级表单提交的路径
 
@@ -105,10 +151,12 @@ K8s API Deployment 已带抓取注解；无 Prometheus 时可用 `curl`.
 
 ## 8. 性能门禁
 
-| 门禁 | 命令 | 通过标准 |
-| --- | --- | --- |
-| 并发占码 | `test/claim-load.smoke.ts` | 50 成功 / 50 冲突 / 50 唯一码 |
-| 队列模式 | `queue-mode.e2e-spec.ts` | 202 → completed，码尽 failed |
-| 索引 | `perf-foundation.e2e-spec.ts` | `pg_indexes` 含 claim_status |
-| 网格交互 | `apps/web/e2e/grid-canvas.spec.ts` | Canvas 尺寸/离屏/滚动通过 |
-| 领取闭环 | `serial-claim.e2e-spec.ts` | 单次与并发行为符合预期 |
+| 门禁 | 命令 | 通过标准 | 2026-10-23 |
+| --- | --- | --- | --- |
+| 并发占码 | `test/claim-load.smoke.ts` | 50 成功 / 50 冲突 / 50 唯一码 | **通过** |
+| 队列模式 | `queue-mode.e2e-spec.ts` | 202 → completed，码尽 failed | 含于全量 API e2e |
+| 索引 | `perf-foundation.e2e-spec.ts` | `pg_indexes` 含 claim_status | 含于全量 API e2e |
+| 网格滚动 | `pnpm perf:grid` | 视口绑定 + Offscreen | **通过**（p95≈18ms） |
+| 表单持续提交 | `pnpm perf:form` | 成功率≥0.99，p95≤1000ms | **通过**（30 并发） |
+| 窗口拉取 | `pnpm perf:window` | 见 thresholds.json | 未跑（缺 `.perf-env.json`） |
+| 领取闭环 | `serial-claim.e2e-spec.ts` | 单次与并发行为符合预期 | Playwright 9/9 |

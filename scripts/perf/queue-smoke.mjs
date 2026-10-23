@@ -44,7 +44,7 @@ const base = await json(`/workspaces/${workspace.id}/bases`, {
 const sheet = await json(`/bases/${base.id}/sheets`, {
   method: 'POST',
   headers,
-  body: JSON.stringify({ name: '队列表' }),
+  body: JSON.stringify({ name: '队列表', seed: false }),
 });
 const field = await json(`/sheets/${sheet.id}/fields`, {
   method: 'POST',

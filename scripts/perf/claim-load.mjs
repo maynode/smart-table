@@ -57,7 +57,7 @@ const base = await call(`/workspaces/${workspace.id}/bases`, {
 const formSheet = await call(`/bases/${base.id}/sheets`, {
   method: 'POST',
   token,
-  body: JSON.stringify({ name: '收集表单' }),
+  body: JSON.stringify({ name: '收集表单', seed: false }),
 });
 const phone = await call(`/sheets/${formSheet.id}/fields`, {
   method: 'POST',
@@ -67,7 +67,7 @@ const phone = await call(`/sheets/${formSheet.id}/fields`, {
 const codeSheet = await call(`/bases/${base.id}/sheets`, {
   method: 'POST',
   token,
-  body: JSON.stringify({ name: '码库' }),
+  body: JSON.stringify({ name: '码库', seed: false }),
 });
 const serial = await call(`/sheets/${codeSheet.id}/fields`, {
   method: 'POST',
@@ -203,7 +203,7 @@ const claimedRows = [];
 let cursor = null;
 do {
   const page = await call(
-    `/sheets/${codeSheet.id}/records?limit=500${cursor ? `&cursor=${cursor}` : ''}`,
+    `/sheets/${codeSheet.id}/records?limit=200${cursor ? `&cursor=${cursor}` : ''}`,
     { token },
   );
   claimedRows.push(...page.records);

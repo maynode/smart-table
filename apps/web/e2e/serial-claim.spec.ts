@@ -54,7 +54,7 @@ test('share link claims a serial and the admin sees the automation run', async (
   await admin.getByTestId('email-input').fill(seed.demoEmail);
   await admin.getByTestId('password-input').fill(seed.demoPassword);
   await admin.getByTestId('auth-submit').click();
-  await expect(admin).toHaveURL(/\/$/);
+  await expect(admin).toHaveURL(/\/(\?|$)/);
 
   await admin.goto(
     `/workspaces/${seed.workspaceId}/bases/${seed.baseId}`,

@@ -1,6 +1,6 @@
 # 智能表格 — 剩余未完成清单（交接版）
 
-> 更新日期：2026-10-22  
+> 更新日期：2026-10-23  
 > 对照：`docs/智能表格-产品与技术方案.md`、`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
 > 原则：**不以文档勾选代替验证**。本文件只记录「代码状态 + 可复现证据 + 仍缺什么」。
 
@@ -8,10 +8,10 @@
 
 ## 0. 一句话现状
 
-W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine / TITLE / 双向关联 / 公式脏行）已落地。相对企微网页版智能表格：**主能力已对齐**。  
-**P1 体验弱差（2026-10-22）：** 高频屏 IA/chrome 对齐 + NUMBER 指标卡加深已落地。  
-**下一步（§2 P0）：** 交付闭环（全量 e2e / 新鲜压测 / Docker / W6 报告）。  
-**待定（§2 待定表，未排期）：** 多人实时协同 OT/WS；企微登录/通讯录/真企微群；AI BI；`USER_C`；大表 chunk 本地库。
+W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.md`）已落地；相对企微网页版智能表格：**主能力已对齐**。  
+**P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`。  
+**P0 仍缺：** Docker 镜像 rebuild + compose smoke；W6 最终报告；可选 `perf:window`（缺千万行 `.perf-env.json`）。  
+**待定（未排期）：** 多人实时协同 OT/WS；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库。
 
 ---
 
@@ -81,17 +81,17 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 
 > 功能主路径 + P1 体验弱差已对齐企微；**不要再扫一遍造功能**。按顺序做：**P0 交付闭环**。
 
-### P0 交付未闭环（必须做，否则不能宣称完工）
+### P0 交付闭环
 
-| # | 项 | 做什么 | 完成判据 |
-|---|----|--------|----------|
-| 1 | **全量 API e2e 跑绿确认** | `pnpm --filter api test:e2e --runInBand`；若 `wecom-oauth.e2e-spec.ts` 再因示例邮箱时间戳失败，定位隔离/mock 后修到稳定（禁止简单 skip） | 全套绿；失败用例有根因说明 |
-| 2 | **前端回归** | `pnpm --filter web exec playwright test`（含 `grid-perf.spec.ts`）；`vue-tsc --noEmit`；`vitest run` | 全绿；结果摘要写回本文件 §3 |
-| 3 | **新鲜压测报告（Task 26）** | 本机跑 `pnpm perf:claim` / `perf:grid` / `perf:window` / `perf:form` | `docs/PERFORMANCE.md` 含本机信息、命令、原始结果、结论；**禁止沿用旧数字** |
-| 4 | **Docker 镜像与源码一致** | `docker compose build api web claim-worker` → `up -d`；smoke：`/health`、`/metrics`、公开表单提交、自动化运行 | `:8080`（或 compose 对外口）跑的是本轮镜像，不是旧镜像；开发验收仍以 Vite `:5173` + API `:3000` 为准 |
-| 5 | **W6 最终报告** | 变更摘要、验证命令与结果、客观限制、启动步骤 | 单独报告文档落地，并可被交接引用 |
+| # | 项 | 状态 | 说明 |
+|---|----|------|------|
+| 1 | **全量 API e2e** | **已完成（2026-10-23）** | 20/20 套件、47/47；需 Redis `:6380`；建表 `seed: false` |
+| 2 | **前端回归** | **已完成（2026-10-23）** | `vue-tsc`；vitest 9/9；Playwright 9/9（e2e 对齐收集表单 sheet / 列菜单 / 分享对话框 / 模板确认） |
+| 3 | **新鲜压测报告** | **基本完成（2026-10-23）** | `docs/PERFORMANCE.md` 已写本机领码 / grid / form；**仍缺** `perf:window`（无 `.perf-env.json` 千万行表） |
+| 4 | **Docker 镜像与源码一致** | **未做** | 待：`docker compose build api web claim-worker` → `up -d` → smoke（`/health`、`/metrics`、公开表单、自动化）；验收口 `:8080` |
+| 5 | **W6 最终报告** | **未做** | 待单独文档：变更摘要、验证命令与结果、客观限制、启动步骤，可被交接引用 |
 
-**2026-10-23 P0 进度：** 全量 API e2e **20/20 套件、47/47 通过**（需本机 Redis `:6380`；e2e 建表传 `seed: false` 避免空白表 5 空行干扰断言）。`vue-tsc` + web `vitest` 9/9 已复跑。Playwright 全量 / 新鲜 perf / Docker / W6 仍待做。
+**下一 AI 从这里继续：** 只做 P0-4 Docker rebuild + smoke，再写 P0-5 W6 报告；**不要再扫造功能**。`perf:window` 可选（先准备 `.perf-env.json`）。
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 
@@ -146,7 +146,8 @@ W1–W4 功能主路径 + M12 缺口补齐（`recordTimer` / CH ETL / breakLine 
 | `pnpm --filter web exec vue-tsc --noEmit` | **passed（2026-10-23）** |
 | `pnpm --filter web exec vitest run` | **9/9 passed（2026-10-23）** |
 | `pnpm --filter api test:e2e --runInBand` | **20/20 suites、47/47 passed（2026-10-23）**；前置：`docker start smart-table-redis`（`:6380`）；修复：e2e 建表补 `seed: false`；`forms-public` 断言改为公开接口返回全部配置字段 |
-| 全量 `pnpm --filter web exec playwright test` | 进行中 / 待写回 |
+| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-23）**：W1–W4、serial-claim、grid-canvas、grid-perf；e2e 对齐嵌入分享对话框、列头菜单编辑、模板 `app-dialog` 确认、文本字段 textarea |
+| `claim-load.smoke` / `perf:grid` / `perf:form` | **通过（2026-10-23）** — 见 `docs/PERFORMANCE.md`；`perf:window` 缺 `.perf-env.json` |
 | `pnpm --filter shared test` | 18/18 passed（cron parser；历史） |
 | `pnpm --filter api build` | passed (`nest build`；历史) |
 | `charts.e2e-spec.ts`（含 NUMBER） | 含于全量 API e2e |

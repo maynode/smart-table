@@ -94,7 +94,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   const filterDialog = page.getByTestId('filter-editor-dialog');
   await filterDialog.getByTestId('step-filter-field').selectOption(codeStatus.id);
   await filterDialog.getByTestId('step-filter-operator').selectOption('equals');
-  await filterDialog.getByTestId('step-filter-value').fill('unclaimed');
+  // 单选字段用下拉选 choice id，不再是自由文本输入
+  await filterDialog.getByTestId('step-filter-value').selectOption('unclaimed');
   await expect(filterDialog.getByTestId('step-filter-limit')).toHaveValue('1');
   await filterDialog.getByRole('button', { name: '完成' }).click();
 
@@ -108,7 +109,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   const mapping = contentDialog.locator('.mapping-row').first();
   await mapping.locator('select').first().selectOption(codeStatus.id);
   await mapping.locator('select').nth(1).selectOption('literal');
-  await mapping.locator('input').fill('claimed');
+  // 单选字段固定值也是下拉 choice id
+  await mapping.locator('select').nth(2).selectOption('claimed');
   await contentDialog.getByRole('button', { name: '完成' }).click();
 
   // Step 3: send a message with an inserted variable.

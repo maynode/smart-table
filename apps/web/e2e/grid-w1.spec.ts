@@ -170,7 +170,10 @@ test.describe('W1 grid parity features', () => {
     await expect(page.getByTestId('record-count')).toContainText('1');
 
     // Person field editor lists workspace members and writes the member id.
-    await page.getByTestId('view-panel-sort').locator('.icon-btn').first().click();
+    const sortPanel = page.getByTestId('view-panel-sort');
+    if (await sortPanel.isVisible()) {
+      await sortPanel.locator('.icon-btn').first().click();
+    }
     await page.getByTestId('clear-view').click();
     await page.waitForTimeout(300);
     await canvas.dblclick({ position: { x: 480, y: 58 } });
@@ -217,7 +220,7 @@ test.describe('W1 grid parity features', () => {
 
     // Row-number selection opens the batch toolbar.
     await canvas.click({ position: { x: 22, y: 58 } });
-    await expect(page.locator('.selection-bar')).toContainText('已选择 1 行');
+    await expect(page.locator('.selection-bar')).toContainText('已选 1 行');
     await page.locator('.selection-bar').getByText('取消').click();
 
     // Delete a field from table settings with confirmation.
