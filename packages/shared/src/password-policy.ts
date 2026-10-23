@@ -1,16 +1,21 @@
-/** 注册密码：字母 / 数字 / 指定特殊字符，至少两类；≥8；禁止连续 4 位数字或字母。 */
+/** 注册密码：字母 / 数字 / 指定特殊字符，至少两类；8–32 位；禁止连续 4 位数字或字母。 */
 
 export const PASSWORD_SPECIAL_CHARS = '_%.@#&' as const;
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 32;
 
-export const PASSWORD_HINT =
-  '至少 8 位；字母、数字、特殊字符（_%.@#&）至少两类；不可连续 4 位数字或字母；区分大小写';
+export const PASSWORD_HINT = `${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 位；字母、数字、特殊字符（_%.@#&）至少两类；不可连续 4 位数字或字母；区分大小写`;
 
 const SPECIAL_SET = new Set(PASSWORD_SPECIAL_CHARS.split(''));
 
 export function validatePassword(password: string): string | null {
   if (typeof password !== 'string') return '密码无效';
-  if (password.length < 8) return '密码至少 8 位';
-  if (password.length > 128) return '密码过长';
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `密码至少 ${PASSWORD_MIN_LENGTH} 位`;
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return `密码最多 ${PASSWORD_MAX_LENGTH} 位`;
+  }
 
   let hasLetter = false;
   let hasDigit = false;

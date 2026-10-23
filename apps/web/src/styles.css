@@ -223,6 +223,23 @@ html.auth-screen #app {
   pointer-events: none;
 }
 
+.auth-mid-art {
+  justify-content: center;
+  min-height: 100%;
+}
+
+.auth-mid-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 120px;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 10px;
+  user-select: none;
+  pointer-events: none;
+}
+
 .auth-brand {
   display: flex;
   align-items: center;

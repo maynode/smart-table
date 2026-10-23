@@ -110,6 +110,12 @@ export const endpoints = {
       token: null,
     }),
 
+  deleteAccount: (password: string) =>
+    api<{ ok: true }>('/auth/delete-account', {
+      method: 'POST',
+      body: { password },
+    }),
+
   listWorkspaces: () => api<WorkspaceDto[]>('/workspaces'),
 
   createWorkspace: (name: string) =>

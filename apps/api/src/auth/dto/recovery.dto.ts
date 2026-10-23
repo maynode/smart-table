@@ -4,19 +4,25 @@ import {
   MinLength,
   Validate,
 } from 'class-validator';
+import {
+  ACCOUNT_MAX_LENGTH,
+  ACCOUNT_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from 'shared';
 import { AccountPasswordConstraint } from './register.dto';
 
 export class RecoveryQuestionDto {
   @IsString()
-  @MinLength(4)
-  @MaxLength(64)
+  @MinLength(ACCOUNT_MIN_LENGTH)
+  @MaxLength(ACCOUNT_MAX_LENGTH)
   account!: string;
 }
 
 export class RecoveryResetDto {
   @IsString()
-  @MinLength(4)
-  @MaxLength(64)
+  @MinLength(ACCOUNT_MIN_LENGTH)
+  @MaxLength(ACCOUNT_MAX_LENGTH)
   account!: string;
 
   @IsString()
@@ -25,8 +31,8 @@ export class RecoveryResetDto {
   securityAnswer!: string;
 
   @IsString()
-  @MinLength(8)
-  @MaxLength(128)
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @MaxLength(PASSWORD_MAX_LENGTH)
   @Validate(AccountPasswordConstraint)
   password!: string;
 }

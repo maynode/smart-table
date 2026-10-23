@@ -15,7 +15,7 @@ watch(
         const node = inputEl.value;
         if (!node) return;
         node.focus();
-        node.select();
+        if (state.inputType !== 'password') node.select();
       });
     }
   },
@@ -46,7 +46,7 @@ function onKeydown(event: KeyboardEvent): void {
         <header>
           <h3>{{ state.title }}</h3>
         </header>
-        <p v-if="state.mode === 'confirm'" class="app-dialog-message">
+        <p v-if="state.message" class="app-dialog-message">
           {{ state.message }}
         </p>
         <input
@@ -55,7 +55,10 @@ function onKeydown(event: KeyboardEvent): void {
           v-model="state.value"
           class="app-dialog-input"
           data-testid="app-dialog-input"
+          :type="state.inputType"
+          :placeholder="state.placeholder"
           :disabled="state.busy"
+          autocomplete="off"
           @keydown="onKeydown"
         />
         <footer>

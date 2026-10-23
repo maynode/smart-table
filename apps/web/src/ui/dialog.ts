@@ -11,6 +11,8 @@ export interface DialogState {
   confirmLabel: string;
   cancelLabel: string;
   danger: boolean;
+  inputType: 'text' | 'password';
+  placeholder: string;
   value: string;
   busy: boolean;
 }
@@ -27,6 +29,8 @@ const state = reactive<DialogState>({
   confirmLabel: '确定',
   cancelLabel: '取消',
   danger: false,
+  inputType: 'text',
+  placeholder: '',
   value: '',
   busy: false,
 });
@@ -51,6 +55,10 @@ export function promptDialog(
   options?: {
     confirmLabel?: string;
     cancelLabel?: string;
+    message?: string;
+    inputType?: 'text' | 'password';
+    placeholder?: string;
+    danger?: boolean;
     /**
      * 点确定时调用。成功才关弹窗；抛错则保持弹窗不动（由调用方 toast）。
      */
@@ -65,12 +73,14 @@ export function promptDialog(
     promptSubmit = options?.onConfirm ?? null;
     state.mode = 'prompt';
     state.title = title;
-    state.message = '';
+    state.message = options?.message ?? '';
     state.defaultValue = defaultValue;
     state.value = defaultValue;
     state.confirmLabel = options?.confirmLabel ?? '确定';
     state.cancelLabel = options?.cancelLabel ?? '取消';
-    state.danger = false;
+    state.danger = options?.danger ?? false;
+    state.inputType = options?.inputType ?? 'text';
+    state.placeholder = options?.placeholder ?? '';
     state.busy = false;
     state.open = true;
   });
@@ -99,6 +109,8 @@ export function confirmDialog(
     state.confirmLabel = options?.confirmLabel ?? '确定';
     state.cancelLabel = options?.cancelLabel ?? '取消';
     state.danger = options?.danger ?? true;
+    state.inputType = 'text';
+    state.placeholder = '';
     state.busy = false;
     state.open = true;
   });

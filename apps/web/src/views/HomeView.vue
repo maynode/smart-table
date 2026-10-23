@@ -14,6 +14,7 @@ import type {
   TemplateInstantiateResult,
   WorkspaceDto,
 } from '../api/types';
+import authLoginMid from '../assets/auth-login-mid.svg';
 
 const WS_STORAGE_KEY = 'smart-table.currentWorkspaceId';
 
@@ -234,7 +235,7 @@ async function loadBases(): Promise<void> {
 }
 
 async function createWorkspace(): Promise<void> {
-  await promptDialog('新建工作区', '未命名工作区', {
+  await promptDialog('新建工作区', '', {
     confirmLabel: '创建',
     onConfirm: async (raw) => {
       const name = raw.trim();
@@ -340,7 +341,7 @@ function openCreateBaseForm(): void {
   closeMenus();
   baseFormMode.value = 'create';
   baseFormId.value = '';
-  baseFormName.value = '未命名表格';
+  baseFormName.value = '';
   baseFormDescription.value = '';
   baseFormOpen.value = true;
 }
@@ -490,6 +491,32 @@ function signOut(): void {
   void router.push('/login');
 }
 
+async function deleteAccount(): Promise<void> {
+  await promptDialog('注销账号', '', {
+    message: '注销后账号及其拥有的工作区将永久删除，且无法恢复。请输入登录密码确认。',
+    inputType: 'password',
+    placeholder: '请输入登录密码',
+    confirmLabel: '确认注销',
+    danger: true,
+    onConfirm: async (raw) => {
+      const password = raw.trim();
+      if (!password) {
+        toast('请输入密码');
+        throw new Error('empty');
+      }
+      try {
+        await endpoints.deleteAccount(password);
+        toast('账号已注销');
+        auth.signOut();
+        await router.push('/login');
+      } catch (error) {
+        toast(messageOf(error) || '注销失败');
+        throw error;
+      }
+    },
+  });
+}
+
 watch(
   () => route.query.ws,
   (ws) => {
@@ -567,6 +594,13 @@ onUnmounted(() => {
           <span class="avatar">{{ (auth.state.user?.name ?? '?').slice(0, 1) }}</span>
           <span class="user-name">{{ auth.state.user?.name }}</span>
           <button class="btn btn-ghost tiny" @click="signOut">退出</button>
+          <button
+            class="btn btn-ghost tiny danger-text"
+            data-testid="delete-account"
+            @click="deleteAccount"
+          >
+            注销
+          </button>
         </div>
       </div>
     </header>
@@ -621,7 +655,16 @@ onUnmounted(() => {
             </div>
           </li>
           <li v-if="filteredWorkspaces.length === 0" class="hint">
-            {{ workspaces.length ? '无匹配结果' : '点击右上角 + 创建工作区' }}
+            <template v-if="workspaces.length">无匹配结果</template>
+            <button
+              v-else
+              type="button"
+              class="btn btn-primary ws-create-inline"
+              data-testid="workspace-create-inline"
+              @click="createWorkspace"
+            >
+              创建工作区
+            </button>
           </li>
         </ul>
       </aside>
@@ -662,10 +705,10 @@ onUnmounted(() => {
       </Teleport>
 
       <main class="main">
-        <div class="main-head">
+        <div v-if="currentWorkspace" class="main-head">
           <div>
-            <h1>{{ currentWorkspace?.name ?? '选择工作区' }}</h1>
-            <p v-if="currentWorkspace" class="sub">
+            <h1>{{ currentWorkspace.name }}</h1>
+            <p class="sub">
               {{ filteredBases.length }} 个智能表格
               <template v-if="baseQuery.trim()"> · 搜索「{{ baseQuery.trim() }}」</template>
             </p>
@@ -673,9 +716,12 @@ onUnmounted(() => {
         </div>
 
         <div v-if="!currentWorkspaceId" class="empty-panel">
-          <div class="empty-icon">▦</div>
-          <h2>还没有工作区</h2>
-          <p>先创建一个工作区，再在里面新建智能表格。</p>
+          <img
+            class="empty-art"
+            :src="authLoginMid"
+            alt=""
+            draggable="false"
+          />
           <button class="btn btn-primary" @click="createWorkspace">创建工作区</button>
         </div>
 
@@ -686,17 +732,13 @@ onUnmounted(() => {
           class="empty-panel"
           data-testid="base-list"
         >
-          <div class="empty-icon">▦</div>
-          <h2>{{ bases.length ? '没有匹配的表格' : '工作区还是空的' }}</h2>
-          <p>
-            {{
-              bases.length
-                ? '试试换个关键词，或清空搜索。'
-                : '从空白表格开始，或用模板快速搭好表单与自动化。'
-            }}
-          </p>
-          <div v-if="canEditCurrent && !bases.length" class="empty-actions">
-            <button class="btn btn-primary" @click="openCreateBaseForm">新建空白表格</button>
+          <template v-if="bases.length">
+            <div class="empty-icon">▦</div>
+            <h2>没有匹配的表格</h2>
+            <p>试试换个关键词，或清空搜索。</p>
+          </template>
+          <div v-else-if="canEditCurrent" class="empty-actions">
+            <button class="btn btn-primary" @click="openCreateBaseForm">新建表格</button>
             <button class="btn" @click="openTemplate">从模板新建</button>
           </div>
         </div>
@@ -876,17 +918,18 @@ onUnmounted(() => {
           </button>
         </header>
         <label class="field">
-          <span>名称</span>
+          <span>名称<em class="required-star">*</em></span>
           <input
             v-model="baseFormName"
             data-testid="base-form-name"
             maxlength="100"
             placeholder="表格名称"
+            required
             @keyup.enter="submitBaseForm"
           />
         </label>
         <label class="field">
-          <span>描述<span class="optional">（选填）</span></span>
+          <span>描述</span>
           <textarea
             v-model="baseFormDescription"
             data-testid="base-form-description"
@@ -1062,6 +1105,15 @@ onUnmounted(() => {
   height: 28px;
   padding: 0 8px;
   font-size: 12px;
+}
+
+.danger-text {
+  color: #d4380d;
+}
+
+.danger-text:hover:not(:disabled) {
+  color: #a8071a;
+  background: #fff1f0;
 }
 
 .body {
@@ -1259,6 +1311,13 @@ onUnmounted(() => {
   padding: 12px 8px;
   color: var(--text-tertiary);
   font-size: 13px;
+  list-style: none;
+}
+
+.ws-create-inline {
+  width: 100%;
+  height: 34px;
+  font-size: 13px;
 }
 
 .main-hint {
@@ -1430,8 +1489,11 @@ onUnmounted(() => {
 }
 
 .empty-panel {
-  margin-top: 48px;
-  max-width: 420px;
+  margin-top: 28px;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   text-align: left;
 }
 
@@ -1448,16 +1510,31 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
+.empty-art {
+  display: block;
+  width: 256px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 0 16px;
+  border-radius: 8px;
+  user-select: none;
+  pointer-events: none;
+}
+
 .empty-panel h2 {
   font-size: 18px;
   margin: 0 0 8px;
 }
 
 .empty-panel p {
-  margin: 0 0 20px;
+  margin: 0 0 16px;
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.6;
+}
+
+.empty-panel > .btn {
+  align-self: flex-start;
 }
 
 .empty-actions {
@@ -1503,28 +1580,48 @@ onUnmounted(() => {
 .field select,
 .field textarea {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-strong, #d0d3d6);
   border-radius: 8px;
   background: #fff;
-  resize: vertical;
+  color: var(--text, #1f2329);
+  font: inherit;
+  font-size: 14px;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .field input,
 .field select {
   height: 36px;
-  padding-top: 0;
-  padding-bottom: 0;
+  padding: 0 12px;
 }
 
 .field textarea {
-  min-height: 72px;
+  min-height: 80px;
+  padding: 10px 12px;
   line-height: 1.5;
+  resize: none;
 }
 
-.optional {
-  color: var(--text-tertiary);
-  font-weight: 400;
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--brand, #2d8cf0);
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.14);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--text-tertiary, #8f959e);
+}
+
+.required-star {
+  margin-left: 2px;
+  color: #f54a45;
+  font-style: normal;
+  font-weight: 600;
 }
 
 .dialog-actions {

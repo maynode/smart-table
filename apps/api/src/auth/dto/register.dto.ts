@@ -7,7 +7,14 @@ import {
   ValidatorConstraintInterface,
   ValidationArguments,
 } from 'class-validator';
-import { validateAccount, validatePassword } from 'shared';
+import {
+  ACCOUNT_MAX_LENGTH,
+  ACCOUNT_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  validateAccount,
+  validatePassword,
+} from 'shared';
 
 @ValidatorConstraint({ name: 'accountPassword', async: false })
 class AccountPasswordConstraint implements ValidatorConstraintInterface {
@@ -43,14 +50,14 @@ export { AccountPasswordConstraint };
 
 export class RegisterDto {
   @IsString()
-  @MinLength(4)
-  @MaxLength(64)
+  @MinLength(ACCOUNT_MIN_LENGTH)
+  @MaxLength(ACCOUNT_MAX_LENGTH)
   @Validate(LoginAccountConstraint)
   account!: string;
 
   @IsString()
-  @MinLength(8)
-  @MaxLength(128)
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @MaxLength(PASSWORD_MAX_LENGTH)
   @Validate(AccountPasswordConstraint)
   password!: string;
 

@@ -3,7 +3,11 @@ import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   ACCOUNT_HINT,
+  ACCOUNT_MAX_LENGTH,
+  ACCOUNT_MIN_LENGTH,
   PASSWORD_HINT,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
   SECURITY_QUESTION_PRESETS,
   validateAccount,
   validatePassword,
@@ -13,6 +17,7 @@ import {
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { auth } from '../stores/auth';
+import authLoginMid from '../assets/auth-login-mid.svg';
 
 type Mode = 'login' | 'register' | 'recover';
 type RecoverStep = 'account' | 'reset';
@@ -257,8 +262,8 @@ function openRecover(): void {
             v-model="account"
             data-testid="account-input"
             required
-            minlength="4"
-            maxlength="64"
+            :minlength="ACCOUNT_MIN_LENGTH"
+            :maxlength="ACCOUNT_MAX_LENGTH"
             autocomplete="username"
             placeholder="请输入账号"
             :disabled="mode === 'recover' && recoverStep === 'reset'"
@@ -284,8 +289,8 @@ function openRecover(): void {
             type="password"
             data-testid="password-input"
             required
-            minlength="8"
-            maxlength="128"
+            :minlength="PASSWORD_MIN_LENGTH"
+            :maxlength="PASSWORD_MAX_LENGTH"
             autocomplete="current-password"
             :placeholder="mode === 'register' ? '设置登录密码' : '请输入密码'"
           />
@@ -295,6 +300,18 @@ function openRecover(): void {
           v-if="mode === 'login' || mode === 'register'"
           class="auth-mid-stack"
         >
+          <div
+            class="auth-mid-panel auth-mid-art"
+            :class="{ active: mode === 'login' }"
+            :aria-hidden="mode !== 'login'"
+          >
+            <img
+              class="auth-mid-image"
+              :src="authLoginMid"
+              alt=""
+              draggable="false"
+            />
+          </div>
           <div
             class="auth-mid-panel"
             :class="{ active: mode === 'register' }"
@@ -403,8 +420,8 @@ function openRecover(): void {
               type="password"
               data-testid="recovery-password"
               required
-              minlength="8"
-              maxlength="128"
+              :minlength="PASSWORD_MIN_LENGTH"
+              :maxlength="PASSWORD_MAX_LENGTH"
               placeholder="设置新密码"
             />
           </label>
@@ -415,8 +432,8 @@ function openRecover(): void {
               type="password"
               data-testid="recovery-password-confirm"
               required
-              minlength="8"
-              maxlength="128"
+              :minlength="PASSWORD_MIN_LENGTH"
+              :maxlength="PASSWORD_MAX_LENGTH"
               placeholder="再次输入新密码"
             />
           </label>

@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthService, PublicUser } from './auth.service';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoveryQuestionDto, RecoveryResetDto } from './dto/recovery.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -60,5 +61,15 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: JwtPayload): Promise<PublicUser> {
     return this.authService.getUser(user.sub);
+  }
+
+  @Post('delete-account')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  deleteAccount(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: DeleteAccountDto,
+  ): Promise<{ ok: true }> {
+    return this.authService.deleteAccount(user.sub, dto.password);
   }
 }

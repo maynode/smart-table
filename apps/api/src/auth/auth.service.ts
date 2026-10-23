@@ -163,6 +163,40 @@ export class AuthService {
     return toPublicUser(user);
   }
 
+  /** 校验密码后注销账号；其作为所有者的工作区一并删除。 */
+  async deleteAccount(
+    userId: string,
+    password: string,
+  ): Promise<{ ok: true }> {
+    if (typeof password !== 'string' || !password) {
+      throw new BadRequestException('请输入密码');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+    const valid = await verifyPassword(user.passwordHash, password);
+    if (!valid) {
+      // 用 400 而非 401，避免前端把「密码错误」当成登录失效清会话
+      throw new BadRequestException('密码错误');
+    }
+
+    const owned = await this.prisma.workspaceMember.findMany({
+      where: { userId, role: 'owner' },
+      select: { workspaceId: true },
+    });
+    const ownedIds = owned.map((item) => item.workspaceId);
+
+    await this.prisma.$transaction(async (tx) => {
+      if (ownedIds.length > 0) {
+        await tx.workspace.deleteMany({ where: { id: { in: ownedIds } } });
+      }
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    return { ok: true };
+  }
+
   async issueForUser(user: User): Promise<AuthResult> {
     return this.issueToken(user);
   }

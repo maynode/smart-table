@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { validateAccount } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { MemberDto } from '../api/types';
 import { confirmDialog } from '../ui/dialog';
+
+type AssignableRole = 'admin' | 'editor' | 'viewer';
+
+const ROLE_OPTIONS: Array<{
+  value: AssignableRole;
+  label: string;
+  hint: string;
+}> = [
+  { value: 'editor', label: '可编辑', hint: '可新建和编辑表格与记录' },
+  { value: 'viewer', label: '只读', hint: '只能查看，不能改内容' },
+  { value: 'admin', label: '管理员', hint: '可管理成员与工作区设置' },
+];
 
 const props = defineProps<{ workspaceId: string }>();
 const emit = defineEmits<{
@@ -14,13 +26,84 @@ const emit = defineEmits<{
 
 const members = ref<MemberDto[]>([]);
 const account = ref('');
-const role = ref<'editor' | 'viewer' | 'admin'>('editor');
+const role = ref<AssignableRole>('editor');
 const loading = ref(false);
 const inviting = ref(false);
 const error = ref('');
+const openMenu = ref<'invite' | string | null>(null);
+const menuPos = ref<{ top: number; left: number } | null>(null);
+
+const menuMember = computed(() =>
+  openMenu.value && openMenu.value !== 'invite'
+    ? members.value.find((item) => item.userId === openMenu.value) ?? null
+    : null,
+);
 
 function messageOf(value: unknown): string {
   return value instanceof ApiError ? value.message : '网络错误，请稍后重试';
+}
+
+function roleLabel(value: string): string {
+  return (
+    {
+      owner: '所有者',
+      admin: '管理员',
+      editor: '可编辑',
+      viewer: '只读',
+    }[value] ?? value
+  );
+}
+
+function closeMenu(): void {
+  openMenu.value = null;
+  menuPos.value = null;
+}
+
+function placeMenu(anchor: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect();
+  const menuWidth = 220;
+  const menuHeight = 168;
+  const gap = 6;
+  let left = rect.left;
+  let top = rect.bottom + gap;
+  if (left + menuWidth > window.innerWidth - 8) {
+    left = Math.max(8, rect.right - menuWidth);
+  }
+  if (top + menuHeight > window.innerHeight - 8) {
+    top = Math.max(8, rect.top - menuHeight - gap);
+  }
+  menuPos.value = { top, left };
+}
+
+function toggleMenu(id: 'invite' | string, event: Event): void {
+  event.stopPropagation();
+  if (openMenu.value === id) {
+    closeMenu();
+    return;
+  }
+  openMenu.value = id;
+  placeMenu(event.currentTarget as HTMLElement);
+}
+
+function pickInviteRole(next: AssignableRole): void {
+  role.value = next;
+  closeMenu();
+}
+
+async function pickMemberRole(
+  member: MemberDto,
+  next: AssignableRole,
+): Promise<void> {
+  closeMenu();
+  await changeRole(member, next);
+}
+
+function onDocumentClick(): void {
+  closeMenu();
+}
+
+function onWindowChange(): void {
+  closeMenu();
 }
 
 async function load(): Promise<void> {
@@ -67,7 +150,7 @@ async function invite(): Promise<void> {
 
 async function changeRole(
   member: MemberDto,
-  next: 'owner' | 'admin' | 'editor' | 'viewer',
+  next: AssignableRole,
 ): Promise<void> {
   if (next === member.role) return;
   try {
@@ -103,26 +186,18 @@ async function remove(member: MemberDto): Promise<void> {
   }
 }
 
-function onRoleChange(member: MemberDto, event: Event): void {
-  const value = (event.target as HTMLSelectElement).value as
-    | 'admin'
-    | 'editor'
-    | 'viewer';
-  void changeRole(member, value);
-}
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick);
+  window.addEventListener('resize', onWindowChange);
+  window.addEventListener('scroll', onWindowChange, true);
+  void load();
+});
 
-function roleLabel(value: string): string {
-  return (
-    {
-      owner: '所有者',
-      admin: '管理员',
-      editor: '可编辑',
-      viewer: '只读',
-    }[value] ?? value
-  );
-}
-
-onMounted(load);
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick);
+  window.removeEventListener('resize', onWindowChange);
+  window.removeEventListener('scroll', onWindowChange, true);
+});
 </script>
 
 <template>
@@ -141,11 +216,18 @@ onMounted(load);
         placeholder="输入已注册成员的账号"
         data-testid="invite-account"
       />
-      <select v-model="role" data-testid="invite-role">
-        <option value="editor">可编辑</option>
-        <option value="viewer">只读</option>
-        <option value="admin">管理员</option>
-      </select>
+      <div class="role-select" @click.stop>
+        <button
+          type="button"
+          class="role-trigger"
+          data-testid="invite-role"
+          :aria-expanded="openMenu === 'invite'"
+          @click="toggleMenu('invite', $event)"
+        >
+          <span>{{ roleLabel(role) }}</span>
+          <span class="role-caret" :class="{ open: openMenu === 'invite' }" />
+        </button>
+      </div>
       <button
         class="btn btn-primary"
         type="submit"
@@ -164,16 +246,21 @@ onMounted(load);
           <strong>{{ member.name }}</strong>
           <small>{{ member.account }}</small>
         </span>
-        <select
-          v-if="member.role !== 'owner'"
-          :value="member.role"
-          :aria-label="`${member.name} 的角色`"
-          @change="onRoleChange(member, $event)"
-        >
-          <option value="admin">管理员</option>
-          <option value="editor">可编辑</option>
-          <option value="viewer">只读</option>
-        </select>
+        <div v-if="member.role !== 'owner'" class="role-select compact" @click.stop>
+          <button
+            type="button"
+            class="role-trigger"
+            :aria-label="`${member.name} 的角色`"
+            :aria-expanded="openMenu === member.userId"
+            @click="toggleMenu(member.userId, $event)"
+          >
+            <span>{{ roleLabel(member.role) }}</span>
+            <span
+              class="role-caret"
+              :class="{ open: openMenu === member.userId }"
+            />
+          </button>
+        </div>
         <span v-else class="role-badge">{{ roleLabel(member.role) }}</span>
         <button
           v-if="member.role !== 'owner'"
@@ -184,18 +271,53 @@ onMounted(load);
           ×
         </button>
       </li>
+      <li v-if="loading" class="muted-row">加载中…</li>
+      <li v-else-if="members.length === 0 && !error" class="muted-row">
+        暂无成员。
+      </li>
     </ul>
-    <p v-if="loading" class="muted">加载中…</p>
-    <p v-else-if="members.length === 0 && !error" class="muted">暂无成员。</p>
+
+    <Teleport to="body">
+      <ul
+        v-if="openMenu && menuPos"
+        class="role-menu-fixed"
+        data-testid="invite-role-menu"
+        :style="{ top: `${menuPos.top}px`, left: `${menuPos.left}px` }"
+        @click.stop
+      >
+        <li v-for="opt in ROLE_OPTIONS" :key="opt.value">
+          <button
+            type="button"
+            class="role-option"
+            :class="{
+              active:
+                openMenu === 'invite'
+                  ? opt.value === role
+                  : opt.value === menuMember?.role,
+            }"
+            @click="
+              openMenu === 'invite'
+                ? pickInviteRole(opt.value)
+                : menuMember && pickMemberRole(menuMember, opt.value)
+            "
+          >
+            <strong>{{ opt.label }}</strong>
+            <small>{{ opt.hint }}</small>
+          </button>
+        </li>
+      </ul>
+    </Teleport>
   </section>
 </template>
 
 <style scoped>
 .members-panel {
   width: min(620px, 92vw);
-  max-height: 80vh;
-  overflow: auto;
-  padding: 20px 22px 22px;
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px 22px 16px;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 24px 72px rgba(15, 23, 42, 0.22);
@@ -205,6 +327,7 @@ onMounted(load);
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  flex: none;
   padding-bottom: 4px;
 }
 .members-head h3 {
@@ -222,6 +345,7 @@ onMounted(load);
 .invite-form {
   display: flex;
   gap: 8px;
+  flex: none;
   margin: 16px 0 4px;
   padding: 12px;
   background: #f7f8fa;
@@ -230,36 +354,87 @@ onMounted(load);
 }
 .invite-form input {
   flex: 1;
+  min-width: 0;
   height: 34px;
   padding: 0 10px;
   border: 1px solid #d0d3d9;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #fff;
   font-size: 13px;
 }
-.invite-form input:focus,
-.invite-form select:focus {
+.invite-form input:focus {
   outline: none;
   border-color: #3370ff;
   box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
 }
-.invite-form select {
-  height: 34px;
-  border: 1px solid #d0d3d9;
-  border-radius: 7px;
-  background: #fff;
-  font-size: 13px;
-  padding: 0 8px;
-}
 .invite-error {
   margin: 8px 0 0;
+  flex: none;
   color: #d92d20;
   font-size: 12px;
 }
+
+.role-select {
+  position: relative;
+  flex: none;
+  width: 108px;
+}
+.role-select.compact {
+  width: 96px;
+}
+.role-trigger {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text, #1f2329);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.role-select.compact .role-trigger {
+  height: 30px;
+  font-size: 12px;
+  padding: 0 8px;
+}
+.role-trigger:hover {
+  border-color: #b7bec7;
+}
+.role-trigger:focus,
+.role-trigger[aria-expanded='true'] {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
+}
+.role-caret {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 1.5px solid #8f959e;
+  border-bottom: 1.5px solid #8f959e;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.14s ease;
+}
+.role-caret.open {
+  transform: rotate(-135deg) translateY(-1px);
+}
+
 .member-list {
   list-style: none;
-  margin: 14px 0 0;
+  margin: 12px 0 0;
   padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .member-list li {
   display: flex;
@@ -268,11 +443,16 @@ onMounted(load);
   min-height: 54px;
   padding: 6px 8px;
   border-radius: 8px;
-  border-bottom: 1px solid transparent;
   transition: background 0.12s ease;
 }
 .member-list li:hover {
   background: #f7f8fa;
+}
+.muted-row {
+  color: var(--text-tertiary, #8f959e);
+  font-size: 13px;
+  min-height: auto !important;
+  padding: 12px 8px !important;
 }
 .avatar {
   width: 32px;
@@ -309,14 +489,6 @@ onMounted(load);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.member-list select {
-  height: 30px;
-  border: 1px solid #d0d3d9;
-  border-radius: 6px;
-  background: #fff;
-  font-size: 12px;
-  padding: 0 6px;
-}
 .role-badge {
   padding: 3px 10px;
   border-radius: 6px;
@@ -332,9 +504,51 @@ onMounted(load);
 .member-list li:hover .icon-btn.danger {
   opacity: 1;
 }
-.muted {
-  margin: 12px 4px 0;
-  color: var(--text-tertiary, #8f959e);
+</style>
+
+<style>
+.role-menu-fixed {
+  position: fixed;
+  z-index: 3200;
+  width: 220px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(31, 35, 41, 0.14);
+}
+.role-menu-fixed .role-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.role-menu-fixed .role-option strong {
   font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+}
+.role-menu-fixed .role-option small {
+  font-size: 12px;
+  color: #8f959e;
+  line-height: 1.35;
+}
+.role-menu-fixed .role-option:hover {
+  background: #f5f6f8;
+}
+.role-menu-fixed .role-option.active {
+  background: #e8f3ff;
+}
+.role-menu-fixed .role-option.active strong {
+  color: #1a6dcc;
 }
 </style>
