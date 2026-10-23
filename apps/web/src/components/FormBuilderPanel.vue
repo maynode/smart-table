@@ -780,6 +780,14 @@ async function copyShareUrl(): Promise<void> {
   toast(ok ? '分享链接已复制' : '复制失败，请手动选中链接复制');
 }
 
+const successVariables = computed(() => {
+  const names = items.value
+    .map((item) => fieldName(item.fieldId))
+    .filter((name) => Boolean(name.trim()));
+  const extras = ['序列号'];
+  return [...new Set([...extras, ...names])];
+});
+
 function insertVariable(variable: string): void {
   template.value = `${template.value}{{${variable}}}`;
 }
@@ -904,58 +912,74 @@ onMounted(load);
 
       <div v-if="previewTab === 'design'" class="builder-layout">
         <aside class="available-pane">
-          <div class="field-heading">
-            <span>可添加字段</span>
+          <section class="builder-section">
+            <div class="field-heading">
+              <span class="section-title">可添加字段</span>
+              <span v-if="availableFields.length" class="section-count">{{ availableFields.length }}</span>
+            </div>
+            <div v-if="availableFields.length === 0" class="available-empty">
+              <p class="empty-state-title">没有可添加的字段</p>
+              <p class="empty-state-hint">工作表字段都已加入表单，也可新建字段。</p>
+            </div>
+            <div v-else class="available-list">
+              <button
+                v-for="field in availableFields"
+                :key="field.id"
+                type="button"
+                class="available-row"
+                :title="`添加「${field.name}」`"
+                @click="addAvailableField(field.id)"
+              >
+                <span class="field-icon">{{ fieldTypeIcon(field.type) }}</span>
+                <span class="available-name">{{ field.name }}</span>
+                <span class="available-add">添加</span>
+              </button>
+            </div>
             <button
-              v-if="items.length"
-              class="nl-link"
+              class="add-field-to-form"
               type="button"
-              @click="removeAllFields"
+              data-testid="form-add-field"
+              @click="openCreateFieldPicker"
             >
-              全部移出
+              <span class="add-field-plus">+</span>
+              添加新字段到表单
             </button>
-          </div>
-          <div v-if="availableFields.length === 0" class="available-empty">
-            所有字段都已添加至表单
-          </div>
-          <button
-            v-for="field in availableFields"
-            :key="field.id"
-            type="button"
-            class="available-row"
-            @click="addAvailableField(field.id)"
-          >
-            <span class="field-icon">{{ fieldTypeIcon(field.type) }}</span>
-            {{ field.name }}
-          </button>
-          <button
-            class="add-field-to-form"
-            type="button"
-            data-testid="form-add-field"
-            @click="openCreateFieldPicker"
-          >
-            <span class="add-field-plus">+</span>
-            添加新字段到表单
-            <span class="add-field-chevron">›</span>
-          </button>
+          </section>
 
-          <div class="builder-fields" data-testid="form-fields">
-            <div
-              v-for="(item, index) in items"
-              :key="item.fieldId"
-              class="field-row"
-              :class="fieldRowClass(item.fieldId)"
-              :data-testid="`form-field-${item.fieldId}`"
-              @click="selectedFieldId = item.fieldId"
-            >
-              <div class="field-row-main">
-                <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
-                <div class="field-meta">
-                  <span class="field-name" :title="fieldName(item.fieldId)">{{ fieldName(item.fieldId) }}</span>
-                  <span
-                    v-if="relationHint(item.fieldId)"
-                    class="dep-relation-hint"
-                  >{{ relationHint(item.fieldId) }}</span>
+          <section class="builder-section">
+            <div class="field-heading">
+              <span class="section-title">表单字段</span>
+              <button
+                v-if="items.length"
+                class="nl-link"
+                type="button"
+                @click="removeAllFields"
+              >
+                全部移出
+              </button>
+            </div>
+            <div v-if="items.length === 0" class="available-empty">
+              <p class="empty-state-title">表单还是空的</p>
+              <p class="empty-state-hint">从上方点选字段加入，或新建字段。</p>
+            </div>
+            <div v-else class="builder-fields" data-testid="form-fields">
+              <div
+                v-for="(item, index) in items"
+                :key="item.fieldId"
+                class="field-row"
+                :class="fieldRowClass(item.fieldId)"
+                :data-testid="`form-field-${item.fieldId}`"
+                @click="selectedFieldId = item.fieldId"
+              >
+                <div class="field-row-main">
+                  <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
+                  <div class="field-meta">
+                    <span class="field-name" :title="fieldName(item.fieldId)">{{ fieldName(item.fieldId) }}</span>
+                    <span
+                      v-if="relationHint(item.fieldId)"
+                      class="dep-relation-hint"
+                    >{{ relationHint(item.fieldId) }}</span>
+                  </div>
                 </div>
                 <div class="field-row-actions" @click.stop>
                   <label class="inline-check">
@@ -966,47 +990,60 @@ onMounted(load);
                     />
                     必填
                   </label>
-                  <button class="icon-btn" title="上移" :disabled="index === 0" @click="move(index, -1)">↑</button>
-                  <button
-                    class="icon-btn"
-                    title="下移"
-                    :disabled="index === items.length - 1"
-                    @click="move(index, 1)"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    class="icon-btn danger"
-                    title="从表单移除"
-                    :data-testid="`form-remove-${item.fieldId}`"
-                    @click="removeItem(index)"
-                  >
-                    ×
-                  </button>
+                  <div class="field-row-tools">
+                    <button
+                      class="icon-btn"
+                      type="button"
+                      title="上移"
+                      aria-label="上移"
+                      :disabled="index === 0"
+                      @click="move(index, -1)"
+                    >↑</button>
+                    <button
+                      class="icon-btn"
+                      type="button"
+                      title="下移"
+                      aria-label="下移"
+                      :disabled="index === items.length - 1"
+                      @click="move(index, 1)"
+                    >↓</button>
+                    <button
+                      class="icon-btn danger"
+                      type="button"
+                      title="从表单移除"
+                      aria-label="从表单移除"
+                      :data-testid="`form-remove-${item.fieldId}`"
+                      @click="removeItem(index)"
+                    >×</button>
+                  </div>
+                </div>
+                <div
+                  v-if="dependencyTags(item.fieldId).length"
+                  class="dep-tags"
+                  :data-testid="`form-dep-tags-${item.fieldId}`"
+                >
+                  <span
+                    v-for="(tag, tagIndex) in dependencyTags(item.fieldId)"
+                    :key="`${tag.kind}-${tagIndex}`"
+                    class="dep-tag"
+                    :class="tag.kind === 'out' ? 'dep-tag-out' : 'dep-tag-in'"
+                    :title="tag.title"
+                  >{{ tag.text }}</span>
                 </div>
               </div>
-              <div
-                v-if="dependencyTags(item.fieldId).length"
-                class="dep-tags"
-                :data-testid="`form-dep-tags-${item.fieldId}`"
-              >
-                <span
-                  v-for="(tag, tagIndex) in dependencyTags(item.fieldId)"
-                  :key="`${tag.kind}-${tagIndex}`"
-                  class="dep-tag"
-                  :class="tag.kind === 'out' ? 'dep-tag-out' : 'dep-tag-in'"
-                  :title="tag.title"
-                >{{ tag.text }}</span>
-              </div>
             </div>
-          </div>
+          </section>
 
-          <section v-if="selectedConfig" class="field-settings" data-testid="form-field-settings">
-            <header>
-              <div class="field-settings-title">
-                <strong>「{{ fieldName(selectedConfig.fieldId) }}」的显示条件</strong>
-                <p class="setting-hint">可组合「且 / 或」，并嵌套条件组</p>
-              </div>
+          <section
+            v-if="selectedConfig"
+            class="builder-section field-settings"
+            data-testid="form-field-settings"
+          >
+            <header class="field-settings-head">
+              <strong class="section-title">显示条件</strong>
+              <p class="setting-hint">
+                「{{ fieldName(selectedConfig.fieldId) }}」何时显示；可组合且/或并嵌套条件组
+              </p>
             </header>
             <DisplayRuleEditor
               :model-value="ensureDisplayRule(selectedConfig)"
@@ -1016,28 +1053,28 @@ onMounted(load);
             />
           </section>
 
-          <section class="fill-settings" data-testid="form-fill-settings">
+          <section class="builder-section fill-settings" data-testid="form-fill-settings">
             <div class="field-heading">
-              <span>填写设置</span>
+              <span class="section-title">填写设置</span>
             </div>
             <label class="builder-inline">
-              填写截止时间
+              <span class="builder-label">填写截止时间</span>
               <input v-model="expiresAtInput" type="date" data-testid="form-expires-at" />
             </label>
             <p class="setting-hint">到期后公开链接不可再提交；留空表示不限期。</p>
             <label class="builder-inline">
-              谁可以填写
+              <span class="builder-label">谁可以填写</span>
               <select v-model="audience" data-testid="form-audience">
                 <option value="anyone">企业内、外所有成员</option>
                 <option value="workspace">仅工作区成员</option>
               </select>
             </label>
-            <label class="inline-check">
+            <label class="inline-check setting-check">
               <input v-model="shareEnabled" type="checkbox" data-testid="form-share-enabled" />
               启用表单链接
             </label>
             <template v-if="formHasPhoneField">
-              <label class="inline-check">
+              <label class="inline-check setting-check">
                 <input
                   v-model="rejectDuplicatePhone"
                   type="checkbox"
@@ -1051,24 +1088,42 @@ onMounted(load);
             </template>
           </section>
 
-          <template v-if="!embedded">
-            <label class="builder-field">
-              <span>成功页模板</span>
-              <textarea v-model="template" data-testid="form-template-input" rows="4"></textarea>
-            </label>
-            <div class="builder-actions">
-              <button class="btn" @click="previewSuccess" :disabled="saving">预览成功页</button>
+          <section class="builder-section success-settings">
+            <div class="field-heading">
+              <span class="section-title">成功页</span>
               <button
-                class="btn btn-primary"
-                data-testid="form-builder-save"
-                :disabled="saving || uploadingCover || !sheet"
-                @click="save()"
+                class="nl-link"
+                type="button"
+                :disabled="saving"
+                @click="previewSuccess"
               >
-                {{ saving ? '保存中…' : '保存表单' }}
+                预览
               </button>
             </div>
-          </template>
-          <div v-else class="builder-actions embedded-save">
+            <p class="setting-hint">提交后展示；点击下方标签可插入字段变量。</p>
+            <div class="variable-actions">
+              <button
+                v-for="name in successVariables"
+                :key="name"
+                class="var-chip"
+                type="button"
+                @click="insertVariable(name)"
+              >
+                {{ name }}
+              </button>
+            </div>
+            <label class="builder-field">
+              <span class="sr-only">成功页 HTML 模板</span>
+              <textarea
+                v-model="template"
+                data-testid="form-template-input"
+                rows="5"
+                placeholder="例如：&lt;h2&gt;已提交&lt;/h2&gt;&lt;p&gt;序列号 {{序列号}}&lt;/p&gt;"
+              />
+            </label>
+          </section>
+
+          <div class="builder-actions" :class="{ 'embedded-save': embedded }">
             <button
               class="btn btn-primary"
               data-testid="form-builder-save"
@@ -1089,7 +1144,10 @@ onMounted(load);
               @click="coverInput?.click()"
             >
               <img v-if="coverUrl" :src="coverUrl" alt="封面" class="cover-preview" />
-              <span v-else>{{ uploadingCover ? '上传中…' : '添加封面' }}</span>
+              <span v-else class="cover-placeholder">
+                <span class="cover-placeholder-title">{{ uploadingCover ? '上传中…' : '添加封面' }}</span>
+                <span v-if="!uploadingCover" class="cover-placeholder-hint">建议宽图，展示在填写页顶部</span>
+              </span>
             </button>
             <input
               v-model="name"
@@ -1149,7 +1207,7 @@ onMounted(load);
                   :title="tag.title"
                 >{{ tag.text }}</span>
               </div>
-              <div class="canvas-field-input">待填写人完成</div>
+              <div class="canvas-field-input" aria-hidden="true">填写人将在此作答</div>
               <div
                 v-if="selectedFieldId === item.config.fieldId"
                 class="canvas-toolbar"
@@ -1233,41 +1291,55 @@ onMounted(load);
           </div>
           <button class="preview-submit" type="button" disabled>提交</button>
         </div>
-        <section v-if="!embedded" class="success-preview">
-          <h4>成功页预览</h4>
+        <section class="success-preview">
+          <header class="success-preview-head">
+            <h4>成功页预览</h4>
+            <button class="btn small" type="button" @click="previewSuccess">刷新预览</button>
+          </header>
           <div
             class="success-html"
             data-testid="form-success-preview"
-            v-html="successPreviewHtml || '<p class=muted>点击「预览成功页」查看插值结果。</p>'"
+            v-html="
+              successPreviewHtml ||
+              '<p class=&quot;muted&quot;>点左侧「预览」或上方「刷新预览」，用示例数据看插值结果。</p>'
+            "
           ></div>
-          <button class="btn" @click="previewSuccess">预览成功页</button>
         </section>
       </div>
 
-      <!-- 嵌入主区时分享走顶栏「分享表单」；底部大二维码会把填写区挤成 0 高 -->
+      <!-- 非嵌入：底部分享条；嵌入模式用顶栏「分享表单」对话框 -->
       <section v-if="form && !embedded" class="share-box">
-        <div>
-          <span class="muted small-text">分享链接</span>
-          <p class="share-url" data-testid="form-share-url">{{ shareUrl }}</p>
+        <div class="share-box-main">
+          <strong class="share-box-title">分享链接</strong>
+          <p class="share-url" data-testid="form-share-url">{{ shareUrl || '保存表单后生成链接' }}</p>
           <div class="share-actions">
-            <button class="btn small" @click="copyShareUrl">复制链接</button>
-            <a class="btn small" :href="shareUrl" target="_blank" rel="noreferrer">打开填写页</a>
+            <button class="btn small" type="button" @click="copyShareUrl">复制链接</button>
+            <a
+              v-if="shareUrl"
+              class="btn small"
+              :href="shareUrl"
+              target="_blank"
+              rel="noreferrer"
+            >打开填写页</a>
           </div>
-          <p class="muted tiny" data-testid="form-share-status">
-            {{ form.share.enabled ? '表单链接已启用' : '表单链接已关闭' }} ·
+          <p class="share-status" data-testid="form-share-status">
+            {{ form.share.enabled ? '链接已启用' : '链接已关闭' }} ·
             {{ form.share.audience === 'workspace' ? '仅工作区成员' : '企业内、外所有成员' }}
             <template v-if="form.share.expiresAt">
               · 截止 {{ new Date(form.share.expiresAt).toLocaleDateString('zh-CN') }}
             </template>
           </p>
         </div>
-        <img
-          v-if="form.share.qrCodeDataUrl"
-          :src="form.share.qrCodeDataUrl"
-          class="share-qr"
-          data-testid="form-share-qr"
-          alt="表单二维码"
-        />
+        <div class="share-box-qr">
+          <img
+            v-if="form.share.qrCodeDataUrl"
+            :src="form.share.qrCodeDataUrl"
+            class="share-qr"
+            data-testid="form-share-qr"
+            alt="表单二维码"
+          />
+          <p v-else class="share-qr-empty">保存并启用链接后显示二维码</p>
+        </div>
       </section>
 
       <div
@@ -1279,9 +1351,14 @@ onMounted(load);
         <div class="share-dialog">
           <header>
             <h4>分享表单</h4>
-            <button class="icon-btn" type="button" @click="shareDialogOpen = false">×</button>
+            <button
+              class="icon-btn"
+              type="button"
+              aria-label="关闭"
+              @click="shareDialogOpen = false"
+            >×</button>
           </header>
-          <p class="muted tiny">
+          <p class="setting-hint">
             成员可通过链接直接添加记录。截止时间、填写范围等请在左侧「填写设置」修改。
           </p>
           <p
@@ -1291,34 +1368,41 @@ onMounted(load);
           >
             表单链接未启用，请先在左侧打开「启用表单链接」并保存。
           </p>
-          <p v-if="shareUrl" class="share-url" data-testid="form-share-url-dialog">{{ shareUrl }}</p>
+          <label class="builder-field">
+            <span class="builder-label">填写链接</span>
+            <p
+              class="share-url share-url-box"
+              data-testid="form-share-url-dialog"
+            >{{ shareUrl || '保存表单后生成' }}</p>
+          </label>
           <div class="share-invite">
             <button
-              class="btn"
+              class="btn btn-primary"
               type="button"
               :disabled="!shareEnabled || !shareUrl"
               @click="copyShareUrl"
             >
               复制链接
             </button>
-            <button
+            <a
+              v-if="shareUrl && shareEnabled"
               class="btn"
-              type="button"
-              :disabled="!shareEnabled || !qrDataUrl"
-              @click="toast(qrDataUrl ? '请使用下方二维码' : '请先保存表单')"
-            >
-              二维码
-            </button>
+              :href="shareUrl"
+              target="_blank"
+              rel="noreferrer"
+            >打开填写页</a>
+          </div>
+          <div v-if="qrDataUrl && shareEnabled" class="share-dialog-qr">
             <img
-              v-if="qrDataUrl && shareEnabled"
               :src="qrDataUrl"
               class="share-qr"
               data-testid="form-share-qr-dialog"
               alt="二维码"
             />
+            <p class="setting-hint">扫码打开填写页</p>
           </div>
           <footer>
-            <button class="btn btn-primary" type="button" @click="shareDialogOpen = false">
+            <button class="btn" type="button" @click="shareDialogOpen = false">
               完成
             </button>
           </footer>
@@ -1466,19 +1550,62 @@ onMounted(load);
 .available-pane {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   min-width: 0;
   max-height: 70vh;
   overflow: auto;
 }
+.builder-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+  letter-spacing: 0.01em;
+}
+.section-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #eef0f3;
+  color: #646a73;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
 .available-empty {
-  padding: 28px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 14px;
   border: 1px dashed #d0d5dd;
-  border-radius: 8px;
-  color: #8f959e;
-  font-size: 12px;
+  border-radius: 10px;
   text-align: center;
   background: #fafbfc;
+}
+.available-empty .empty-state-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4e5969;
+}
+.available-empty .empty-state-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #8a9099;
+}
+.available-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .add-field-to-form {
   display: flex;
@@ -1486,17 +1613,24 @@ onMounted(load);
   gap: 8px;
   width: 100%;
   height: 40px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #1f2329;
+  padding: 0 12px;
+  border: 1px dashed #b7d0f5;
+  border-radius: 10px;
+  background: #f7faff;
+  color: #1d6fdc;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .add-field-to-form:hover {
-  background: #f2f3f5;
+  background: #eef5ff;
+  border-color: #91caff;
+}
+.add-field-to-form:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .add-field-plus {
   display: inline-flex;
@@ -1505,28 +1639,35 @@ onMounted(load);
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background: #e8f3ff;
+  background: #fff;
   color: #1d6fdc;
   font-weight: 600;
-}
-.add-field-chevron {
-  margin-left: auto;
-  color: #8f959e;
-  font-size: 16px;
+  border: 1px solid #d6e4ff;
 }
 .fill-settings {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 8px;
-  padding-top: 12px;
+  padding-top: 4px;
   border-top: 1px solid var(--border, #e5e6eb);
 }
 .setting-hint {
-  margin: -4px 0 0;
+  margin: 0;
   color: #8f959e;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.field-settings-head .setting-hint {
+  margin-top: 4px;
+}
+.builder-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #4e5969;
+}
+.setting-check {
+  min-height: 32px;
+  padding: 4px 0;
 }
 .embedded-save {
   margin-top: auto;
@@ -1537,18 +1678,44 @@ onMounted(load);
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 34px;
-  padding: 0 8px;
+  min-height: 36px;
+  padding: 6px 10px;
   border: 1px solid #eaecf0;
   border-radius: 8px;
   background: #fff;
   text-align: left;
   font-size: 13px;
+  color: #1f2329;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .available-row:hover {
-  border-color: #c7d7f5;
+  border-color: #91caff;
   background: #f5f8ff;
+}
+.available-row:hover .available-add {
+  opacity: 1;
+  color: #1d6fdc;
+}
+.available-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
+}
+.available-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.available-add {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #8f959e;
+  opacity: 0.7;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
 .nl-link {
   border: none;
@@ -1577,47 +1744,105 @@ onMounted(load);
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 72px;
-  margin-bottom: 12px;
+  min-height: 96px;
+  margin-bottom: 16px;
   border: 1px dashed #d0d5dd;
-  border-radius: 10px;
-  background: #fafbfc;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fafbfc 0%, #f2f4f7 100%);
   color: #667085;
   cursor: pointer;
   overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.cover-btn:hover:not(:disabled) {
+  border-color: #91caff;
+  background: linear-gradient(180deg, #f7faff 0%, #eef5ff 100%);
+}
+.cover-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+.cover-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
+}
+.cover-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+}
+.cover-placeholder-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #4e5969;
+}
+.cover-placeholder-hint {
+  font-size: 12px;
+  color: #8f959e;
+}
+.cover-btn .cover-preview {
+  width: 100%;
+  height: auto;
+  max-height: 160px;
+  object-fit: cover;
+  display: block;
 }
 .canvas-title {
   width: 100%;
   border: none;
+  border-radius: 6px;
   font-size: 22px;
   font-weight: 600;
   outline: none;
   margin-bottom: 4px;
+  padding: 4px 6px;
+  color: #1f2329;
+}
+.canvas-title:focus {
+  background: #f7f8fa;
 }
 .canvas-desc,
 .canvas-desc-static {
   width: 100%;
   border: none;
-  color: #98a2b3;
+  border-radius: 6px;
+  color: #8f959e;
   font-size: 13px;
   outline: none;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  padding: 4px 6px;
+  line-height: 1.5;
+}
+.canvas-desc:focus {
+  background: #f7f8fa;
+  color: #4e5969;
 }
 .canvas-field {
-  margin-bottom: 12px;
-  padding: 10px;
+  margin-bottom: 10px;
+  padding: 12px;
   border: 1px solid transparent;
   border-radius: 10px;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.canvas-field:hover {
+  background: #fafbfc;
 }
 .canvas-field.selected {
-  border-color: #1d6fdc;
-  box-shadow: 0 0 0 1px #1d6fdc;
+  border-color: #91caff;
+  box-shadow: 0 0 0 1px #91caff;
   background: #f5f8ff;
 }
 .canvas-field.dep-related {
   border-color: #91caff;
-  background: #e6f4ff;
+  background: #f0f7ff;
 }
 .canvas-field-label {
   display: flex;
@@ -1748,12 +1973,23 @@ onMounted(load);
 .canvas-add {
   width: 100%;
   height: 40px;
-  margin-top: 8px;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-hover, #f2f3f5);
+  margin-top: 12px;
+  border: 1px dashed #b7d0f5;
+  border-radius: 10px;
+  background: #f7faff;
   color: var(--brand-strong, #1d6fdc);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.canvas-add:hover {
+  background: #eef5ff;
+  border-color: #91caff;
+}
+.canvas-add:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .fill-preview-pane {
   display: block;
@@ -1834,7 +2070,7 @@ onMounted(load);
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  align-items: baseline;
+  align-items: center;
 }
 .field-heading small {
   color: #98a2b3;
@@ -1844,15 +2080,17 @@ onMounted(load);
   border: 1px solid #eaecf0;
   border-radius: 10px;
   overflow: hidden;
+  background: #fff;
 }
 .field-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid #f2f4f7;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 .field-row-main {
   display: flex;
@@ -1869,20 +2107,54 @@ onMounted(load);
 }
 .field-row-actions {
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 30px;
+}
+.field-row-tools {
+  display: flex;
   align-items: center;
   gap: 2px;
+}
+.field-row-tools .icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #646a73;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.field-row-tools .icon-btn:hover:not(:disabled) {
+  background: #f2f3f5;
+  color: #1f2329;
+}
+.field-row-tools .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.field-row-tools .icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .field-row:last-child {
   border-bottom: none;
 }
 .field-row.selected {
-  background: #f5f8ff;
-  box-shadow: inset 3px 0 #2d8cf0;
+  background: #f0f6ff;
+  outline: 1px solid #91caff;
+  outline-offset: -1px;
 }
 .field-row.dep-related {
-  background: #e6f4ff;
-  box-shadow: inset 3px 0 #91caff;
+  background: #f5faff;
 }
 .field-icon {
   width: 22px;
@@ -1941,17 +2213,11 @@ onMounted(load);
   border-radius: 10px;
   background: #f7faff;
 }
-.field-settings header {
+.field-settings-head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-.field-settings-title {
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-}
-.field-settings-title .setting-hint {
-  margin: 4px 0 0;
 }
 .condition-row {
   display: flex;
@@ -1976,14 +2242,23 @@ onMounted(load);
   gap: 5px;
 }
 .var-chip {
-  height: 24px;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid #d6e4ff;
   border-radius: 999px;
   background: #f5f8ff;
   color: #1d6fdc;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.var-chip:hover {
+  background: #e8f3ff;
+  border-color: #91caff;
+}
+.var-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .share-settings {
   display: flex;
@@ -2102,19 +2377,44 @@ onMounted(load);
   gap: 16px;
 }
 .live-preview,
+.success-settings {
+  padding-top: 4px;
+  border-top: 1px solid var(--border, #e5e6eb);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .success-preview {
+  margin-top: 16px;
   padding: 14px;
   border: 1px solid #eaecf0;
   border-radius: 10px;
+  background: #fff;
+}
+.success-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 .live-preview h4,
 .success-preview h4 {
-  margin: 0 0 10px;
+  margin: 0;
+  font-size: 14px;
 }
 .success-html {
   min-height: 150px;
-  padding: 12px;
-  border: 1px dashed #d0d5dd;
+  padding: 16px;
+  border: 1px solid #eaecf0;
   border-radius: 8px;
   background: #fafbfc;
 }
@@ -2123,7 +2423,7 @@ onMounted(load);
   align-items: center;
   gap: 12px;
 }
-.cover-preview,
+.cover-editor .cover-preview,
 .cover-empty {
   width: 160px;
   height: 72px;
@@ -2150,27 +2450,77 @@ onMounted(load);
 .share-box {
   display: flex;
   justify-content: space-between;
+  align-items: stretch;
   gap: 16px;
-  border: 1px dashed #b2ccff;
-  background: #f5f8ff;
-  border-radius: 10px;
-  padding: 12px;
+  border: 1px solid #d6e4ff;
+  background: #f7faff;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.share-box-main {
+  flex: 1;
+  min-width: 0;
+}
+.share-box-title {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #1f2329;
 }
 .share-url {
-  margin: 4px 0 8px;
+  margin: 0 0 10px;
   font-size: 12px;
+  line-height: 1.45;
   word-break: break-all;
   color: #1849a9;
 }
+.share-url-box {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+}
 .share-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+.share-status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #8f959e;
+  line-height: 1.4;
+}
+.share-box-qr {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 112px;
 }
 .share-qr {
   width: 104px;
   height: 104px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
+  border: 1px solid #eaecf0;
+}
+.share-qr-empty {
+  margin: 0;
+  max-width: 104px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #98a2b3;
+  text-align: center;
+}
+.share-dialog-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0;
 }
 .hidden-cover-input {
   display: none;

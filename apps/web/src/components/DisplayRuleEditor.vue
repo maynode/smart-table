@@ -219,7 +219,8 @@ function asGroup(
 .rule-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 4px;
 }
 .rule-editor.nested {
   margin-top: 4px;

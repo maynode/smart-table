@@ -1303,25 +1303,28 @@ onBeforeUnmount(() => {
             isFormSheet(activeSheet)
           "
         >
-          <!-- 企微：收集表单 | 表单收集结果 —— 与「编辑/填写」分层 -->
-          <div class="form-object-tabs" data-testid="form-object-tabs">
+          <!-- 收集表单 | 表单收集结果 —— 与「编辑/填写」分层 -->
+          <div class="form-object-tabs" data-testid="form-object-tabs" role="tablist">
             <button
               type="button"
+              role="tab"
+              :aria-selected="mainView === 'form'"
               :class="{ active: mainView === 'form' }"
               data-testid="form-object-form"
               @click="backToForm(formReturnTab)"
             >
-              <span class="form-object-icon">📝</span>
               收集表单
             </button>
             <button
               type="button"
+              role="tab"
+              :aria-selected="mainView === 'form-results'"
               :class="{ active: mainView === 'form-results' }"
               data-testid="form-object-results"
               @click="openFormResults"
             >
-              <span class="form-object-icon">▦</span>
-              表单收集结果
+              收集结果
+              <span v-if="records.length" class="form-object-count">{{ records.length }}{{ nextCursor ? '+' : '' }}</span>
             </button>
           </div>
           <FormBuilderPanel
@@ -1334,38 +1337,48 @@ onBeforeUnmount(() => {
             :initial-tab="formReturnTab"
             @sheet-updated="onFormSheetUpdated"
           />
-          <GridPanel
-            v-else
-            ref="gridRef"
-            :key="`results-${activeSheet.id}`"
-            :sheet-id="activeSheet.id"
-            :sheet-name="activeSheet.name"
-            :fields="activeSheet.fields ?? []"
-            :records="records"
-            :next-cursor="nextCursor"
-            :loading="loading"
-            :row-colors="rowColors"
-            :row-height="rowHeightPx"
-            :groups="viewGroups"
-            :members="members"
-            :sheets="sheets"
-            :upload-attachment="uploadToSheet"
-            @add-row="addRow"
-            @insert-rows="insertRows"
-            @insert-columns="insertColumns"
-            @load-more="loadMore"
-            @refresh="refreshSheet"
-            @undo="undoEdit"
-            @redo="redoEdit"
-            @commit="commitCell"
-            @toggle-field="toggleField"
-            @create-field="createField"
-            @update-field="updateFieldMeta"
-            @delete-field="deleteField"
-            @delete-records="deleteRecords"
-            @query="applyViewQuery"
-            @query-change="onQueryChange"
-          />
+          <div v-else class="form-results-pane">
+            <div class="form-results-banner">
+              <div>
+                <strong>表单收集结果</strong>
+                <p>来自公开填写页与填写预览的提交记录，可在此筛选、导出或继续编辑。</p>
+              </div>
+              <button class="btn" type="button" @click="backToForm(formReturnTab)">
+                返回表单设计
+              </button>
+            </div>
+            <GridPanel
+              ref="gridRef"
+              :key="`results-${activeSheet.id}`"
+              :sheet-id="activeSheet.id"
+              :sheet-name="activeSheet.name"
+              :fields="activeSheet.fields ?? []"
+              :records="records"
+              :next-cursor="nextCursor"
+              :loading="loading"
+              :row-colors="rowColors"
+              :row-height="rowHeightPx"
+              :groups="viewGroups"
+              :members="members"
+              :sheets="sheets"
+              :upload-attachment="uploadToSheet"
+              @add-row="addRow"
+              @insert-rows="insertRows"
+              @insert-columns="insertColumns"
+              @load-more="loadMore"
+              @refresh="refreshSheet"
+              @undo="undoEdit"
+              @redo="redoEdit"
+              @commit="commitCell"
+              @toggle-field="toggleField"
+              @create-field="createField"
+              @update-field="updateFieldMeta"
+              @delete-field="deleteField"
+              @delete-records="deleteRecords"
+              @query="applyViewQuery"
+              @query-change="onQueryChange"
+            />
+          </div>
         </template>
         <GridPanel
           v-else-if="activeSheet"
@@ -1820,9 +1833,9 @@ onBeforeUnmount(() => {
 .form-object-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex: none;
-  padding: 6px 12px 0;
+  padding: 8px 16px;
   background: #fff;
   border-bottom: 1px solid var(--border, #e5e6eb);
 }
@@ -1830,27 +1843,69 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary, #646a73);
   font-size: 13px;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .form-object-tabs button:hover {
   background: var(--bg-hover, #f2f3f5);
+  color: var(--text, #1f2329);
 }
 .form-object-tabs button.active {
-  background: #f7f8fa;
-  border-color: var(--border, #e5e6eb);
-  color: var(--text, #1f2329);
+  background: #e8f3ff;
+  color: var(--brand-strong, #1d6fdc);
   font-weight: 600;
 }
-.form-object-icon {
+.form-object-tabs button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
+}
+.form-object-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(29, 111, 220, 0.12);
+  color: #1d6fdc;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.form-results-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.form-results-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: #f7faff;
+  border-bottom: 1px solid #d6e4ff;
+}
+.form-results-banner strong {
+  display: block;
+  font-size: 13px;
+  color: #1f2329;
+}
+.form-results-banner p {
+  margin: 2px 0 0;
   font-size: 12px;
-  opacity: 0.85;
+  line-height: 1.4;
+  color: #646a73;
+}
+.form-results-pane :deep(.grid-panel) {
+  flex: 1;
+  min-height: 0;
 }
 </style>

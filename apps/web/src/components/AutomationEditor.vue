@@ -2154,14 +2154,15 @@ onMounted(load);
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #c0c4cc;
+  background: #2d8cf0;
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.18);
   flex-shrink: 0;
 }
 .timeline-line {
   flex: 1;
   width: 2px;
   margin-top: 4px;
-  background: #e5e6eb;
+  background: #d6e4ff;
   min-height: 24px;
 }
 .timeline-main {
@@ -2179,6 +2180,10 @@ onMounted(load);
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nl-card:hover {
+  border-color: #c7d7f5;
 }
 .nl-card-head {
   display: flex;
@@ -2204,6 +2209,15 @@ onMounted(load);
   background: #fff;
   font-size: 13px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.type-trigger:hover {
+  border-color: #91caff;
+  background: #f7faff;
+}
+.type-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .type-badge {
   display: inline-flex;
@@ -2549,6 +2563,7 @@ onMounted(load);
   background: #e8f3ff;
   color: #1d6fdc;
   font-size: 12px;
+  border: 1px solid #d6e4ff;
 }
 .var-chip-x {
   border: none;
@@ -2557,6 +2572,11 @@ onMounted(load);
   cursor: pointer;
   padding: 0;
   line-height: 1;
+  border-radius: 4px;
+}
+.var-chip-x:hover {
+  color: #d4380d;
+  background: #fff1f0;
 }
 .member-picker {
   display: flex;

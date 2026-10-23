@@ -604,7 +604,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 23, 42, 0.35);
+  background: rgba(15, 23, 42, 0.4);
 }
 .options-modal {
   width: min(480px, 92vw);
@@ -613,13 +613,13 @@ onMounted(() => {
   padding: 16px 18px;
   border-radius: 12px;
   background: #fff;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.16);
 }
 .options-modal header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .panel-drag-handle {
   cursor: grab;

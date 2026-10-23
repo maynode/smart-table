@@ -1060,6 +1060,7 @@ defineExpose({
         <button
           class="btn btn-ghost icon-tool"
           title="重做 (Ctrl+Y)"
+          aria-label="重做"
           data-testid="grid-redo"
           :disabled="!redoAvailable"
           @click="emit('redo')"
@@ -1069,21 +1070,25 @@ defineExpose({
       </div>
     </div>
 
-    <div v-if="searchOpen" class="search-bar" data-testid="grid-search-bar">
-      <input
-        v-model="searchQuery"
-        type="search"
-        placeholder="搜索当前表格内容…"
-        data-testid="grid-search-input"
-        autofocus
-      />
-      <button
-        class="btn btn-ghost small"
-        @click="searchQuery = ''; searchOpen = false"
-      >
-        关闭
-      </button>
-    </div>
+    <Transition name="search-bar">
+      <div v-if="searchOpen" class="search-bar" data-testid="grid-search-bar">
+        <span class="search-bar-label" aria-hidden="true">⌕</span>
+        <input
+          v-model="searchQuery"
+          type="search"
+          placeholder="搜索当前表格内容…"
+          data-testid="grid-search-input"
+          autofocus
+        />
+        <button
+          class="btn btn-ghost small"
+          type="button"
+          @click="searchQuery = ''; searchOpen = false"
+        >
+          关闭
+        </button>
+      </div>
+    </Transition>
 
     <div
       v-if="historyOpen"
@@ -1109,11 +1114,12 @@ defineExpose({
 
     <Transition name="selection-bar">
       <div v-if="selectedRecordIds.length" class="selection-bar">
-        <span>已选择 {{ selectedRecordIds.length }} 行</span>
+        <strong class="selection-count">已选 {{ selectedRecordIds.length }} 行</strong>
+        <span class="selection-spacer" />
         <button class="btn btn-danger small" data-testid="delete-selected" @click="deleteSelected">
           删除所选
         </button>
-        <button class="btn btn-ghost small" @click="cancelSelection">取消</button>
+        <button class="btn btn-ghost small" type="button" @click="cancelSelection">取消</button>
       </div>
     </Transition>
 
@@ -1181,12 +1187,14 @@ defineExpose({
             >
               ···
             </button>
-            <div
-              v-if="fieldMenuId === field.id"
-              class="field-more-menu"
-              :data-testid="`field-more-menu-${field.name}`"
-            >
+            <Transition name="menu-fade">
+              <div
+                v-if="fieldMenuId === field.id"
+                class="field-more-menu"
+                :data-testid="`field-more-menu-${field.name}`"
+              >
               <button
+                type="button"
                 @click="
                   openFieldEditorFromSettings(field);
                   fieldMenuId = null;
@@ -1230,6 +1238,7 @@ defineExpose({
                 {{ field.hidden ? '显示字段' : '隐藏字段' }}
               </button>
               <button
+                type="button"
                 class="danger"
                 :data-testid="`delete-field-${field.name}`"
                 @click="
@@ -1239,7 +1248,8 @@ defineExpose({
               >
                 删除字段
               </button>
-            </div>
+              </div>
+            </Transition>
           </div>
         </div>
       </div>
@@ -1666,37 +1676,48 @@ defineExpose({
 .grid-toolbar {
   display: flex;
   align-items: center;
-  gap: 2px 4px;
+  gap: 4px;
   flex-wrap: wrap;
-  min-height: 40px;
-  padding: 4px 12px;
+  min-height: 44px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: #fff;
 }
+.grid-toolbar > .btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
 .toolbar-divider {
   width: 1px;
-  height: 20px;
-  margin: 0 4px;
+  height: 18px;
+  margin: 0 6px;
   background: var(--border);
+  flex: none;
 }
 .toolbar-spacer {
   flex: 1;
+  min-width: 8px;
 }
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .icon-tool {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   font-size: 14px;
   line-height: 1;
+  border-radius: 6px;
   transition:
     background 0.15s ease,
     color 0.15s ease,
     box-shadow 0.15s ease;
+}
+.icon-tool:hover:not(:disabled) {
+  background: #f2f3f5;
 }
 .icon-tool:focus-visible {
   outline: none;
@@ -1711,16 +1732,23 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid #eef0f3;
-  background: #fafbfc;
+  background: #f7faff;
+}
+.search-bar-label {
+  flex: none;
+  color: #1d6fdc;
+  font-size: 14px;
+  line-height: 1;
 }
 .search-bar input {
   flex: 1;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--brand);
-  border-radius: 6px;
+  border: 1px solid #91caff;
+  border-radius: 8px;
+  background: #fff;
   font-size: 13px;
   transition:
     border-color 0.15s ease,
@@ -1728,7 +1756,28 @@ defineExpose({
 }
 .search-bar input:focus {
   outline: none;
+  border-color: var(--brand);
   box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.15);
+}
+.search-bar-enter-active,
+.search-bar-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    max-height 0.16s ease;
+  overflow: hidden;
+}
+.search-bar-enter-from,
+.search-bar-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.search-bar-enter-to,
+.search-bar-leave-from {
+  max-height: 56px;
 }
 .history-panel {
   position: absolute;
@@ -1832,18 +1881,30 @@ defineExpose({
   font-size: 12px;
 }
 .btn-active {
-  background: #e8f3ff;
-  color: #1d6fdc;
+  background: #e8f3ff !important;
+  color: #1d6fdc !important;
+  font-weight: 500;
 }
 .toolbar-filter em,
 .grid-toolbar em {
+  display: inline-block;
   margin-left: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #1d6fdc;
+  color: #fff;
   font-style: normal;
   font-size: 11px;
-  background: #e8f3ff;
-  color: var(--brand-strong, #1d6fdc);
-  border-radius: 8px;
-  padding: 0 5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  vertical-align: 1px;
+}
+.grid-toolbar .btn-active em {
+  background: #1d6fdc;
+  color: #fff;
 }
 .sr-only {
   position: absolute;
@@ -1860,14 +1921,21 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 14px;
+  padding: 8px 14px;
   background: #eef4ff;
   color: #1d4ed8;
-  font-size: 12px;
+  font-size: 13px;
   border-bottom: 1px solid #d6e4ff;
 }
+.selection-count {
+  font-weight: 600;
+  font-size: 13px;
+}
+.selection-spacer {
+  flex: 1;
+}
 .selection-bar .btn {
-  height: 26px;
+  height: 28px;
 }
 .selection-bar-enter-active,
 .selection-bar-leave-active {
@@ -1894,40 +1962,46 @@ defineExpose({
   z-index: 40;
   top: 50px;
   left: 92px;
-  width: 320px;
+  width: 340px;
   max-height: 62vh;
   overflow: auto;
-  padding: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.14);
 }
 .settings-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+.settings-head strong {
+  font-size: 14px;
+  color: #1f2329;
 }
 .settings-sub {
   color: #8f959e;
   font-size: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .field-list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 .field-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 5px;
-  border-radius: 6px;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  transition: background 0.12s ease;
 }
 .field-row:hover {
-  background: #f7f8fa;
+  background: #f5f6f7;
 }
 .field-icon {
   width: 22px;
@@ -1975,22 +2049,25 @@ defineExpose({
   z-index: 45;
   top: 50px;
   left: 200px;
-  width: 520px;
+  width: 560px;
   max-width: calc(100% - 32px);
   max-height: 64vh;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 16px 44px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.14);
 }
 .view-panel-title {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+  padding: 12px 14px;
+  font-size: 14px;
   font-weight: 600;
+  color: #1f2329;
   border-bottom: 1px solid #eef0f3;
+  background: #fafbfc;
 }
 .panel-drag-handle {
   cursor: grab;
@@ -2003,11 +2080,12 @@ defineExpose({
 .view-panel-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px 14px;
+  gap: 12px;
+  padding: 14px;
 }
 .condition-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -2020,36 +2098,55 @@ defineExpose({
   border-radius: 6px;
   background: #fff;
   font-size: 12px;
+  box-sizing: border-box;
+}
+.condition-row select:focus,
+.condition-row input:focus {
+  outline: none;
+  border-color: var(--brand, #2d8cf0);
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.18);
 }
 .condition-row select {
-  flex: 1;
+  flex: 1 1 110px;
 }
 .condition-row input {
-  flex: 1.1;
+  flex: 1.2 1 120px;
+}
+.condition-row .icon-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
 }
 .condition-index {
   width: 18px;
   color: #8f959e;
   font-size: 12px;
+  flex: none;
 }
 .filter-conjunction {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: #646a73;
+  font-size: 13px;
+  color: #4e5969;
 }
 .filter-conjunction select {
   height: 30px;
+  padding: 0 8px;
   border: 1px solid #d0d3d9;
   border-radius: 6px;
+  background: #fff;
 }
 .panel-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #f2f3f5;
 }
 .panel-actions-end {
   display: flex;

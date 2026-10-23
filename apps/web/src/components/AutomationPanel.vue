@@ -463,47 +463,50 @@ onMounted(load);
                 class="icon-btn"
                 type="button"
                 title="更多"
+                aria-label="更多操作"
                 data-testid="automation-more"
                 @click="toggleMenu(automation.id)"
               >
                 ···
               </button>
-              <div
-                v-if="menuOpenId === automation.id"
-                class="more-menu"
-                @click.stop
-              >
-                <button
-                  type="button"
-                  data-testid="automation-edit"
-                  @click="openEdit(automation)"
+              <Transition name="menu-fade">
+                <div
+                  v-if="menuOpenId === automation.id"
+                  class="more-menu"
+                  @click.stop
                 >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  data-testid="automation-runs-open"
-                  @click="openRuns(automation)"
-                >
-                  运行日志
-                </button>
-                <button
-                  type="button"
-                  data-testid="automation-run"
-                  :disabled="runningId === automation.id"
-                  @click="runNow(automation)"
-                >
-                  {{ runningId === automation.id ? '运行中…' : '立即运行' }}
-                </button>
-                <button
-                  type="button"
-                  class="danger"
-                  data-testid="automation-delete"
-                  @click="remove(automation)"
-                >
-                  删除
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    data-testid="automation-edit"
+                    @click="openEdit(automation)"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="automation-runs-open"
+                    @click="openRuns(automation)"
+                  >
+                    运行日志
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="automation-run"
+                    :disabled="runningId === automation.id"
+                    @click="runNow(automation)"
+                  >
+                    {{ runningId === automation.id ? '运行中…' : '立即运行' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="danger"
+                    data-testid="automation-delete"
+                    @click="remove(automation)"
+                  >
+                    删除
+                  </button>
+                </div>
+              </Transition>
             </div>
           </div>
         </header>
@@ -624,16 +627,23 @@ onMounted(load);
 }
 .automation-card {
   border: 1px solid #e5e6eb;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 14px 16px;
   margin: 0 4px 12px;
   background: #fff;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
 }
 .automation-card:hover {
-  border-color: #c9cdd4;
+  border-color: #91caff;
   box-shadow: 0 4px 16px rgba(31, 35, 41, 0.06);
+}
+.automation-card:focus-within {
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.18);
 }
 .automation-card-head {
   display: flex;
@@ -643,8 +653,12 @@ onMounted(load);
 }
 .card-name {
   font-size: 15px;
+  font-weight: 600;
   color: #1f2329;
   cursor: pointer;
+}
+.card-name:hover {
+  color: #1d6fdc;
 }
 .card-actions {
   display: flex;
@@ -766,8 +780,13 @@ onMounted(load);
   background: #fff;
 }
 .runs-empty {
-  padding: 32px;
+  padding: 40px 24px;
   text-align: center;
+  border: 1px dashed #e5e6eb;
+  border-radius: 10px;
+  background: #fafbfc;
+  color: #8f959e;
+  font-size: 13px;
 }
 .runs-table {
   width: 100%;
@@ -784,6 +803,10 @@ onMounted(load);
 .runs-table th {
   color: #8f959e;
   font-weight: 500;
+  background: #fafbfc;
+}
+.runs-table tbody tr:hover td {
+  background: #f7faff;
 }
 .run-detail-row td {
   background: #fafbfc;

@@ -1635,12 +1635,19 @@ defineExpose({
   height: auto !important;
   padding: 8px !important;
   overflow: auto;
+  background: #fff;
 }
 .multi-option {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 4px;
+  border-radius: 4px;
   font-size: 13px;
+}
+.multi-option:hover {
+  background: #f5f6f7;
 }
 .progress-editor {
   display: flex;
@@ -1654,6 +1661,7 @@ defineExpose({
 .progress-editor input[type='range'] {
   flex: 1;
   min-width: 0;
+  accent-color: var(--brand, #2d8cf0);
 }
 .multi-done {
   align-self: flex-end;

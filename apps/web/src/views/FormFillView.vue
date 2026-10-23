@@ -116,18 +116,24 @@ onMounted(load);
 
 <template>
   <div class="fill-page">
-    <div v-if="loading" class="empty-state">加载中…</div>
+    <div v-if="loading" class="empty-state">
+      <p class="empty-state-title">加载表单中</p>
+      <p class="empty-state-hint">请稍候…</p>
+    </div>
     <div v-else-if="!form" class="empty-state" data-testid="form-load-error">
-      {{ error || '表单不存在' }}
+      <p class="empty-state-title">无法打开表单</p>
+      <p class="empty-state-hint">{{ error || '链接无效或表单已关闭' }}</p>
     </div>
     <div v-else class="fill-card">
       <img
         v-if="form.coverUrl"
         :src="form.coverUrl"
         class="fill-cover"
-        alt="表单封面"
+        alt=""
       />
-      <h1 class="fill-title">{{ form.name }}</h1>
+      <header class="fill-header">
+        <h1 class="fill-title">{{ form.name }}</h1>
+      </header>
 
       <form v-if="!successHtml" class="fill-form" @submit.prevent="submit">
         <div
@@ -154,7 +160,7 @@ onMounted(load);
           />
         </div>
 
-        <p v-if="error" class="form-error" data-testid="form-error">
+        <p v-if="error" class="form-error" data-testid="form-error" role="alert">
           {{ error }}
         </p>
 
@@ -169,14 +175,14 @@ onMounted(load);
 
       <section v-else class="fill-success" data-testid="form-success">
         <div class="success-check" aria-hidden="true">✓</div>
-        <h2>已提交</h2>
+        <h2>提交成功</h2>
         <div class="fill-success-body" v-html="successHtml"></div>
-        <button class="btn fill-again" @click="successHtml = ''">
+        <button class="btn fill-again" type="button" @click="successHtml = ''">
           再填一次
         </button>
       </section>
 
-      <p class="fill-footnote">数据保存在企业内部数据库 · 智能表格</p>
+      <p class="fill-footnote">智能表格 · 数据保存在企业内部</p>
     </div>
   </div>
 </template>
@@ -187,40 +193,49 @@ onMounted(load);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 48px 16px;
-  background: #f2f4f7;
+  padding: 40px 16px 64px;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, #e8f3ff 0%, transparent 55%),
+    #f2f4f7;
 }
 .fill-card {
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
   background: #fff;
   border-radius: 16px;
-  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.08);
   padding: 28px;
 }
 .fill-cover {
   width: 100%;
-  height: 160px;
+  height: 168px;
   object-fit: cover;
   border-radius: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+}
+.fill-header {
+  margin-bottom: 22px;
 }
 .fill-title {
-  font-size: 20px;
-  margin: 0 0 20px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #1f2329;
+  margin: 0;
 }
 .fill-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 .fill-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .fill-field label {
   font-size: 13px;
+  font-weight: 500;
   color: #344054;
 }
 .required-mark {
@@ -229,21 +244,32 @@ onMounted(load);
 }
 .fill-submit {
   width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
   padding: 11px;
   font-size: 15px;
+  font-weight: 600;
+}
+.fill-submit:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 .form-error {
   color: #d92d20;
   font-size: 13px;
   margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff1f0;
 }
 .fill-success {
   text-align: center;
+  padding: 8px 0 4px;
 }
 .success-check {
-  width: 48px;
-  height: 48px;
-  margin: 8px auto 12px;
+  width: 52px;
+  height: 52px;
+  margin: 4px auto 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -254,26 +280,45 @@ onMounted(load);
   font-weight: 700;
 }
 .fill-success h2 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 18px;
+  color: #1f2329;
 }
 .fill-success-body {
   font-size: 15px;
   line-height: 1.7;
   text-align: left;
+  color: #344054;
 }
 .fill-again {
-  margin-top: 18px;
+  margin-top: 20px;
+  min-height: 40px;
 }
 .fill-footnote {
   text-align: center;
   color: #98a2b3;
   font-size: 12px;
-  margin: 20px 0 0;
+  margin: 24px 0 0;
 }
 .empty-state {
-  padding: 48px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 64px 24px;
   text-align: center;
-  color: #667085;
+}
+.empty-state-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #4e5969;
+}
+.empty-state-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #8a9099;
+  max-width: 280px;
+  line-height: 1.5;
 }
 </style>

@@ -513,7 +513,8 @@ h3 {
 }
 
 .base-main > .grid-panel,
-.base-main > .form-builder {
+.base-main > .form-builder,
+.base-main > .form-results-pane {
   flex: 1;
   min-height: 0;
 }
@@ -660,12 +661,13 @@ h3 {
 .cell-editor {
   position: absolute;
   z-index: 5;
-  border: 2px solid var(--brand);
-  border-radius: 2px;
+  border: 2px solid var(--brand, #2d8cf0);
+  border-radius: 4px;
   padding: 0 10px;
   background: #fff;
   outline: none;
   font-size: 13px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
 }
 
 .grid-footer {

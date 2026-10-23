@@ -529,21 +529,21 @@ function iconFor(type: FieldType): string {
 }
 .ftp-popover {
   position: fixed;
-  width: 340px;
+  width: 360px;
   max-height: min(560px, 84vh);
   overflow: auto;
-  padding: 4px 12px 8px;
+  padding: 6px 14px 12px;
   background: #fff;
   border: 1px solid #e5e6eb;
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(31, 35, 41, 0.16);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(31, 35, 41, 0.14);
 }
 .ftp-drag-handle {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 18px;
-  margin: 0 -4px 4px;
+  margin: 0 -4px 6px;
 }
 .ftp-drag-grip {
   width: 36px;
@@ -561,31 +561,42 @@ function iconFor(type: FieldType): string {
 }
 .ftp-name {
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid #3370ff;
-  border-radius: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #91caff;
+  border-radius: 8px;
   outline: none;
   font-size: 14px;
   box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ftp-name:focus {
+  border-color: #3370ff;
+  box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.15);
 }
 .ftp-type-chip {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 34px;
-  margin-top: 8px;
-  padding: 0 10px;
+  height: 36px;
+  margin-top: 10px;
+  padding: 0 12px;
   border: 1px solid #dee0e3;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
   font-size: 13px;
   color: #1f2329;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .ftp-type-chip:hover {
   background: #f7f8fa;
+  border-color: #c7d7f5;
+}
+.ftp-type-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .ftp-caret {
   margin-left: auto;
@@ -622,10 +633,19 @@ function iconFor(type: FieldType): string {
   cursor: pointer;
   font-size: 13px;
   color: #1f2329;
+  transition: background 0.12s ease;
 }
-.ftp-item:hover,
+.ftp-item:hover {
+  background: #f5f6f7;
+}
 .ftp-item.active {
-  background: #f2f3f5;
+  background: #e8f3ff;
+  color: #1d6fdc;
+  font-weight: 500;
+}
+.ftp-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(45, 140, 240, 0.35);
 }
 .ftp-item-ai {
   color: #6b4eff;
