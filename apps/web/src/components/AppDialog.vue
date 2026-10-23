@@ -36,49 +36,51 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div
-    v-if="state.open"
-    class="app-dialog-mask"
-    data-testid="app-dialog"
-    @click.self="resolveDialog(false)"
-    @keydown="onKeydown"
-  >
-    <section class="app-dialog" role="dialog" aria-modal="true">
-      <header>
-        <h3>{{ state.title }}</h3>
-      </header>
-      <p v-if="state.mode === 'confirm'" class="app-dialog-message">
-        {{ state.message }}
-      </p>
-      <input
-        v-if="state.mode === 'prompt'"
-        :ref="inputRef"
-        v-model="state.value"
-        class="app-dialog-input"
-        data-testid="app-dialog-input"
-        @keydown="onKeydown"
-      />
-      <footer>
-        <button
-          type="button"
-          class="btn"
-          data-testid="app-dialog-cancel"
-          @click="resolveDialog(false)"
-        >
-          {{ state.cancelLabel }}
-        </button>
-        <button
-          type="button"
-          class="btn"
-          :class="state.danger ? 'btn-danger' : 'btn-primary'"
-          data-testid="app-dialog-confirm"
-          @click="resolveDialog(true)"
-        >
-          {{ state.confirmLabel }}
-        </button>
-      </footer>
-    </section>
-  </div>
+  <Transition name="dialog-fade">
+    <div
+      v-if="state.open"
+      class="app-dialog-mask"
+      data-testid="app-dialog"
+      @click.self="resolveDialog(false)"
+      @keydown="onKeydown"
+    >
+      <section class="app-dialog" role="dialog" aria-modal="true">
+        <header>
+          <h3>{{ state.title }}</h3>
+        </header>
+        <p v-if="state.mode === 'confirm'" class="app-dialog-message">
+          {{ state.message }}
+        </p>
+        <input
+          v-if="state.mode === 'prompt'"
+          :ref="inputRef"
+          v-model="state.value"
+          class="app-dialog-input"
+          data-testid="app-dialog-input"
+          @keydown="onKeydown"
+        />
+        <footer>
+          <button
+            type="button"
+            class="btn"
+            data-testid="app-dialog-cancel"
+            @click="resolveDialog(false)"
+          >
+            {{ state.cancelLabel }}
+          </button>
+          <button
+            type="button"
+            class="btn"
+            :class="state.danger ? 'btn-danger' : 'btn-primary'"
+            data-testid="app-dialog-confirm"
+            @click="resolveDialog(true)"
+          >
+            {{ state.confirmLabel }}
+          </button>
+        </footer>
+      </section>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -119,24 +121,37 @@ function onKeydown(event: KeyboardEvent): void {
   border: 1px solid #d0d3d9;
   border-radius: 6px;
   font-size: 14px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .app-dialog-input:focus {
   outline: none;
-  border-color: #2d8cf0;
+  border-color: var(--brand, #2d8cf0);
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.15);
 }
 .app-dialog footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
-.app-dialog .btn-danger {
-  background: #d92d20;
-  border-color: #d92d20;
-  color: #fff;
+.dialog-fade-enter-active,
+.dialog-fade-leave-active {
+  transition: opacity 0.16s ease;
 }
-.app-dialog .btn-primary {
-  background: #2d8cf0;
-  border-color: #2d8cf0;
-  color: #fff;
+.dialog-fade-enter-active .app-dialog,
+.dialog-fade-leave-active .app-dialog {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.dialog-fade-enter-from,
+.dialog-fade-leave-to {
+  opacity: 0;
+}
+.dialog-fade-enter-from .app-dialog,
+.dialog-fade-leave-to .app-dialog {
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
 }
 </style>

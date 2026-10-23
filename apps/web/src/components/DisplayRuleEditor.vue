@@ -230,6 +230,7 @@ function asGroup(
 }
 .rule-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -239,6 +240,8 @@ function asGroup(
   white-space: nowrap;
 }
 .rule-toolbar select {
+  flex: 1;
+  min-width: 140px;
   height: 30px;
   padding: 0 8px;
   border: 1px solid #d0d5dd;
@@ -254,12 +257,13 @@ function asGroup(
 }
 .condition-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 .condition-row select,
 .condition-row input {
-  flex: 1;
+  flex: 1 1 96px;
   height: 30px;
   min-width: 0;
   padding: 0 7px;
@@ -267,6 +271,10 @@ function asGroup(
   border-radius: 6px;
   background: #fff;
   font-size: 12px;
+  box-sizing: border-box;
+}
+.condition-row .icon-btn {
+  flex: 0 0 auto;
 }
 .nested-wrap {
   position: relative;

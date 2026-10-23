@@ -1281,9 +1281,18 @@ onMounted(load);
           <h4 class="nl-section-title">就执行以下操作</h4>
         </div>
 
-        <p v-if="steps.length === 0" class="empty-steps">
-          还没有操作步骤。点击下方「+ 添加操作」开始配置。
-        </p>
+        <div v-if="steps.length === 0" class="empty-steps">
+          <p class="empty-steps-title">还没有操作步骤</p>
+          <p class="empty-steps-hint">添加查找、修改或发送消息等操作，组成自动化流程。</p>
+          <button
+            class="btn btn-primary"
+            type="button"
+            data-testid="automation-add-step-empty"
+            @click="addStepOpen = true; typeMenuStepId = ''"
+          >
+            + 添加操作
+          </button>
+        </div>
 
         <div
           v-for="(step, index) in steps"
@@ -1323,26 +1332,28 @@ onMounted(load);
                 {{ stepTypeLabel(step.type) }}
                 <span class="chevron">▾</span>
               </button>
-              <div
-                v-if="typeMenuStepId === step.id"
-                class="add-step-menu type-menu"
-                data-testid="step-type-menu"
-              >
-                <button
-                  v-for="item in stepTypes"
-                  :key="item.value"
-                  type="button"
-                  :data-testid="`change-step-${item.value}`"
-                  @click="changeStepType(step, item.value)"
+              <Transition name="menu-fade">
+                <div
+                  v-if="typeMenuStepId === step.id"
+                  class="add-step-menu type-menu"
+                  data-testid="step-type-menu"
                 >
-                  <span
-                    class="type-badge small"
-                    :style="{ background: item.color }"
-                  >{{ item.icon }}</span>
-                  {{ item.label }}
-                  <span v-if="item.value === step.type" class="check">✓</span>
-                </button>
-              </div>
+                  <button
+                    v-for="item in stepTypes"
+                    :key="item.value"
+                    type="button"
+                    :data-testid="`change-step-${item.value}`"
+                    @click="changeStepType(step, item.value)"
+                  >
+                    <span
+                      class="type-badge small"
+                      :style="{ background: item.color }"
+                    >{{ item.icon }}</span>
+                    {{ item.label }}
+                    <span v-if="item.value === step.type" class="check">✓</span>
+                  </button>
+                </div>
+              </Transition>
             </div>
             <div class="nl-card-actions">
               <button class="icon-btn danger" type="button" title="删除" @click="removeStep(index)">🗑</button>
@@ -1757,21 +1768,23 @@ onMounted(load);
             >
               + 添加操作
             </button>
-            <div v-if="addStepOpen" class="add-step-menu">
-              <button
-                v-for="item in stepTypes"
-                :key="item.value"
-                type="button"
-                :data-testid="`add-step-${item.value}`"
-                @click="addStep(item.value)"
-              >
-                <span
-                  class="type-badge small"
-                  :style="{ background: item.color }"
-                >{{ item.icon }}</span>
-                {{ item.label }}
-              </button>
-            </div>
+            <Transition name="menu-fade">
+              <div v-if="addStepOpen" class="add-step-menu">
+                <button
+                  v-for="item in stepTypes"
+                  :key="item.value"
+                  type="button"
+                  :data-testid="`add-step-${item.value}`"
+                  @click="addStep(item.value)"
+                >
+                  <span
+                    class="type-badge small"
+                    :style="{ background: item.color }"
+                  >{{ item.icon }}</span>
+                  {{ item.label }}
+                </button>
+              </div>
+            </Transition>
           </div>
         </div>
       </section>
@@ -2367,12 +2380,28 @@ onMounted(load);
   background: #f5f8ff;
 }
 .empty-steps {
-  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 22px;
   text-align: center;
-  color: #98a2b3;
-  font-size: 13px;
   border: 1px dashed #d0d5dd;
   border-radius: 12px;
+  background: #fafbfc;
+}
+.empty-steps-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4e5969;
+}
+.empty-steps-hint {
+  margin: 0 0 6px;
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #98a2b3;
 }
 .step-card {
   margin-top: 0;

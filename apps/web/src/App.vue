@@ -7,7 +7,9 @@ import { toasts } from './ui/toast';
 <template>
   <RouterView />
   <AppDialog />
-  <div class="toast-host">
-    <div v-for="item in toasts" :key="item.id" class="toast">{{ item.text }}</div>
+  <div class="toast-host" aria-live="polite">
+    <TransitionGroup name="toast">
+      <div v-for="item in toasts" :key="item.id" class="toast">{{ item.text }}</div>
+    </TransitionGroup>
   </div>
 </template>

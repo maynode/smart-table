@@ -203,13 +203,16 @@ onMounted(async () => {
           v-html="reportHtml"
         ></div>
         <div v-else class="report-canvas empty">
-          <p class="muted">
-            {{
-              active?.error
-                ? active.error
-                : '在右侧对话中确认分析范围后，报告将显示在这里。'
-            }}
-          </p>
+          <template v-if="active?.error">
+            <p class="empty-state-title">生成失败</p>
+            <p class="empty-state-hint">{{ active.error }}</p>
+          </template>
+          <template v-else>
+            <p class="empty-state-title">暂无报告</p>
+            <p class="empty-state-hint">
+              在右侧对话中确认要分析的工作表后，Markdown 报告会显示在这里。
+            </p>
+          </template>
         </div>
       </div>
 
@@ -386,8 +389,23 @@ onMounted(async () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 10px;
+  padding: 32px 24px;
   color: #646a73;
+  text-align: center;
+}
+.report-canvas.empty .empty-state-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #4e5969;
+}
+.report-canvas.empty .empty-state-hint {
+  margin: 0;
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #8a9099;
 }
 .spinner {
   width: 42px;

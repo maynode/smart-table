@@ -950,36 +950,40 @@ onMounted(load);
             >
               <div class="field-row-main">
                 <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
-                <span class="field-name">{{ fieldName(item.fieldId) }}</span>
-                <span
-                  v-if="relationHint(item.fieldId)"
-                  class="dep-relation-hint"
-                >{{ relationHint(item.fieldId) }}</span>
-                <label class="inline-check" @click.stop>
-                  <input
-                    v-model="item.required"
-                    type="checkbox"
-                    :data-testid="`form-required-${item.fieldId}`"
-                  />
-                  必填
-                </label>
-                <button class="icon-btn" title="上移" :disabled="index === 0" @click.stop="move(index, -1)">↑</button>
-                <button
-                  class="icon-btn"
-                  title="下移"
-                  :disabled="index === items.length - 1"
-                  @click.stop="move(index, 1)"
-                >
-                  ↓
-                </button>
-                <button
-                  class="icon-btn danger"
-                  title="从表单移除"
-                  :data-testid="`form-remove-${item.fieldId}`"
-                  @click.stop="removeItem(index)"
-                >
-                  ×
-                </button>
+                <div class="field-meta">
+                  <span class="field-name" :title="fieldName(item.fieldId)">{{ fieldName(item.fieldId) }}</span>
+                  <span
+                    v-if="relationHint(item.fieldId)"
+                    class="dep-relation-hint"
+                  >{{ relationHint(item.fieldId) }}</span>
+                </div>
+                <div class="field-row-actions" @click.stop>
+                  <label class="inline-check">
+                    <input
+                      v-model="item.required"
+                      type="checkbox"
+                      :data-testid="`form-required-${item.fieldId}`"
+                    />
+                    必填
+                  </label>
+                  <button class="icon-btn" title="上移" :disabled="index === 0" @click="move(index, -1)">↑</button>
+                  <button
+                    class="icon-btn"
+                    title="下移"
+                    :disabled="index === items.length - 1"
+                    @click="move(index, 1)"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    class="icon-btn danger"
+                    title="从表单移除"
+                    :data-testid="`form-remove-${item.fieldId}`"
+                    @click="removeItem(index)"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               <div
                 v-if="dependencyTags(item.fieldId).length"
@@ -1361,14 +1365,14 @@ onMounted(load);
   overflow: auto;
 }
 .form-builder.embedded .builder-layout {
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 40%) minmax(0, 1fr);
   gap: 0;
   background: #fff;
 }
 .form-builder.embedded .available-pane {
   max-height: none;
   height: 100%;
-  padding: 12px;
+  padding: 14px 16px;
   border-right: 1px solid var(--border, #e5e6eb);
   background: #f7f8fa;
 }
@@ -1455,14 +1459,14 @@ onMounted(load);
 }
 .builder-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 400px) minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
 }
 .available-pane {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   max-height: 70vh;
   overflow: auto;
@@ -1856,6 +1860,19 @@ onMounted(load);
   gap: 8px;
   min-width: 0;
 }
+.field-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.field-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
 .field-row:last-child {
   border-bottom: none;
 }
@@ -1978,16 +1995,21 @@ onMounted(load);
 }
 .builder-inline {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   font-size: 12px;
   color: #475467;
 }
 .builder-inline select,
 .builder-inline input {
-  height: 30px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid #d0d5dd;
   border-radius: 6px;
+  background: #fff;
 }
 .builder-actions {
   display: flex;

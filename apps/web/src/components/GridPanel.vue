@@ -1107,13 +1107,15 @@ defineExpose({
       <p v-else class="muted">暂无编辑记录。修改单元格后会出现在这里。</p>
     </div>
 
-    <div v-if="selectedRecordIds.length" class="selection-bar">
-      <span>已选择 {{ selectedRecordIds.length }} 行</span>
-      <button class="btn btn-danger small" data-testid="delete-selected" @click="deleteSelected">
-        删除所选
-      </button>
-      <button class="btn btn-ghost small" @click="cancelSelection">取消</button>
-    </div>
+    <Transition name="selection-bar">
+      <div v-if="selectedRecordIds.length" class="selection-bar">
+        <span>已选择 {{ selectedRecordIds.length }} 行</span>
+        <button class="btn btn-danger small" data-testid="delete-selected" @click="deleteSelected">
+          删除所选
+        </button>
+        <button class="btn btn-ghost small" @click="cancelSelection">取消</button>
+      </div>
+    </Transition>
 
     <FieldTypePicker
       :open="fieldPickerOpen"
@@ -1691,10 +1693,19 @@ defineExpose({
   padding: 0;
   font-size: 14px;
   line-height: 1;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.icon-tool:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .icon-tool:disabled {
   opacity: 0.35;
-  cursor: default;
+  cursor: not-allowed;
+  color: var(--text-tertiary);
 }
 .search-bar {
   display: flex;
@@ -1708,9 +1719,16 @@ defineExpose({
   flex: 1;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid #3370ff;
+  border: 1px solid var(--brand);
   border-radius: 6px;
   font-size: 13px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.search-bar input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.15);
 }
 .history-panel {
   position: absolute;
@@ -1850,6 +1868,26 @@ defineExpose({
 }
 .selection-bar .btn {
   height: 26px;
+}
+.selection-bar-enter-active,
+.selection-bar-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    max-height 0.16s ease;
+  overflow: hidden;
+}
+.selection-bar-enter-from,
+.selection-bar-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.selection-bar-enter-to,
+.selection-bar-leave-from {
+  max-height: 48px;
 }
 .settings-popover {
   position: absolute;

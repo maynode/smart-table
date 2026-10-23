@@ -1132,27 +1132,29 @@ onBeforeUnmount(() => {
           >
             更多 ▾
           </button>
-          <div v-if="moreOpen" class="more-menu" data-testid="more-menu">
-            <button @click="openMembers(); moreOpen = false">成员与邀请</button>
-            <button @click="renameActiveSheet">重命名当前工作表</button>
-            <button
-              data-testid="more-public-view"
-              :disabled="!activeSheet"
-              @click="publicViewOpen = true; moreOpen = false"
-            >
-              公开只读视图
-            </button>
-            <button @click="exportActiveSheet(); moreOpen = false">导出 Excel</button>
-            <div class="more-sep"></div>
-            <button
-              class="danger"
-              data-testid="more-delete-sheet"
-              :disabled="!activeSheet"
-              @click="deleteActiveSheet"
-            >
-              删除当前工作表
-            </button>
-          </div>
+          <Transition name="menu-fade">
+            <div v-if="moreOpen" class="more-menu" data-testid="more-menu">
+              <button @click="openMembers(); moreOpen = false">成员与邀请</button>
+              <button @click="renameActiveSheet">重命名当前工作表</button>
+              <button
+                data-testid="more-public-view"
+                :disabled="!activeSheet"
+                @click="publicViewOpen = true; moreOpen = false"
+              >
+                公开只读视图
+              </button>
+              <button @click="exportActiveSheet(); moreOpen = false">导出 Excel</button>
+              <div class="more-sep"></div>
+              <button
+                class="danger"
+                data-testid="more-delete-sheet"
+                :disabled="!activeSheet"
+                @click="deleteActiveSheet"
+              >
+                删除当前工作表
+              </button>
+            </div>
+          </Transition>
         </div>
       </div>
     </header>
@@ -1191,10 +1193,12 @@ onBeforeUnmount(() => {
             >
               ⋯
             </button>
-            <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
-              <button @click.stop="renameSheet(sheet)">重命名</button>
-              <button class="danger" @click.stop="deleteSheet(sheet)">删除工作表</button>
-            </div>
+            <Transition name="menu-fade">
+              <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+                <button @click.stop="renameSheet(sheet)">重命名</button>
+                <button class="danger" @click.stop="deleteSheet(sheet)">删除工作表</button>
+              </div>
+            </Transition>
           </div>
         </div>
 
@@ -1264,7 +1268,8 @@ onBeforeUnmount(() => {
             <span>+ 新建</span>
             <span class="create-caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
           </button>
-          <div v-if="createMenuOpen" class="create-menu" data-testid="create-menu">
+          <Transition name="menu-fade">
+            <div v-if="createMenuOpen" class="create-menu" data-testid="create-menu">
             <button
               v-for="item in createMenuItems"
               :key="item.action"
@@ -1284,7 +1289,8 @@ onBeforeUnmount(() => {
             >
               <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
             </button>
-          </div>
+            </div>
+          </Transition>
         </div>
       </aside>
 
@@ -1393,7 +1399,11 @@ onBeforeUnmount(() => {
           @query="applyViewQuery"
           @query-change="onQueryChange"
         />
-        <div v-else class="empty-state">还没有工作表，点击左侧 + 新建。</div>
+        <div v-else class="empty-state">
+          <p class="empty-state-title">还没有工作表</p>
+          <p class="empty-state-hint">点击左侧「+」或「新建」创建第一张表，开始录入数据。</p>
+          <button class="btn btn-primary" type="button" @click="createSheet">新建工作表</button>
+        </div>
       </main>
     </div>
 

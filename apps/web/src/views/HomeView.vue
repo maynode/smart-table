@@ -422,12 +422,14 @@ onUnmounted(() => {
             新建
             <span class="caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
           </button>
-          <div v-if="createMenuOpen" class="menu create-menu" data-testid="hub-create-menu">
-            <button type="button" @click="openCreateBaseForm">空白表格</button>
-            <button type="button" data-testid="hub-template" @click="openTemplate">
-              从模板新建
-            </button>
-          </div>
+          <Transition name="menu-fade">
+            <div v-if="createMenuOpen" class="menu create-menu" data-testid="hub-create-menu">
+              <button type="button" @click="openCreateBaseForm">空白表格</button>
+              <button type="button" data-testid="hub-template" @click="openTemplate">
+                从模板新建
+              </button>
+            </div>
+          </Transition>
         </div>
         <button
           v-if="currentWorkspaceId"
@@ -823,6 +825,11 @@ onUnmounted(() => {
   box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.12);
 }
 
+.topbar-search input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .search-icon {
   position: absolute;
   left: 12px;
@@ -1058,6 +1065,7 @@ onUnmounted(() => {
 .base-item:hover {
   border-color: #c7d7f5;
   box-shadow: 0 8px 24px rgba(31, 35, 41, 0.06);
+  transform: translateY(-1px);
 }
 
 .base-tile {
