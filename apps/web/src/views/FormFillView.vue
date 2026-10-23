@@ -48,7 +48,7 @@ function isEmptyValue(value: unknown): boolean {
 }
 
 function initialValue(field: PublicFormFieldDto): unknown {
-  if (field.type === 'multiSelect' || field.type === 'groupChat') return [];
+  if (field.type === 'multiSelect') return [];
   if (field.type === 'checkbox') return false;
   if (field.type === 'progress') return 0;
   return '';

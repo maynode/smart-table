@@ -322,9 +322,7 @@ export class FormsService implements OnModuleDestroy {
       ];
     });
 
-    const needsMembers = fields.some(
-      (field) => field.type === 'person' || field.type === 'groupChat',
-    );
+    const needsMembers = fields.some((field) => field.type === 'person');
     const members = needsMembers
       ? (
           await this.prisma.workspaceMember.findMany({

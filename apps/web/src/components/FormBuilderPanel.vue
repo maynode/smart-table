@@ -210,7 +210,7 @@ async function previewUpload(file: File) {
 }
 
 function initPreviewValue(field: FieldDto): unknown {
-  if (field.type === 'multiSelect' || field.type === 'groupChat') return [];
+  if (field.type === 'multiSelect') return [];
   if (field.type === 'checkbox') return false;
   if (field.type === 'progress') return 0;
   return '';
