@@ -67,8 +67,9 @@
 
 | 文件 | 说明 |
 |------|------|
-| **`01-catalog-latest.jpg`** | **目录页最新讨论稿（2026-10-24，未进 approved）**；小改以此为基准参考图。要点：双路由目录、成员浅蓝次要钮贴标题旁、顶栏铃铛+右上角红点、搜索+新建、列表名/描述叠排 |
-| `01-catalog-msg-icon-dot.jpg` | 与 latest 同内容备份（铃铛红点这一版） |
+| **`01-catalog-latest.jpg`** | **目录页最新讨论稿（未定稿）** = 与 `01-catalog-two-create-btns.jpg` 相同。要点：成员浅蓝钮、铃铛红点、搜索、**新建表格 + 从模板新建** 双按钮、智能表行 ⋯ 菜单。备查：`01-catalog-row-menu-ref.png` |
+| `01-catalog-two-create-btns.jpg` | 同上（命名备份） |
+| `01-catalog-msg-icon-dot.jpg` | 更早一版（单「新建」下拉），已非 latest |
 | `01-catalog-members-blue.jpg` 等 | 过程迭代，仅备查 |
 | `02-workbench-members-reloc.jpg` | 工作台待审（尚未轮到细抠） |
 | `01b` / `02b` | 更早 ux-opt 参考 |
