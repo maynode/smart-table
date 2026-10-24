@@ -159,8 +159,9 @@ export class QuotasService {
     const monthStart = new Date();
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
-    const [seats, storage, runs] = await Promise.all([
+    const [memberSeats, inviteSeats, storage, runs] = await Promise.all([
       this.prisma.workspaceMember.count({ where: { workspaceId } }),
+      this.prisma.workspaceInvite.count({ where: { workspaceId } }),
       this.prisma.storageObject.aggregate({
         where: { workspaceId },
         _sum: { sizeBytes: true },
@@ -173,7 +174,7 @@ export class QuotasService {
       }),
     ]);
     return {
-      seats,
+      seats: memberSeats + inviteSeats,
       storageBytes: Number(storage._sum.sizeBytes ?? 0n),
       automationRunsThisMonth: runs,
     };

@@ -95,10 +95,14 @@ export interface CommentDto {
 
 export interface MemberDto {
   userId: string;
+  /** 未注册待加入时有值，改角色/移除用此 id */
+  inviteId?: string;
   account: string;
   name: string;
   role: string;
   createdAt: string;
+  /** false = 已邀请但对方尚未注册 */
+  registered: boolean;
 }
 
 export interface AuthResult {

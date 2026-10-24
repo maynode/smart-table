@@ -18,26 +18,48 @@ const ROLE_OPTIONS: Array<{
   { value: 'admin', label: '管理员', hint: '可管理成员与工作区设置' },
 ];
 
-const props = defineProps<{ workspaceId: string }>();
+const props = withDefaults(
+  defineProps<{
+    workspaceId: string;
+    /** 嵌入页面时不显示关闭按钮，并改为贴合主区样式 */
+    embedded?: boolean;
+    /** 嵌入时的区块标题；默认「工作区成员」 */
+    embeddedTitle?: string;
+    /** 嵌入时的一句说明 */
+    embeddedHint?: string;
+  }>(),
+  {
+    embedded: false,
+    embeddedTitle: '工作区成员',
+    embeddedHint: '',
+  },
+);
 const emit = defineEmits<{
   close: [];
   changed: [members: MemberDto[]];
 }>();
 
 const members = ref<MemberDto[]>([]);
-const account = ref('');
+const batchAccounts = ref('');
 const role = ref<AssignableRole>('editor');
 const loading = ref(false);
 const inviting = ref(false);
 const error = ref('');
+const inviteSummary = ref('');
 const openMenu = ref<'invite' | string | null>(null);
 const menuPos = ref<{ top: number; left: number } | null>(null);
 
 const menuMember = computed(() =>
   openMenu.value && openMenu.value !== 'invite'
-    ? members.value.find((item) => item.userId === openMenu.value) ?? null
+    ? members.value.find((item) => memberKey(item) === openMenu.value) ?? null
     : null,
 );
+
+function memberKey(member: MemberDto): string {
+  return member.registered
+    ? member.userId
+    : (member.inviteId ?? member.account);
+}
 
 function messageOf(value: unknown): string {
   return value instanceof ApiError ? value.message : '网络错误，请稍后重试';
@@ -110,7 +132,12 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    members.value = await endpoints.listMembers(props.workspaceId);
+    members.value = (await endpoints.listMembers(props.workspaceId)).map(
+      (item) => ({
+        ...item,
+        registered: item.registered !== false,
+      }),
+    );
     emit('changed', [...members.value]);
   } catch (cause) {
     error.value = messageOf(cause);
@@ -119,30 +146,78 @@ async function load(): Promise<void> {
   }
 }
 
+function parseInviteAccounts(raw: string): string[] {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const part of raw.split(/[\s,;，；]+/)) {
+    const next = part.trim().toLowerCase();
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    list.push(next);
+  }
+  return list;
+}
+
 async function invite(): Promise<void> {
-  const target = account.value.trim().toLowerCase();
-  if (!target) {
+  const targets = parseInviteAccounts(batchAccounts.value);
+  if (targets.length === 0) {
     error.value = '请输入成员账号';
+    inviteSummary.value = '';
     return;
   }
-  const accountError = validateAccount(target);
-  if (accountError) {
-    error.value = accountError;
+
+  const invalid = targets
+    .map((item) => ({ item, message: validateAccount(item) }))
+    .filter((row) => row.message);
+  if (invalid.length > 0) {
+    error.value = `账号格式有误：${invalid
+      .slice(0, 3)
+      .map((row) => row.item)
+      .join('、')}${invalid.length > 3 ? '…' : ''}`;
+    inviteSummary.value = '';
     return;
   }
+
   inviting.value = true;
   error.value = '';
+  inviteSummary.value = '';
+  const added: MemberDto[] = [];
+  const failed: string[] = [];
   try {
-    const created = await endpoints.inviteMember(
-      props.workspaceId,
-      target,
-      role.value,
-    );
-    members.value = [...members.value, created];
-    account.value = '';
-    emit('changed', [...members.value]);
-  } catch (cause) {
-    error.value = messageOf(cause);
+    for (const target of targets) {
+      try {
+        const created = await endpoints.inviteMember(
+          props.workspaceId,
+          target,
+          role.value,
+        );
+        added.push(created);
+      } catch (cause) {
+        failed.push(`${target}（${messageOf(cause)}）`);
+      }
+    }
+    if (added.length > 0) {
+      const keys = new Set(members.value.map(memberKey));
+      for (const item of added) {
+        const key = memberKey(item);
+        if (keys.has(key)) continue;
+        keys.add(key);
+        members.value = [...members.value, item];
+      }
+      emit('changed', [...members.value]);
+      batchAccounts.value = '';
+    }
+    if (failed.length > 0) {
+      error.value =
+        targets.length === 1
+          ? failed[0]!.replace(/^[^（]+（(.+)）$/, '$1')
+          : `${failed.length} 个失败：${failed.slice(0, 2).join('；')}${
+              failed.length > 2 ? '…' : ''
+            }`;
+    }
+    if (added.length > 0) {
+      inviteSummary.value = `已邀请 ${added.length} 人`;
+    }
   } finally {
     inviting.value = false;
   }
@@ -153,14 +228,19 @@ async function changeRole(
   next: AssignableRole,
 ): Promise<void> {
   if (next === member.role) return;
+  const targetId = member.registered
+    ? member.userId
+    : (member.inviteId ?? '');
+  if (!targetId) return;
   try {
     const updated = await endpoints.updateMemberRole(
       props.workspaceId,
-      member.userId,
+      targetId,
       next,
     );
+    const key = memberKey(member);
     members.value = members.value.map((item) =>
-      item.userId === updated.userId ? updated : item,
+      memberKey(item) === key ? updated : item,
     );
     emit('changed', [...members.value]);
   } catch (cause) {
@@ -170,16 +250,25 @@ async function changeRole(
 }
 
 async function remove(member: MemberDto): Promise<void> {
-  const ok = await confirmDialog(`将「${member.name}」移出工作区？`, {
-    title: '移除成员',
-    confirmLabel: '移除',
-  });
+  const label = member.registered ? member.name : member.account;
+  const ok = await confirmDialog(
+    member.registered
+      ? `将「${label}」移出工作区？`
+      : `取消邀请「${label}」？`,
+    {
+      title: member.registered ? '移除成员' : '取消邀请',
+      confirmLabel: member.registered ? '移除' : '取消邀请',
+    },
+  );
   if (!ok) return;
+  const targetId = member.registered
+    ? member.userId
+    : (member.inviteId ?? '');
+  if (!targetId) return;
   try {
-    await endpoints.removeMember(props.workspaceId, member.userId);
-    members.value = members.value.filter(
-      (item) => item.userId !== member.userId,
-    );
+    await endpoints.removeMember(props.workspaceId, targetId);
+    const key = memberKey(member);
+    members.value = members.value.filter((item) => memberKey(item) !== key);
     emit('changed', [...members.value]);
   } catch (cause) {
     error.value = messageOf(cause);
@@ -201,63 +290,105 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="members-panel modal" data-testid="members-panel">
+  <section
+    class="members-panel"
+    :class="{ modal: !embedded, embedded }"
+    data-testid="members-panel"
+  >
     <header class="members-head">
       <div>
-        <h3>工作区成员</h3>
-        <p>成员会自动出现在人员字段的可选列表中。</p>
+        <h3>{{ embedded ? embeddedTitle : '工作区成员' }}</h3>
+        <p v-if="embedded && embeddedHint">{{ embeddedHint }}</p>
       </div>
-      <button class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
-    </header>
-
-    <form class="invite-form" @submit.prevent="invite">
-      <input
-        v-model="account"
-        placeholder="输入已注册成员的账号"
-        data-testid="invite-account"
-      />
-      <div class="role-select" @click.stop>
+      <div class="members-head-actions">
         <button
+          v-if="!embedded"
+          class="icon-btn"
+          aria-label="关闭"
           type="button"
-          class="role-trigger"
-          data-testid="invite-role"
-          :aria-expanded="openMenu === 'invite'"
-          @click="toggleMenu('invite', $event)"
+          @click="emit('close')"
         >
-          <span>{{ roleLabel(role) }}</span>
-          <span class="role-caret" :class="{ open: openMenu === 'invite' }" />
+          ×
         </button>
       </div>
-      <button
-        class="btn btn-primary"
-        type="submit"
-        data-testid="invite-submit"
+    </header>
+
+    <form class="invite-form invite-form-batch" @submit.prevent="invite">
+      <textarea
+        v-model="batchAccounts"
+        class="invite-batch-input"
+        data-testid="invite-account"
+        rows="4"
+        placeholder="每行一个账号，也可用逗号分隔"
         :disabled="inviting"
-      >
-        {{ inviting ? '邀请中…' : '邀请' }}
-      </button>
+      />
+      <div class="invite-form-tools">
+        <div class="role-select" @click.stop>
+          <button
+            type="button"
+            class="role-trigger"
+            data-testid="invite-role"
+            :aria-expanded="openMenu === 'invite'"
+            :disabled="inviting"
+            @click="toggleMenu('invite', $event)"
+          >
+            <span>{{ roleLabel(role) }}</span>
+            <span class="role-caret" :class="{ open: openMenu === 'invite' }" />
+          </button>
+        </div>
+        <button
+          class="btn"
+          :class="embedded ? 'btn-ghost invite-btn' : 'btn-primary'"
+          type="submit"
+          data-testid="invite-submit"
+          :disabled="inviting"
+        >
+          {{ inviting ? '邀请中…' : '邀请' }}
+        </button>
+      </div>
     </form>
+    <p v-if="inviteSummary" class="invite-summary" data-testid="invite-summary">
+      {{ inviteSummary }}
+    </p>
     <p v-if="error" class="invite-error" data-testid="members-error">{{ error }}</p>
 
     <ul class="member-list">
-      <li v-for="member in members" :key="member.userId" data-testid="member-row">
-        <span class="avatar">{{ member.name.slice(0, 1) }}</span>
+      <li
+        v-for="member in members"
+        :key="memberKey(member)"
+        data-testid="member-row"
+        :data-registered="member.registered ? '1' : '0'"
+      >
+        <span class="avatar" :class="{ pending: !member.registered }">
+          {{ (member.name || member.account).slice(0, 1) }}
+        </span>
         <span class="member-main">
-          <strong>{{ member.name }}</strong>
-          <small>{{ member.account }}</small>
+          <strong>
+            {{ member.registered ? member.name : member.account }}
+            <span
+              v-if="!member.registered"
+              class="pending-tag"
+              data-testid="member-pending-tag"
+            >
+              未注册
+            </span>
+          </strong>
+          <small v-if="member.registered && member.account !== member.name">
+            {{ member.account }}
+          </small>
         </span>
         <div v-if="member.role !== 'owner'" class="role-select compact" @click.stop>
           <button
             type="button"
             class="role-trigger"
-            :aria-label="`${member.name} 的角色`"
-            :aria-expanded="openMenu === member.userId"
-            @click="toggleMenu(member.userId, $event)"
+            :aria-label="`${member.account} 的角色`"
+            :aria-expanded="openMenu === memberKey(member)"
+            @click="toggleMenu(memberKey(member), $event)"
           >
             <span>{{ roleLabel(member.role) }}</span>
             <span
               class="role-caret"
-              :class="{ open: openMenu === member.userId }"
+              :class="{ open: openMenu === memberKey(member) }"
             />
           </button>
         </div>
@@ -265,7 +396,7 @@ onUnmounted(() => {
         <button
           v-if="member.role !== 'owner'"
           class="icon-btn danger"
-          title="移出工作区"
+          :title="member.registered ? '移出工作区' : '取消邀请'"
           @click="remove(member)"
         >
           ×
@@ -320,7 +451,23 @@ onUnmounted(() => {
   padding: 20px 22px 16px;
   border-radius: 14px;
   background: #fff;
+}
+
+.members-panel.modal {
   box-shadow: 0 24px 72px rgba(15, 23, 42, 0.22);
+}
+
+.members-panel.embedded {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 20px 24px 22px;
+  border: 0;
+  border-top: 1px solid #eef0f3;
+  border-radius: 0;
+  box-shadow: none;
+  background: #fafbfc;
 }
 .members-head {
   display: flex;
@@ -330,17 +477,37 @@ onUnmounted(() => {
   flex: none;
   padding-bottom: 4px;
 }
+.members-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
 .members-head h3 {
   margin: 0 0 6px;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary, #1f2329);
 }
+.members-panel.embedded .members-head h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #646a73;
+}
 .members-head p {
   margin: 0;
   color: var(--text-tertiary, #8f959e);
   font-size: 12px;
   line-height: 1.5;
+}
+.members-panel.embedded .members-head p {
+  margin: 0 0 14px;
+}
+.members-panel.embedded .invite-btn {
+  height: 34px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
 }
 .invite-form {
   display: flex;
@@ -352,25 +519,51 @@ onUnmounted(() => {
   border-radius: 10px;
   border: 1px solid var(--border-light, #eef0f3);
 }
-.invite-form input {
-  flex: 1;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
+.invite-form.invite-form-batch {
+  flex-direction: column;
+  align-items: stretch;
+}
+.members-panel.embedded .invite-form {
+  margin: 0 0 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.invite-batch-input {
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 10px;
   border: 1px solid #d0d3d9;
   border-radius: 8px;
   background: #fff;
   font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  line-height: 1.5;
 }
-.invite-form input:focus {
+.invite-batch-input:focus {
   outline: none;
   border-color: #3370ff;
   box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
+}
+.invite-form-tools {
+  display: flex;
+  gap: 8px;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
 }
 .invite-error {
   margin: 8px 0 0;
   flex: none;
   color: #d92d20;
+  font-size: 12px;
+}
+.invite-summary {
+  margin: 8px 0 0;
+  flex: none;
+  color: #389e0d;
   font-size: 12px;
 }
 
@@ -436,6 +629,15 @@ onUnmounted(() => {
   overflow-x: hidden;
   overflow-y: auto;
 }
+.members-panel.embedded .member-list {
+  margin-top: 10px;
+  overflow: visible;
+}
+.members-panel.embedded .member-list li {
+  min-height: 48px;
+  padding-left: 0;
+  padding-right: 0;
+}
 .member-list li {
   display: flex;
   align-items: center;
@@ -454,6 +656,19 @@ onUnmounted(() => {
   min-height: auto !important;
   padding: 12px 8px !important;
 }
+.pending-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 4px;
+  background: #fff7e8;
+  color: #d48806;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
 .avatar {
   width: 32px;
   height: 32px;
@@ -466,6 +681,10 @@ onUnmounted(() => {
   font-weight: 600;
   font-size: 13px;
   flex: none;
+}
+.avatar.pending {
+  background: #fff7e8;
+  color: #d48806;
 }
 .member-main {
   display: flex;

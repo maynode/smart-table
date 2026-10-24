@@ -19,7 +19,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     expect(stats!.rows.end).toBeLessThan(60);
   });
 
-  test('edits a cell, comments, and lists members in the shell', async ({
+  test('edits a cell, comments, and opens content permissions in the shell', async ({
     page,
   }) => {
     const stamp = Date.now();
@@ -165,13 +165,8 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('[data-testid="comment-send"]').click();
     await expect(page.locator('.comments-drawer')).toContainText('第一条评论');
 
-    // The drawer mask covers the top bar; close it before using 成员.
+    // Close comments before opening content permissions.
     await page.locator('.comments-drawer .icon-btn').click();
-
-    // Members dialog reflects the workspace owner.
-    await page.getByRole('button', { name: '成员', exact: true }).click();
-    await expect(page.locator('.modal')).toContainText('网格测试员');
-    await page.locator('.modal .icon-btn').click();
 
     // Content permissions: home lists objects; drill into detail for ACL level.
     await page.locator('[data-testid="permissions-open"]').click();

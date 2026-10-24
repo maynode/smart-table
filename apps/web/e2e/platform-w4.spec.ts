@@ -78,23 +78,24 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
     },
     { token: owner.accessToken, user: owner.user },
   );
-  await page.goto(
-    `/workspaces/${workspace.id}/bases/${base.id}?sheet=${sheet.id}`,
-  );
-  await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
-
-  // Invite, change role, then remove a workspace member.
-  await page.getByTestId('more-open').click();
-  await page.getByTestId('more-menu').getByText('成员与邀请').click();
+  // 成员是工作区能力：在 Hub 邀请 / 改角色 / 移除，不在表内顶栏。
+  await page.goto(`/?ws=${workspace.id}`);
+  await page.getByTestId('hub-members').click();
   await expect(page.getByTestId('members-panel')).toBeVisible();
-  await page.getByTestId('invite-email').fill(guest.user.email);
-  await page.getByTestId('invite-role').selectOption('editor');
+  const guestAccount =
+    guest.user.account ?? guest.user.email?.split('@')[0] ?? guest.user.email;
+  await page.getByTestId('invite-account').fill(guestAccount);
   await page.getByTestId('invite-submit').click();
   const guestRow = page
     .getByTestId('member-row')
-    .filter({ hasText: guest.user.email });
+    .filter({ hasText: guestAccount });
   await expect(guestRow).toBeVisible();
-  await guestRow.getByRole('combobox').selectOption('viewer');
+  await guestRow.locator('.role-trigger').click();
+  await page
+    .getByTestId('invite-role-menu')
+    .locator('button')
+    .filter({ hasText: '只读' })
+    .click();
   await expect
     .poll(async () => {
       const members = await (
@@ -117,7 +118,11 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
       );
     })
     .toBe(false);
-  await page.getByTestId('members-panel').locator('.icon-btn').first().click();
+
+  await page.goto(
+    `/workspaces/${workspace.id}/bases/${base.id}?sheet=${sheet.id}`,
+  );
+  await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
   // Dashboard: add two different chart types, resize, and run a scheduled push.
   await page.getByTestId('create-menu-toggle').click();

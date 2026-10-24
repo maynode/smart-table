@@ -81,7 +81,43 @@ export class AuthService {
       throw error;
     }
 
+    await this.claimWorkspaceInvites(user.id, account);
     return this.issueToken(user);
+  }
+
+  /** 注册后认领「待加入」邀请，转为正式工作区成员 */
+  private async claimWorkspaceInvites(
+    userId: string,
+    account: string,
+  ): Promise<void> {
+    const invites = await this.prisma.workspaceInvite.findMany({
+      where: { account },
+    });
+    if (invites.length === 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const invite of invites) {
+        try {
+          await tx.workspaceMember.create({
+            data: {
+              workspaceId: invite.workspaceId,
+              userId,
+              role: invite.role,
+            },
+          });
+        } catch (error) {
+          if (
+            !(
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === 'P2002'
+            )
+          ) {
+            throw error;
+          }
+        }
+        await tx.workspaceInvite.delete({ where: { id: invite.id } });
+      }
+    });
   }
 
   async login(accountRaw: string, password: string): Promise<AuthResult> {

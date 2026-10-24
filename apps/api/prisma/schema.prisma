@@ -46,6 +46,7 @@ model Workspace {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   members WorkspaceMember[]
+  invites WorkspaceInvite[]
   bases   Base[]
   sharesOut CrossWorkspaceShare[] @relation("ShareSourceWorkspace")
   sharesIn  CrossWorkspaceShare[] @relation("ShareTargetWorkspace")
@@ -71,6 +72,23 @@ model WorkspaceMember {
   @@index([userId])
   @@index([userId, pinnedAt])
   @@map("workspace_members")
+}
+
+/// 邀请尚未注册的账号；对方注册后自动转为 WorkspaceMember
+model WorkspaceInvite {
+  id          String        @id @default(uuid()) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  /// 被邀请账号（小写）
+  account     String
+  role        WorkspaceRole @default(editor)
+  invitedById String?       @map("invited_by_id") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, account])
+  @@index([account])
+  @@map("workspace_invites")
 }
 
 model Base {

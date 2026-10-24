@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
+import { normalizeAccount, validateAccount } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { roleAtLeast } from './workspace-roles';
@@ -18,6 +19,17 @@ export interface WorkspaceWithRole {
   role: WorkspaceRole;
   pinned: boolean;
   pinnedAt: Date | null;
+}
+
+export interface MemberView {
+  userId: string;
+  inviteId?: string;
+  account: string;
+  name: string;
+  role: WorkspaceRole;
+  createdAt: Date;
+  /** false = 已邀请但对方尚未注册 */
+  registered: boolean;
 }
 
 @Injectable()
@@ -170,22 +182,41 @@ export class WorkspacesService {
     return membership;
   }
 
-  async listMembers(workspaceId: string, userId: string) {
+  async listMembers(workspaceId: string, userId: string): Promise<MemberView[]> {
     await this.requireMember(workspaceId, userId, 'viewer');
 
-    const members = await this.prisma.workspaceMember.findMany({
-      where: { workspaceId },
-      include: { user: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    const [members, invites] = await Promise.all([
+      this.prisma.workspaceMember.findMany({
+        where: { workspaceId },
+        include: { user: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.workspaceInvite.findMany({
+        where: { workspaceId },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
 
-    return members.map((member) => ({
+    const active: MemberView[] = members.map((member) => ({
       userId: member.userId,
       account: member.user.account,
       name: member.user.name,
       role: member.role,
       createdAt: member.createdAt,
+      registered: true,
     }));
+
+    const pending: MemberView[] = invites.map((invite) => ({
+      userId: '',
+      inviteId: invite.id,
+      account: invite.account,
+      name: invite.account,
+      role: invite.role,
+      createdAt: invite.createdAt,
+      registered: false,
+    }));
+
+    return [...active, ...pending];
   }
 
   async invite(
@@ -193,40 +224,81 @@ export class WorkspacesService {
     actorId: string,
     accountRaw: string,
     role: WorkspaceRole,
-  ) {
+  ): Promise<MemberView> {
     const actor = await this.requireMember(workspaceId, actorId, 'admin');
 
-    if (role === 'owner' && actor.role !== 'owner') {
-      throw new ForbiddenException('只有所有者可以授予所有者角色');
+    if (role === 'owner') {
+      throw new BadRequestException('不能直接邀请为所有者');
+    }
+    if (role === 'admin' && actor.role !== 'owner') {
+      throw new ForbiddenException('只有所有者可以邀请管理员');
     }
 
-    const account = accountRaw.trim().toLowerCase();
+    const accountError = validateAccount(accountRaw);
+    if (accountError) throw new BadRequestException(accountError);
+    const account = normalizeAccount(accountRaw);
+
     const user = await this.prisma.user.findUnique({
       where: { account },
     });
-    if (!user) {
-      throw new NotFoundException('该账号尚未注册');
-    }
 
     await this.quotas.assertSeats(workspaceId);
 
+    if (user) {
+      try {
+        const member = await this.prisma.workspaceMember.create({
+          data: { workspaceId, userId: user.id, role },
+        });
+        return {
+          userId: user.id,
+          account: user.account,
+          name: user.name,
+          role: member.role,
+          createdAt: member.createdAt,
+          registered: true,
+        };
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该成员已在工作区中');
+        }
+        throw error;
+      }
+    }
+
+    const existingInvite = await this.prisma.workspaceInvite.findUnique({
+      where: { workspaceId_account: { workspaceId, account } },
+    });
+    if (existingInvite) {
+      throw new ConflictException('该账号已在待加入列表中');
+    }
+
     try {
-      const member = await this.prisma.workspaceMember.create({
-        data: { workspaceId, userId: user.id, role },
+      const invite = await this.prisma.workspaceInvite.create({
+        data: {
+          workspaceId,
+          account,
+          role,
+          invitedById: actorId,
+        },
       });
       return {
-        userId: user.id,
-        account: user.account,
-        name: user.name,
-        role: member.role,
-        createdAt: member.createdAt,
+        userId: '',
+        inviteId: invite.id,
+        account: invite.account,
+        name: invite.account,
+        role: invite.role,
+        createdAt: invite.createdAt,
+        registered: false,
       };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('该成员已在工作区中');
+        throw new ConflictException('该账号已在待加入列表中');
       }
       throw error;
     }
@@ -235,65 +307,130 @@ export class WorkspacesService {
   async changeRole(
     workspaceId: string,
     actorId: string,
-    targetUserId: string,
+    targetId: string,
     role: WorkspaceRole,
-  ) {
+  ): Promise<MemberView> {
     const actor = await this.requireMember(workspaceId, actorId, 'admin');
 
     const target = await this.prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+      where: { workspaceId_userId: { workspaceId, userId: targetId } },
     });
-    if (!target) {
+    if (target) {
+      if (actor.role !== 'owner') {
+        if (role === 'owner' || target.role === 'owner') {
+          throw new ForbiddenException('只有所有者可以调整所有者');
+        }
+        if (target.role === 'admin') {
+          throw new ForbiddenException('只有所有者可以调整管理员');
+        }
+      }
+      if (role === 'owner' && actor.role !== 'owner') {
+        throw new ForbiddenException('只有所有者可以授予所有者角色');
+      }
+
+      const updated = await this.prisma.workspaceMember.update({
+        where: { id: target.id },
+        data: { role },
+      });
+      const user = await this.prisma.user.findUnique({
+        where: { id: targetId },
+      });
+      return {
+        userId: updated.userId,
+        account: user?.account ?? '',
+        name: user?.name ?? '',
+        role: updated.role,
+        createdAt: updated.createdAt,
+        registered: true,
+      };
+    }
+
+    const invite = await this.prisma.workspaceInvite.findFirst({
+      where: { id: targetId, workspaceId },
+    });
+    if (!invite) {
       throw new NotFoundException('成员不存在');
     }
-
-    if (actor.role !== 'owner') {
-      if (role === 'owner' || target.role === 'owner') {
-        throw new ForbiddenException('只有所有者可以调整所有者');
-      }
-      if (target.role === 'admin') {
-        throw new ForbiddenException('只有所有者可以调整管理员');
-      }
+    if (role === 'owner') {
+      throw new BadRequestException('不能将待加入成员设为所有者');
     }
-
-    const updated = await this.prisma.workspaceMember.update({
-      where: { id: target.id },
+    if (role === 'admin' && actor.role !== 'owner') {
+      throw new ForbiddenException('只有所有者可以调整管理员');
+    }
+    const updatedInvite = await this.prisma.workspaceInvite.update({
+      where: { id: invite.id },
       data: { role },
     });
-
-    const user = await this.prisma.user.findUnique({
-      where: { id: targetUserId },
-    });
-
     return {
-      userId: updated.userId,
-      account: user?.account ?? '',
-      name: user?.name ?? '',
-      role: updated.role,
-      createdAt: updated.createdAt,
+      userId: '',
+      inviteId: updatedInvite.id,
+      account: updatedInvite.account,
+      name: updatedInvite.account,
+      role: updatedInvite.role,
+      createdAt: updatedInvite.createdAt,
+      registered: false,
     };
   }
 
   async removeMember(
     workspaceId: string,
     actorId: string,
-    targetUserId: string,
+    targetId: string,
   ): Promise<void> {
     const actor = await this.requireMember(workspaceId, actorId, 'admin');
 
     const target = await this.prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId, userId: targetUserId } },
+      where: { workspaceId_userId: { workspaceId, userId: targetId } },
     });
-    if (!target) {
-      throw new NotFoundException('成员不存在');
-    }
-    if (target.role === 'owner') {
-      throw new BadRequestException('不能移除工作区所有者');
-    }
-    if (actor.role !== 'owner' && target.role === 'admin') {
-      throw new ForbiddenException('只有所有者可以移除管理员');
+    if (target) {
+      if (target.role === 'owner') {
+        throw new BadRequestException('不能移除工作区所有者');
+      }
+      if (actor.role !== 'owner' && target.role === 'admin') {
+        throw new ForbiddenException('只有所有者可以移除管理员');
+      }
+      await this.prisma.workspaceMember.delete({ where: { id: target.id } });
+      return;
     }
 
-    await this.prisma.workspaceMember.delete({ where: { id: target.id } });
+    const invite = await this.prisma.workspaceInvite.findFirst({
+      where: { id: targetId, workspaceId },
+    });
+    if (!invite) {
+      throw new NotFoundException('成员不存在');
+    }
+    await this.prisma.workspaceInvite.delete({ where: { id: invite.id } });
+  }
+
+  /** 用户注册成功后，把针对该账号的待加入邀请转为正式成员 */
+  async claimInvitesForAccount(userId: string, account: string): Promise<void> {
+    const invites = await this.prisma.workspaceInvite.findMany({
+      where: { account },
+    });
+    if (invites.length === 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const invite of invites) {
+        try {
+          await tx.workspaceMember.create({
+            data: {
+              workspaceId: invite.workspaceId,
+              userId,
+              role: invite.role,
+            },
+          });
+        } catch (error) {
+          if (
+            !(
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === 'P2002'
+            )
+          ) {
+            throw error;
+          }
+        }
+        await tx.workspaceInvite.delete({ where: { id: invite.id } });
+      }
+    });
   }
 }

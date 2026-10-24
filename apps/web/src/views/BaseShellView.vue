@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
-import MembersPanel from '../components/MembersPanel.vue';
 import AutomationPanel from '../components/AutomationPanel.vue';
 import FormBuilderPanel from '../components/FormBuilderPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
@@ -89,7 +88,6 @@ const mentionQuery = ref<string | null>(null);
 const mentionIndex = ref(0);
 const commentMentions = ref<string[]>([]);
 
-const membersOpen = ref(false);
 const members = ref<MemberDto[]>([]);
 
 const automationsOpen = ref(false);
@@ -911,15 +909,6 @@ async function postComment(): Promise<void> {
   }
 }
 
-async function openMembers(): Promise<void> {
-  membersOpen.value = true;
-  try {
-    members.value = await endpoints.listMembers(workspaceId.value);
-  } catch (error) {
-    toast(messageOf(error));
-  }
-}
-
 const importInput = ref<HTMLInputElement | null>(null);
 
 function handleCreateAction(
@@ -1090,7 +1079,6 @@ onBeforeUnmount(() => {
       </div>
       <div class="topbar-right">
         <NotificationBell />
-        <button class="topbar-btn" @click="openMembers">成员</button>
         <button
           class="topbar-btn"
           data-testid="comments-toggle"
@@ -1137,7 +1125,6 @@ onBeforeUnmount(() => {
           </button>
           <Transition name="menu-fade">
             <div v-if="moreOpen" class="more-menu" data-testid="more-menu">
-              <button @click="openMembers(); moreOpen = false">成员与邀请</button>
               <button @click="renameActiveSheet">重命名当前工作表</button>
               <button
                 data-testid="more-public-view"
@@ -1482,18 +1469,6 @@ onBeforeUnmount(() => {
         </button>
       </form>
     </aside>
-
-    <div
-      v-if="membersOpen"
-      class="modal-mask"
-      @click.self="membersOpen = false"
-    >
-      <MembersPanel
-        :workspace-id="workspaceId"
-        @close="membersOpen = false"
-        @changed="members = $event"
-      />
-    </div>
 
     <div
       v-if="automationsOpen"

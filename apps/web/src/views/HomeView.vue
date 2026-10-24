@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { validateAccount } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import MembersPanel from '../components/MembersPanel.vue';
@@ -14,7 +15,6 @@ import type {
   TemplateInstantiateResult,
   WorkspaceDto,
 } from '../api/types';
-import authLoginMid from '../assets/auth-login-mid.svg';
 
 const WS_STORAGE_KEY = 'smart-table.currentWorkspaceId';
 
@@ -25,11 +25,10 @@ const workspaces = ref<WorkspaceDto[]>([]);
 const currentWorkspaceId = ref<string>('');
 const bases = ref<BaseDto[]>([]);
 const workspaceQuery = ref('');
-const baseQuery = ref('');
 const loading = ref(false);
 const basesLoading = ref(false);
-const membersOpen = ref(false);
 const templateOpen = ref(false);
+const membersSectionOpen = ref(false);
 const permissionsOpen = ref(false);
 const permissionsBaseId = ref('');
 const moveOpen = ref(false);
@@ -39,6 +38,25 @@ const createMenuOpen = ref(false);
 const rowMenuId = ref<string | null>(null);
 const wsMenuId = ref<string | null>(null);
 const wsMenuPos = ref<{ top: number; left: number } | null>(null);
+type OnboardInviteRole = 'admin' | 'editor' | 'viewer';
+type OnboardInviteRow = {
+  key: number;
+  account: string;
+  role: OnboardInviteRole;
+};
+
+let onboardInviteKeySeq = 1;
+
+const newWorkspaceName = ref('');
+const onboardInvitePaste = ref('');
+const onboardInviteDefaultRole = ref<OnboardInviteRole>('editor');
+const onboardInviteRows = ref<OnboardInviteRow[]>([]);
+const creatingWorkspace = ref(false);
+const workspaceOnboardInput = ref<HTMLInputElement | null>(null);
+const newBaseName = ref('');
+const newBaseDescription = ref('');
+const creatingBase = ref(false);
+const baseOnboardInput = ref<HTMLInputElement | null>(null);
 
 const wsMenuTarget = computed(
   () => workspaces.value.find((item) => item.id === wsMenuId.value) ?? null,
@@ -62,16 +80,6 @@ const filteredWorkspaces = computed(() => {
   return workspaces.value.filter((item) => item.name.toLowerCase().includes(q));
 });
 
-const filteredBases = computed(() => {
-  const q = baseQuery.value.trim().toLowerCase();
-  if (!q) return bases.value;
-  return bases.value.filter(
-    (item) =>
-      item.name.toLowerCase().includes(q) ||
-      (item.description ?? '').toLowerCase().includes(q),
-  );
-});
-
 const editableWorkspaces = computed(() =>
   workspaces.value.filter(
     (item) =>
@@ -85,6 +93,23 @@ const canEditCurrent = computed(() => {
   const role = currentWorkspace.value?.role;
   return role === 'owner' || role === 'admin' || role === 'editor';
 });
+
+/** 尚无工作区：隐藏左侧栏 */
+const hideWorkspaceSidebar = computed(() => workspaces.value.length === 0);
+
+/** 新账号尚无工作区：主区居中创建 */
+const needsWorkspaceOnboard = computed(
+  () => !loading.value && workspaces.value.length === 0,
+);
+
+/** 当前工作区尚无表格且可编辑：主区创建表格 + 成员 */
+const needsBaseOnboard = computed(
+  () =>
+    Boolean(currentWorkspaceId.value) &&
+    !basesLoading.value &&
+    bases.value.length === 0 &&
+    canEditCurrent.value,
+);
 
 function canManageWorkspace(ws: WorkspaceDto): boolean {
   return ws.role === 'owner' || ws.role === 'admin';
@@ -234,7 +259,187 @@ async function loadBases(): Promise<void> {
   }
 }
 
+async function applyCreatedWorkspace(workspace: WorkspaceDto): Promise<void> {
+  workspaces.value = [...workspaces.value, workspace];
+  newWorkspaceName.value = '';
+  toast('工作区已创建');
+  persistWorkspaceId(workspace.id);
+  await loadBases();
+}
+
+function parseInviteAccounts(raw: string): string[] {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const part of raw.split(/[\s,;，；]+/)) {
+    const next = part.trim().toLowerCase();
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    list.push(next);
+  }
+  return list;
+}
+
+function collectOnboardInvites():
+  | { ok: true; invites: Array<{ account: string; role: OnboardInviteRole }> }
+  | { ok: false; message: string } {
+  // 先把粘贴框里还没「加入」的账号并进列表（用默认权限）
+  const pendingPaste = parseInviteAccounts(onboardInvitePaste.value);
+  if (pendingPaste.length > 0) {
+    const merged = applyPasteToOnboardRows(pendingPaste, false);
+    if (!merged.ok) return merged;
+  }
+
+  const invites: Array<{ account: string; role: OnboardInviteRole }> = [];
+  const seen = new Set<string>();
+  for (const row of onboardInviteRows.value) {
+    const account = row.account.trim().toLowerCase();
+    if (!account) continue;
+    const invalid = validateAccount(account);
+    if (invalid) {
+      return { ok: false, message: `账号格式有误：${account}` };
+    }
+    if (seen.has(account)) {
+      return { ok: false, message: `账号重复：${account}` };
+    }
+    seen.add(account);
+    invites.push({ account, role: row.role });
+  }
+  return { ok: true, invites };
+}
+
+function applyPasteToOnboardRows(
+  accounts: string[],
+  toastOnEmpty: boolean,
+): { ok: true } | { ok: false; message: string } {
+  if (accounts.length === 0) {
+    if (toastOnEmpty) toast('请先粘贴账号');
+    return { ok: true };
+  }
+  const invalid = accounts.filter((item) => validateAccount(item));
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      message: `账号格式有误：${invalid.slice(0, 3).join('、')}${
+        invalid.length > 3 ? '…' : ''
+      }`,
+    };
+  }
+  const existing = new Set(
+    onboardInviteRows.value.map((row) => row.account.trim().toLowerCase()),
+  );
+  const next = [...onboardInviteRows.value];
+  let added = 0;
+  for (const account of accounts) {
+    if (existing.has(account)) continue;
+    existing.add(account);
+    next.push({
+      key: onboardInviteKeySeq++,
+      account,
+      role: onboardInviteDefaultRole.value,
+    });
+    added += 1;
+  }
+  onboardInviteRows.value = next;
+  onboardInvitePaste.value = '';
+  if (toastOnEmpty && added === 0) {
+    toast('账号已在列表中');
+  }
+  return { ok: true };
+}
+
+function addOnboardInviteFromPaste(): void {
+  const result = applyPasteToOnboardRows(
+    parseInviteAccounts(onboardInvitePaste.value),
+    true,
+  );
+  if (!result.ok) toast(result.message);
+}
+
+function removeOnboardInviteRow(key: number): void {
+  onboardInviteRows.value = onboardInviteRows.value.filter(
+    (row) => row.key !== key,
+  );
+}
+
+function resetOnboardInviteRows(): void {
+  onboardInvitePaste.value = '';
+  onboardInviteRows.value = [];
+}
+
+async function inviteOnboardMembers(
+  workspaceId: string,
+  invites: Array<{ account: string; role: OnboardInviteRole }>,
+): Promise<void> {
+  if (invites.length === 0) return;
+
+  let added = 0;
+  const failed: string[] = [];
+  for (const invite of invites) {
+    try {
+      await endpoints.inviteMember(
+        workspaceId,
+        invite.account,
+        invite.role,
+      );
+      added += 1;
+    } catch (error) {
+      failed.push(`${invite.account}（${messageOf(error)}）`);
+    }
+  }
+  resetOnboardInviteRows();
+  if (failed.length > 0) {
+    toast(
+      invites.length === 1
+        ? failed[0]!.replace(/^[^（]+（(.+)）$/, '$1')
+        : `${failed.length} 个邀请失败：${failed.slice(0, 2).join('；')}${
+            failed.length > 2 ? '…' : ''
+          }`,
+    );
+  } else if (added > 0) {
+    toast(`已邀请 ${added} 人`);
+  }
+}
+
+async function submitOnboardWorkspace(): Promise<void> {
+  const name = newWorkspaceName.value.trim();
+  if (!name) {
+    toast('请填写名称');
+    workspaceOnboardInput.value?.focus();
+    return;
+  }
+  const collected = collectOnboardInvites();
+  if (!collected.ok) {
+    toast(collected.message);
+    return;
+  }
+  if (creatingWorkspace.value) return;
+  creatingWorkspace.value = true;
+  try {
+    const workspace = await endpoints.createWorkspace(name);
+    await applyCreatedWorkspace(workspace);
+    await inviteOnboardMembers(workspace.id, collected.invites);
+  } catch (error) {
+    toast(messageOf(error) || '创建工作区失败');
+  } finally {
+    creatingWorkspace.value = false;
+  }
+}
+
+function focusWorkspaceOnboard(): void {
+  workspaceOnboardInput.value?.focus();
+  workspaceOnboardInput.value?.select();
+}
+
+function focusBaseOnboard(): void {
+  baseOnboardInput.value?.focus();
+  baseOnboardInput.value?.select();
+}
+
 async function createWorkspace(): Promise<void> {
+  if (needsWorkspaceOnboard.value) {
+    focusWorkspaceOnboard();
+    return;
+  }
   await promptDialog('新建工作区', '', {
     confirmLabel: '创建',
     onConfirm: async (raw) => {
@@ -245,10 +450,7 @@ async function createWorkspace(): Promise<void> {
       }
       try {
         const workspace = await endpoints.createWorkspace(name);
-        workspaces.value = [...workspaces.value, workspace];
-        toast('工作区已创建');
-        persistWorkspaceId(workspace.id);
-        await loadBases();
+        await applyCreatedWorkspace(workspace);
       } catch (error) {
         toast(messageOf(error) || '创建工作区失败');
         throw error;
@@ -331,19 +533,63 @@ async function deleteWorkspace(ws: WorkspaceDto): Promise<void> {
 async function selectWorkspace(id: string): Promise<void> {
   if (!id || id === currentWorkspaceId.value) return;
   closeMenus();
+  membersSectionOpen.value = false;
   persistWorkspaceId(id);
-  baseQuery.value = '';
   await loadBases();
+}
+
+async function openWorkspaceMembers(workspaceId: string): Promise<void> {
+  closeMenus();
+  if (workspaceId !== currentWorkspaceId.value) {
+    await selectWorkspace(workspaceId);
+  }
+  membersSectionOpen.value = true;
 }
 
 function openCreateBaseForm(): void {
   if (!currentWorkspaceId.value || !canEditCurrent.value) return;
   closeMenus();
+  if (needsBaseOnboard.value) {
+    void nextTick(() => {
+      baseOnboardInput.value?.focus();
+      baseOnboardInput.value?.select();
+    });
+    return;
+  }
   baseFormMode.value = 'create';
   baseFormId.value = '';
   baseFormName.value = '';
   baseFormDescription.value = '';
   baseFormOpen.value = true;
+}
+
+async function submitOnboardBase(): Promise<void> {
+  if (!currentWorkspaceId.value || !canEditCurrent.value) return;
+  const name = newBaseName.value.trim();
+  if (!name) {
+    toast('请填写名称');
+    baseOnboardInput.value?.focus();
+    return;
+  }
+  if (creatingBase.value) return;
+  creatingBase.value = true;
+  try {
+    const description = newBaseDescription.value.trim() || null;
+    const base = await endpoints.createBase(
+      currentWorkspaceId.value,
+      name,
+      description,
+    );
+    newBaseName.value = '';
+    newBaseDescription.value = '';
+    toast('已创建');
+    await loadBases();
+    openBase(base.id);
+  } catch (error) {
+    toast(messageOf(error) || '创建表格失败');
+  } finally {
+    creatingBase.value = false;
+  }
 }
 
 function openEditBaseForm(base: BaseDto): void {
@@ -527,6 +773,18 @@ watch(
   },
 );
 
+watch(needsWorkspaceOnboard, async (need) => {
+  if (!need) return;
+  await nextTick();
+  focusWorkspaceOnboard();
+});
+
+watch(needsBaseOnboard, async (need) => {
+  if (!need) return;
+  await nextTick();
+  focusBaseOnboard();
+});
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick);
   void loadWorkspaces();
@@ -549,47 +807,7 @@ onUnmounted(() => {
         </span>
       </div>
 
-      <div class="topbar-search">
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input
-          v-model="baseQuery"
-          data-testid="hub-base-search"
-          placeholder="搜索表格"
-          :disabled="!currentWorkspaceId"
-        />
-      </div>
-
       <div class="topbar-actions">
-        <div
-          v-if="currentWorkspaceId && canEditCurrent"
-          class="create-wrap"
-          @click.stop
-        >
-          <button
-            class="btn btn-primary create-btn"
-            data-testid="create-base"
-            @click="createMenuOpen = !createMenuOpen"
-          >
-            新建
-            <span class="caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
-          </button>
-          <Transition name="menu-fade">
-            <div v-if="createMenuOpen" class="menu create-menu" data-testid="hub-create-menu">
-              <button type="button" @click="openCreateBaseForm">空白表格</button>
-              <button type="button" data-testid="hub-template" @click="openTemplate">
-                从模板新建
-              </button>
-            </div>
-          </Transition>
-        </div>
-        <button
-          v-if="currentWorkspaceId"
-          class="btn btn-ghost"
-          data-testid="hub-members"
-          @click="membersOpen = true"
-        >
-          成员
-        </button>
         <div class="user-chip">
           <span class="avatar">{{ (auth.state.user?.name ?? '?').slice(0, 1) }}</span>
           <span class="user-name">{{ auth.state.user?.name }}</span>
@@ -605,8 +823,8 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div class="body">
-      <aside class="sidebar">
+    <div class="body" :class="{ 'body-onboard': hideWorkspaceSidebar }">
+      <aside v-if="!hideWorkspaceSidebar" class="sidebar" data-testid="hub-sidebar">
         <div class="sidebar-title">
           <span>工作区</span>
           <button
@@ -655,16 +873,7 @@ onUnmounted(() => {
             </div>
           </li>
           <li v-if="filteredWorkspaces.length === 0" class="hint">
-            <template v-if="workspaces.length">无匹配结果</template>
-            <button
-              v-else
-              type="button"
-              class="btn btn-primary ws-create-inline"
-              data-testid="workspace-create-inline"
-              @click="createWorkspace"
-            >
-              创建工作区
-            </button>
+            无匹配结果
           </li>
         </ul>
       </aside>
@@ -693,6 +902,13 @@ onUnmounted(() => {
             重命名
           </button>
           <button
+            type="button"
+            data-testid="workspace-members"
+            @click="openWorkspaceMembers(wsMenuTarget.id)"
+          >
+            成员
+          </button>
+          <button
             v-if="canDeleteWorkspace(wsMenuTarget)"
             type="button"
             class="danger"
@@ -704,48 +920,252 @@ onUnmounted(() => {
         </div>
       </Teleport>
 
-      <main class="main">
+      <main
+        class="main"
+        :class="{ 'main-onboard': hideWorkspaceSidebar }"
+      >
+        <p v-if="loading && hideWorkspaceSidebar" class="hint main-hint">加载中…</p>
+        <div
+          v-else-if="needsWorkspaceOnboard"
+          class="workspace-setup"
+          data-testid="workspace-onboard"
+        >
+          <div class="base-setup-sheet">
+            <section class="base-setup-create">
+              <h2>创建工作区</h2>
+              <form
+                class="base-create-form"
+                @submit.prevent="submitOnboardWorkspace"
+              >
+                <label class="base-create-field">
+                  <span class="base-create-label">
+                    工作区名称<em class="required-star">*</em>
+                  </span>
+                  <input
+                    ref="workspaceOnboardInput"
+                    v-model="newWorkspaceName"
+                    class="base-create-input"
+                    data-testid="workspace-onboard-name"
+                    maxlength="64"
+                    placeholder="例如：销售一部"
+                    autocomplete="off"
+                    :disabled="creatingWorkspace"
+                  />
+                </label>
+                <div class="base-create-field">
+                  <span class="base-create-label">邀请成员</span>
+                  <textarea
+                    v-model="onboardInvitePaste"
+                    class="base-create-textarea workspace-invite-textarea"
+                    data-testid="workspace-onboard-invite"
+                    maxlength="2000"
+                    rows="3"
+                    placeholder="可选，每行一个账号，也可用逗号分隔"
+                    :disabled="creatingWorkspace"
+                  />
+                  <div class="workspace-invite-tools">
+                    <label class="workspace-invite-default-role">
+                      <span class="base-create-label">默认权限</span>
+                      <select
+                        v-model="onboardInviteDefaultRole"
+                        class="base-create-input workspace-invite-role-select"
+                        data-testid="workspace-onboard-invite-role"
+                        :disabled="creatingWorkspace"
+                      >
+                        <option value="editor">可编辑</option>
+                        <option value="viewer">只读</option>
+                        <option value="admin">管理员</option>
+                      </select>
+                    </label>
+                    <button
+                      class="workspace-invite-add"
+                      type="button"
+                      data-testid="workspace-onboard-invite-add"
+                      :disabled="creatingWorkspace"
+                      @click="addOnboardInviteFromPaste"
+                    >
+                      加入列表
+                    </button>
+                  </div>
+                  <div
+                    v-if="onboardInviteRows.length > 0"
+                    class="workspace-invite-list"
+                    data-testid="workspace-onboard-invite-list"
+                  >
+                    <div
+                      v-for="row in onboardInviteRows"
+                      :key="row.key"
+                      class="workspace-invite-row"
+                    >
+                      <span class="workspace-invite-account">{{ row.account }}</span>
+                      <select
+                        v-model="row.role"
+                        class="base-create-input workspace-invite-role-select"
+                        :disabled="creatingWorkspace"
+                      >
+                        <option value="editor">可编辑</option>
+                        <option value="viewer">只读</option>
+                        <option value="admin">管理员</option>
+                      </select>
+                      <button
+                        class="workspace-invite-remove"
+                        type="button"
+                        aria-label="移除"
+                        :disabled="creatingWorkspace"
+                        @click="removeOnboardInviteRow(row.key)"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="base-create-actions">
+                  <button
+                    class="btn btn-primary base-create-submit"
+                    type="submit"
+                    data-testid="workspace-onboard-submit"
+                    :disabled="creatingWorkspace"
+                  >
+                    {{ creatingWorkspace ? '创建中…' : '创建' }}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
+
+        <template v-else>
         <div v-if="currentWorkspace" class="main-head">
           <div>
             <h1>{{ currentWorkspace.name }}</h1>
-            <p class="sub">
-              {{ filteredBases.length }} 个智能表格
-              <template v-if="baseQuery.trim()"> · 搜索「{{ baseQuery.trim() }}」</template>
-            </p>
+            <p class="sub">{{ bases.length }} 个智能表格</p>
+          </div>
+          <div class="main-head-actions" @click.stop>
+            <button
+              class="btn btn-ghost"
+              type="button"
+              data-testid="hub-members"
+              :aria-pressed="membersSectionOpen"
+              @click="membersSectionOpen = !membersSectionOpen"
+            >
+              成员
+            </button>
+            <div
+              v-if="canEditCurrent && !needsBaseOnboard"
+              class="create-wrap"
+            >
+              <button
+                class="btn btn-primary create-btn"
+                type="button"
+                data-testid="create-base"
+                @click="createMenuOpen = !createMenuOpen"
+              >
+                新建
+                <span class="caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
+              </button>
+              <Transition name="menu-fade">
+                <div
+                  v-if="createMenuOpen"
+                  class="menu create-menu"
+                  data-testid="hub-create-menu"
+                >
+                  <button type="button" @click="openCreateBaseForm">空白表格</button>
+                  <button
+                    type="button"
+                    data-testid="hub-template"
+                    @click="openTemplate"
+                  >
+                    从模板新建
+                  </button>
+                </div>
+              </Transition>
+            </div>
           </div>
         </div>
 
-        <div v-if="!currentWorkspaceId" class="empty-panel">
-          <img
-            class="empty-art"
-            :src="authLoginMid"
-            alt=""
-            draggable="false"
-          />
-          <button class="btn btn-primary" @click="createWorkspace">创建工作区</button>
-        </div>
+        <MembersPanel
+          v-if="currentWorkspaceId && membersSectionOpen && !basesLoading"
+          class="members-inline"
+          :workspace-id="currentWorkspaceId"
+          embedded
+          embedded-title="工作区成员"
+        />
 
-        <p v-else-if="basesLoading" class="hint main-hint">加载表格…</p>
+        <p v-if="basesLoading" class="hint main-hint">加载表格…</p>
 
         <div
-          v-else-if="filteredBases.length === 0"
+          v-else-if="needsBaseOnboard"
+          class="base-setup"
+          data-testid="base-onboard"
+        >
+          <div class="base-setup-sheet">
+            <section class="base-setup-create">
+              <h2>创建第一张智能表格</h2>
+              <form class="base-create-form" @submit.prevent="submitOnboardBase">
+                <label class="base-create-field">
+                  <span class="base-create-label">
+                    表格名称<em class="required-star">*</em>
+                  </span>
+                  <input
+                    ref="baseOnboardInput"
+                    v-model="newBaseName"
+                    class="base-create-input"
+                    data-testid="base-onboard-name"
+                    maxlength="100"
+                    placeholder="例如：客户跟进"
+                    autocomplete="off"
+                    :disabled="creatingBase"
+                  />
+                </label>
+                <label class="base-create-field">
+                  <span class="base-create-label">描述</span>
+                  <textarea
+                    v-model="newBaseDescription"
+                    class="base-create-textarea"
+                    data-testid="base-onboard-description"
+                    maxlength="500"
+                    rows="2"
+                    placeholder="一句话说明用途，方便同事辨认"
+                    :disabled="creatingBase"
+                  />
+                </label>
+                <div class="base-create-actions">
+                  <button
+                    class="btn btn-primary base-create-submit"
+                    type="submit"
+                    data-testid="base-onboard-submit"
+                    :disabled="creatingBase"
+                  >
+                    {{ creatingBase ? '创建中…' : '创建并打开' }}
+                  </button>
+                  <button
+                    class="base-template-link"
+                    type="button"
+                    data-testid="base-onboard-template"
+                    :disabled="creatingBase"
+                    @click="openTemplate"
+                  >
+                    或从模板新建
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
+
+        <div
+          v-else-if="bases.length === 0"
           class="empty-panel"
           data-testid="base-list"
         >
-          <template v-if="bases.length">
-            <div class="empty-icon">▦</div>
-            <h2>没有匹配的表格</h2>
-            <p>试试换个关键词，或清空搜索。</p>
-          </template>
-          <div v-else-if="canEditCurrent" class="empty-actions">
-            <button class="btn btn-primary" @click="openCreateBaseForm">新建表格</button>
-            <button class="btn" @click="openTemplate">从模板新建</button>
-          </div>
+          <div class="empty-icon">▦</div>
+          <h2>暂无智能表格</h2>
+          <p>当前角色无法新建，可联系工作区管理员。</p>
         </div>
 
         <div v-else class="base-list" data-testid="base-list">
           <article
-            v-for="base in filteredBases"
+            v-for="base in bases"
             :key="base.id"
             class="base-item"
             data-testid="base-card"
@@ -784,7 +1204,7 @@ onUnmounted(() => {
                   编辑
                 </button>
                 <button
-                  v-if="canEditCurrent && isOwnedBase(base) && !baseQuery.trim()"
+                  v-if="canEditCurrent && isOwnedBase(base)"
                   type="button"
                   data-testid="base-move-up"
                   :disabled="ownedIndex(base) <= 0"
@@ -793,7 +1213,7 @@ onUnmounted(() => {
                   上移
                 </button>
                 <button
-                  v-if="canEditCurrent && isOwnedBase(base) && !baseQuery.trim()"
+                  v-if="canEditCurrent && isOwnedBase(base)"
                   type="button"
                   data-testid="base-move-down"
                   :disabled="ownedIndex(base) >= ownedBases.length - 1"
@@ -829,18 +1249,8 @@ onUnmounted(() => {
             </div>
           </article>
         </div>
+        </template>
       </main>
-    </div>
-
-    <div
-      v-if="membersOpen && currentWorkspaceId"
-      class="modal-mask"
-      @click.self="membersOpen = false"
-    >
-      <MembersPanel
-        :workspace-id="currentWorkspaceId"
-        @close="membersOpen = false"
-      />
     </div>
 
     <div
@@ -1015,44 +1425,6 @@ onUnmounted(() => {
   max-width: 180px;
 }
 
-.topbar-search {
-  flex: 1;
-  max-width: 420px;
-  position: relative;
-}
-
-.topbar-search input {
-  width: 100%;
-  height: 34px;
-  padding: 0 12px 0 34px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: #f2f3f5;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
-}
-
-.topbar-search input:focus {
-  outline: none;
-  background: #fff;
-  border-color: #91c0f8;
-  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.12);
-}
-
-.topbar-search input:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.search-icon {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-tertiary);
-  font-size: 14px;
-  pointer-events: none;
-}
-
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -1122,6 +1494,10 @@ onUnmounted(() => {
   grid-template-columns: 240px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+}
+
+.body-onboard {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sidebar {
@@ -1294,6 +1670,246 @@ onUnmounted(() => {
   max-width: 1080px;
 }
 
+.main-onboard {
+  max-width: none;
+  padding: 28px 36px 56px;
+}
+
+.base-setup {
+  width: min(560px, 100%);
+  margin-top: 8px;
+}
+
+.base-setup-sheet {
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(31, 35, 41, 0.05);
+}
+
+.base-setup-create {
+  padding: 24px 24px 22px;
+}
+
+.base-setup-create h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.base-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.base-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.base-create-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #646a73;
+}
+
+.base-create-input,
+.base-create-textarea {
+  width: 100%;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  font-size: 14px;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.base-create-input {
+  height: 42px;
+  padding: 0 14px;
+}
+
+.base-create-textarea {
+  min-height: 72px;
+  padding: 10px 14px;
+  resize: none;
+  line-height: 1.55;
+  font-family: inherit;
+}
+
+.base-create-input:focus,
+.base-create-textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.16);
+}
+
+.base-create-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.base-create-submit {
+  width: 100%;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.base-template-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #646a73;
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.base-template-link:hover:not(:disabled) {
+  color: var(--brand);
+}
+
+.base-template-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.main-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.main-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.members-inline {
+  margin: 16px 0 8px;
+}
+
+.workspace-setup {
+  width: min(560px, 100%);
+  margin: 48px auto 0;
+}
+
+.workspace-invite-textarea {
+  min-height: 88px;
+}
+
+.workspace-invite-tools {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.workspace-invite-default-role {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.workspace-invite-role-select {
+  width: 108px;
+  flex: none;
+  cursor: pointer;
+  padding-left: 10px;
+  padding-right: 28px;
+}
+
+.workspace-invite-add {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand);
+  font-size: 13px;
+  cursor: pointer;
+  flex: none;
+}
+
+.workspace-invite-add:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: rgba(45, 140, 240, 0.06);
+}
+
+.workspace-invite-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-invite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8eaed;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.workspace-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-invite-account {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-invite-list .workspace-invite-role-select {
+  height: 34px;
+}
+
+.workspace-invite-remove {
+  width: 28px;
+  height: 34px;
+  flex: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8f959e;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workspace-invite-remove:hover:not(:disabled) {
+  background: #f0f1f2;
+  color: #646a73;
+}
+
+.workspace-invite-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .main-head h1 {
   font-size: 22px;
   font-weight: 650;
@@ -1312,12 +1928,6 @@ onUnmounted(() => {
   color: var(--text-tertiary);
   font-size: 13px;
   list-style: none;
-}
-
-.ws-create-inline {
-  width: 100%;
-  height: 34px;
-  font-size: 13px;
 }
 
 .main-hint {
@@ -1510,17 +2120,6 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-.empty-art {
-  display: block;
-  width: 256px;
-  max-width: 100%;
-  height: auto;
-  margin: 0 0 16px;
-  border-radius: 8px;
-  user-select: none;
-  pointer-events: none;
-}
-
 .empty-panel h2 {
   font-size: 18px;
   margin: 0 0 8px;
@@ -1535,12 +2134,6 @@ onUnmounted(() => {
 
 .empty-panel > .btn {
   align-self: flex-start;
-}
-
-.empty-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .dialog {
@@ -1650,10 +2243,6 @@ onUnmounted(() => {
   .crumb,
   .user-name {
     display: none;
-  }
-
-  .topbar-search {
-    max-width: none;
   }
 }
 </style>
