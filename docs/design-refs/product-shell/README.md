@@ -67,9 +67,11 @@
 
 | 文件 | 说明 |
 |------|------|
-| **`01-catalog-latest.jpg`** | **目录页最新讨论稿（未定稿）** = 与 `01-catalog-two-create-btns.jpg` 相同。要点：成员浅蓝钮、铃铛红点、搜索、**新建表格 + 从模板新建** 双按钮、智能表行 ⋯ 菜单。备查：`01-catalog-row-menu-ref.png` |
-| `01-catalog-two-create-btns.jpg` | 同上（命名备份） |
-| `01-catalog-msg-icon-dot.jpg` | 更早一版（单「新建」下拉），已非 latest |
+| **`01-catalog-latest.jpg`** | **目录默认态最新讨论稿（未定稿）** = `01-catalog-default.jpg` |
+| `01-catalog-default.jpg` | 有表列表：菜单收起、角色多样、时间不同、双新建、成员浅蓝、铃铛红点 |
+| `01-catalog-empty.jpg` | 无表空态：无「还没有…」文案；无上方搜索/双新建；仅图标+中间双按钮 |
+| `01-catalog-ws-menu.jpg` | 附录：工作区 ⋯（置顶/重命名/删除） |
+| `01-catalog-base-row-menu.jpg` / `01-catalog-row-menu-ref.png` | 附录：智能表行 ⋯ 与现网截图 |
 | `01-catalog-members-blue.jpg` 等 | 过程迭代，仅备查 |
 | `02-workbench-members-reloc.jpg` | 工作台待审（尚未轮到细抠） |
 | `01b` / `02b` | 更早 ux-opt 参考 |
