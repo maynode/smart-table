@@ -2,7 +2,7 @@
 
 工作表、收集表单、表格自动化、内容权限（行/列）等。
 
-**开发原则（本仓库）：** 功能复刻企微网页智能表 + 自有登录 + 可增强；**协同编辑暂缓**。有疑问先查本目录技术拆解与 `materials/wecom-js`，再写代码。见 `.cursor/rules/wecom-tech-first.mdc`、`docs/REMAINING-GAPS.md` 产品边界。
+**开发原则（本仓库）：** 功能复刻企微网页智能表 + 自有登录 + 可增强；**协同编辑 / 断网离线 / 同步暂缓**（先打磨现有能力至成熟，见 `docs/REMAINING-GAPS.md`）。有疑问先查本目录技术拆解与 `materials/wecom-js`，再写代码。见 `.cursor/rules/wecom-tech-first.mdc`。
 
 技术拆解（网络 + CDN JS，已脱敏结论）：
 

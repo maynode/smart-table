@@ -576,12 +576,15 @@ OT：字段 mutation 类上仍有 `transformWithInsertFieldMutation` 等（§8�
 
 UI 协作：`o-smartsheet-collab-contact-service` 管协作者面板/联系人（**不**承载传输协议）。
 
-### 12.6 若要补齐 `NEW_CHANGES` 帧（可选）
+### 12.6 若要补齐 `NEW_CHANGES` 帧（可选；非当前排期）
+
+> 产品阶段（2026-10-24）：先打磨现有功能；协同/离线后置。下列仅作材料补全备忘。  
+> **不必第二企微账号**：同一账号双浏览器会话（或桌面端+浏览器）同 `padId` 即可。公开网页/爬虫拿不到协议帧。
 
 1. Network → **WS**，保留日志  
-2. 两人打开同一表；A 改单元格  
+2. 两会话打开同一表；A 改单元格  
 3. 在 B 的 WS Messages 里搜 `NEW_CHANGES` / `changeset`  
-4. 另存 HAR → 即可补文档「远端推送体」一节  
+4. 另存 HAR（脱敏）→ 即可补文档「远端推送体」一节  
 
 ### 12.7 一张总图（实机修正）
 
