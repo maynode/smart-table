@@ -25,8 +25,9 @@ import {
   messageCenter,
   syncBannerText,
 } from '../sync/message-center';
+import { collabSocket, type CollabCursor } from '../sync/collab-socket';
 import { toast } from '../ui/toast';
-import type { MutationResult, ViewQuery } from 'shared';
+import type { MutationResult, SheetMutation, ViewQuery } from 'shared';
 import type {
   AnalysisReportListItemDto,
   BaseDto,
@@ -277,6 +278,7 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       viewGroups.value = [];
       records.value = [];
       nextCursor.value = null;
+      messageCenter.attachSheet(null);
       return;
     }
     sectionCollapsed.value = { ...sectionCollapsed.value, sheets: false };
@@ -291,6 +293,7 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     records.value = page.records;
     nextCursor.value = page.nextCursor;
     void drainRecordsInBackground(sheetId);
+    messageCenter.attachSheet(sheetId);
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -305,6 +308,18 @@ watch(
       void selectSheet(value, false);
     }
   },
+);
+
+watch(
+  records,
+  (value) => {
+    (
+      window as unknown as {
+        __stRecordsProbe?: typeof value;
+      }
+    ).__stRecordsProbe = value;
+  },
+  { deep: true, immediate: true },
 );
 
 async function addRow(): Promise<void> {
@@ -541,6 +556,103 @@ function onCommitAccept(results: MutationResult[]): void {
     }
   }
 }
+
+function applyRemoteMutations(mutations: SheetMutation[]): void {
+  for (const mutation of mutations) {
+    if (mutation.type === 'setRecord') {
+      records.value = records.value.map((item) => {
+        if (item.id !== mutation.recordId) return item;
+        return {
+          ...item,
+          cells: { ...item.cells, ...mutation.cells },
+          version: item.version + 1,
+        };
+      });
+      continue;
+    }
+    if (mutation.type === 'createRecord') {
+      const id = mutation.clientRecordId;
+      if (records.value.some((r) => r.id === id)) continue;
+      records.value = [
+        ...records.value,
+        {
+          id,
+          sheetId: activeSheet.value?.id ?? '',
+          cells: mutation.cells ?? {},
+          version: 1,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ];
+      continue;
+    }
+    if (mutation.type === 'deleteRecord') {
+      records.value = records.value.filter((r) => r.id !== mutation.recordId);
+      continue;
+    }
+    if (mutation.type === 'deleteField' && activeSheet.value) {
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).filter(
+          (f) => f.id !== mutation.fieldId,
+        ),
+      };
+      continue;
+    }
+    if (mutation.type === 'createField' && activeSheet.value) {
+      const exists = (activeSheet.value.fields ?? []).some(
+        (f) => f.id === mutation.clientFieldId,
+      );
+      if (exists) continue;
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: [
+          ...(activeSheet.value.fields ?? []),
+          {
+            id: mutation.clientFieldId,
+            sheetId: activeSheet.value.id,
+            name: mutation.name,
+            type: mutation.fieldType,
+            options: (mutation.options as FieldDto['options']) ?? null,
+            order: activeSheet.value.fields?.length ?? 0,
+            required: mutation.required ?? false,
+            hidden: false,
+          },
+        ],
+      };
+      continue;
+    }
+    if (mutation.type === 'updateField' && activeSheet.value) {
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).map((field) =>
+          field.id === mutation.fieldId
+            ? {
+                ...field,
+                name: mutation.name ?? field.name,
+                options:
+                  (mutation.options as FieldDto['options']) ?? field.options,
+                required: mutation.required ?? field.required,
+                hidden: mutation.hidden ?? field.hidden,
+              }
+            : field,
+        ),
+      };
+    }
+  }
+}
+
+function onPeerCursor(cursor: {
+  recordId?: string;
+  fieldId?: string;
+  rowIndex?: number;
+  colIndex?: number;
+}): void {
+  collabSocket.sendCursor(cursor);
+}
+
+const peerCursors = computed(() => collabSocket.cursors.value as CollabCursor[]);
+const collabPeers = computed(() => collabSocket.peers.value);
 
 async function reloadActiveRecords(): Promise<void> {
   if (!activeSheet.value) return;
@@ -1332,11 +1444,17 @@ onMounted(() => {
   void bootstrap();
   void messageCenter.bootstrap();
   unsubAccept = messageCenter.onAccept(onCommitAccept);
+  collabSocket.setHandlers({
+    onRemote: ({ mutations }) => {
+      applyRemoteMutations(mutations);
+    },
+  });
   window.addEventListener('keydown', onGlobalKeydown);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
   unsubAccept?.();
+  messageCenter.attachSheet(null);
 });
 </script>
 
@@ -1381,6 +1499,27 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <div class="topbar-right">
+        <div
+          v-if="collabPeers.length"
+          class="collab-presence"
+          data-testid="collab-presence"
+          :title="collabPeers.map((p) => p.name || p.account).join('、')"
+        >
+          <span
+            v-for="peer in collabPeers.slice(0, 5)"
+            :key="peer.userId"
+            class="collab-avatar"
+            :data-color="peer.colorId"
+            :title="peer.name || peer.account"
+          >
+            {{ (peer.name || peer.account || '?').slice(0, 1) }}
+          </span>
+          <span
+            v-if="collabPeers.length > 5"
+            class="collab-more"
+          >+{{ collabPeers.length - 5 }}</span>
+          <span class="collab-count">{{ collabPeers.length }} 人在线</span>
+        </div>
         <NotificationBell />
         <button
           class="topbar-btn"
@@ -1766,6 +1905,7 @@ onBeforeUnmount(() => {
               :members="members"
               :sheets="sheets"
               :upload-attachment="uploadToSheet"
+              :peer-cursors="peerCursors"
               @add-row="addRow"
               @insert-rows="insertRows"
               @insert-columns="insertColumns"
@@ -1781,6 +1921,7 @@ onBeforeUnmount(() => {
               @delete-records="deleteRecords"
               @query="applyViewQuery"
               @query-change="onQueryChange"
+              @peer-cursor="onPeerCursor"
             />
           </div>
         </template>
@@ -1865,6 +2006,7 @@ onBeforeUnmount(() => {
             :members="members"
             :sheets="sheets"
             :upload-attachment="uploadToSheet"
+            :peer-cursors="peerCursors"
             @add-row="addRow"
             @insert-rows="insertRows"
             @insert-columns="insertColumns"
@@ -1880,6 +2022,7 @@ onBeforeUnmount(() => {
             @delete-records="deleteRecords"
             @query="applyViewQuery"
             @query-change="onQueryChange"
+            @peer-cursor="onPeerCursor"
           />
         </template>
         <div v-else class="empty-state">

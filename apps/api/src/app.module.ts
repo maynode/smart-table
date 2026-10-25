@@ -21,6 +21,7 @@ import { SheetsModule } from './sheets/sheets.module';
 import { StorageModule } from './storage/storage.module';
 import { ViewsModule } from './views/views.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
+import { CollabModule } from './collab/collab.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     WorkspacesModule,
     BasesModule,
     SheetsModule,
+    CollabModule,
     CommentsModule,
     AutomationsModule,
     FormsModule,

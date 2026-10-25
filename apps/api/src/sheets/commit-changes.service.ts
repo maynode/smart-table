@@ -32,6 +32,7 @@ export class CommitChangesService {
     userId: string,
     dto: CommitChangesDto,
     clientIp = '0.0.0.0',
+    expectedSheetRev?: number,
   ): Promise<CommitChangesResponse> {
     const rawSize = JSON.stringify(dto).length;
     if (rawSize > MAX_BATCH_CHARS) {
@@ -43,20 +44,82 @@ export class CommitChangesService {
 
     await this.sheets.assertSheetAccess(sheetId, userId, 'editor');
 
-    const idMaps = {
-      records: new Map<string, string>(),
-      fields: new Map<string, string>(),
-    };
-    const results: MutationResult[] = [];
+    const run = async (): Promise<CommitChangesResponse> => {
+      if (expectedSheetRev !== undefined) {
+        const sheet = await this.prisma.sheet.findUnique({
+          where: { id: sheetId },
+        });
+        if (!sheet || sheet.sheetRev !== expectedSheetRev) {
+          throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
+        }
+      }
 
-    for (const raw of dto.mutations) {
-      const mutation = raw as unknown as SheetMutation;
-      results.push(
-        await this.applyOne(sheetId, userId, mutation, idMaps, clientIp),
+      const idMaps = {
+        records: new Map<string, string>(),
+        fields: new Map<string, string>(),
+      };
+      const results: MutationResult[] = [];
+
+      for (const raw of dto.mutations) {
+        const mutation = raw as unknown as SheetMutation;
+        results.push(
+          await this.applyOne(sheetId, userId, mutation, idMaps, clientIp),
+        );
+      }
+
+      const allOk = results.every(
+        (r) => r.status === 'ok' || r.status === 'duplicate',
       );
+      // HTTP / WS 共用 sheet_rev（pad base_rev 语义）
+      if (allOk && dto.mutations.length > 0) {
+        const sheet = await this.prisma.sheet.findUnique({
+          where: { id: sheetId },
+        });
+        if (sheet) {
+          const newRev = sheet.sheetRev + 1;
+          const bumped =
+            expectedSheetRev === undefined
+              ? await this.prisma.sheet.updateMany({
+                  where: { id: sheetId },
+                  data: { sheetRev: newRev },
+                })
+              : await this.prisma.sheet.updateMany({
+                  where: { id: sheetId, sheetRev: expectedSheetRev },
+                  data: { sheetRev: newRev },
+                });
+          if (bumped.count === 0) {
+            throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
+          }
+          await this.prisma.sheetChangeset.create({
+            data: {
+              sheetId,
+              rev: newRev,
+              authorId: userId,
+              commitId: dto.clientBatchId,
+              mutations: dto.mutations as object[],
+            },
+          });
+        }
+      }
+
+      return { clientBatchId: dto.clientBatchId, results };
+    };
+
+    // WS 并发提交：会话级锁，避免「先 apply 再 bump」窗口里双写同 rev
+    if (expectedSheetRev !== undefined) {
+      await this.prisma.$executeRaw`
+        SELECT pg_advisory_lock(hashtext(${sheetId}))
+      `;
+      try {
+        return await run();
+      } finally {
+        await this.prisma.$executeRaw`
+          SELECT pg_advisory_unlock(hashtext(${sheetId}))
+        `;
+      }
     }
 
-    return { clientBatchId: dto.clientBatchId, results };
+    return run();
   }
 
   private async applyOne(

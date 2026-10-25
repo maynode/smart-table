@@ -14,11 +14,13 @@ import {
   idbPutMutation,
   type QueuedMutationRow,
 } from './idb-store';
+import { collabSocket } from './collab-socket';
 
 export type SyncStatus = 'online' | 'offline' | 'syncing' | 'conflict';
 
 const CHANNEL = 'st-message-center';
 const LOCK_NAME = 'st-message-center-flush';
+const WS_ACCEPT_TIMEOUT_MS = 20_000;
 
 function newId(): string {
   return crypto.randomUUID();
@@ -36,6 +38,15 @@ class MessageCenter {
   private flushing = false;
   private acceptHandlers = new Set<(results: MutationResult[]) => void>();
   private bootstrapped = false;
+  private wsWaiters = new Map<
+    string,
+    {
+      resolve: (response: CommitChangesResponse) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  private activeSheetId: string | null = null;
 
   async bootstrap(): Promise<void> {
     if (this.bootstrapped || typeof window === 'undefined') return;
@@ -55,8 +66,42 @@ class MessageCenter {
     window.addEventListener('offline', () => {
       this.status.value = 'offline';
     });
+    collabSocket.setHandlers({
+      onAccept: (payload) => {
+        const batchId =
+          payload.clientBatchId ??
+          [...this.wsWaiters.keys()][0];
+        if (!batchId) return;
+        const waiter = this.wsWaiters.get(batchId);
+        if (!waiter) return;
+        clearTimeout(waiter.timer);
+        this.wsWaiters.delete(batchId);
+        waiter.resolve({
+          clientBatchId: batchId,
+          results: (payload.results ?? []) as MutationResult[],
+        });
+      },
+      onError: () => {
+        // Fail open waiters so flush falls back to HTTP
+        for (const [batchId, waiter] of this.wsWaiters) {
+          clearTimeout(waiter.timer);
+          this.wsWaiters.delete(batchId);
+          waiter.reject(new Error('WS commit rejected'));
+        }
+      },
+    });
     await this.refreshCount();
     if (navigator.onLine) void this.flushAll();
+  }
+
+  /** Bind collab socket to the active sheet (online path). */
+  attachSheet(sheetId: string | null): void {
+    this.activeSheetId = sheetId;
+    if (!sheetId || !getToken()) {
+      collabSocket.disconnect();
+      return;
+    }
+    collabSocket.connect(sheetId);
   }
 
   onAccept(handler: (results: MutationResult[]) => void): () => void {
@@ -208,6 +253,29 @@ class MessageCenter {
     return out;
   }
 
+  private async flushViaWs(
+    sheetId: string,
+    clientBatchId: string,
+    mutations: SheetMutation[],
+  ): Promise<CommitChangesResponse | null> {
+    if (!collabSocket.connected.value) return null;
+    if (this.activeSheetId !== sheetId) return null;
+    const sent = collabSocket.sendUserChanges(
+      collabSocket.sheetRev.value,
+      clientBatchId,
+      mutations,
+    );
+    if (!sent) return null;
+
+    return new Promise<CommitChangesResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.wsWaiters.delete(clientBatchId);
+        reject(new Error('WS accept timeout'));
+      }, WS_ACCEPT_TIMEOUT_MS);
+      this.wsWaiters.set(clientBatchId, { resolve, reject, timer });
+    });
+  }
+
   private async flushSheet(
     sheetId: string,
     rows: QueuedMutationRow[],
@@ -218,24 +286,30 @@ class MessageCenter {
       sheetId,
       rows.map((r) => r.mutation as SheetMutation),
     );
-    let response: CommitChangesResponse;
+    let response: CommitChangesResponse | null = null;
     try {
-      response = await api<CommitChangesResponse>(
-        `/sheets/${sheetId}/commitchanges`,
-        {
-          method: 'POST',
-          body: { clientBatchId, mutations },
-        },
-      );
-    } catch (error) {
-      if (error instanceof ApiError) {
-        this.lastError.value = error.message;
+      response = await this.flushViaWs(sheetId, clientBatchId, mutations);
+    } catch {
+      response = null;
+    }
+    if (!response) {
+      try {
+        response = await api<CommitChangesResponse>(
+          `/sheets/${sheetId}/commitchanges`,
+          {
+            method: 'POST',
+            body: { clientBatchId, mutations },
+          },
+        );
+      } catch (error) {
+        if (error instanceof ApiError) {
+          this.lastError.value = error.message;
+          return;
+        }
+        this.status.value = 'offline';
+        this.lastError.value = '网络不可用，变更已保存在本地';
         return;
       }
-      // network
-      this.status.value = 'offline';
-      this.lastError.value = '网络不可用，变更已保存在本地';
-      return;
     }
 
     const accepted: MutationResult[] = [];

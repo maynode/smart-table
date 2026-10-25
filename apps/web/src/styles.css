@@ -588,6 +588,46 @@ html.auth-screen #app {
   gap: 2px;
 }
 
+.collab-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #f5f6f7;
+}
+.collab-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: #3498db;
+}
+.collab-avatar[data-color='1'] { background: #e74c3c; }
+.collab-avatar[data-color='2'] { background: #e67e22; }
+.collab-avatar[data-color='3'] { background: #f1c40f; color: #333; }
+.collab-avatar[data-color='4'] { background: #2ecc71; }
+.collab-avatar[data-color='5'] { background: #1abc9c; }
+.collab-avatar[data-color='6'] { background: #3498db; }
+.collab-avatar[data-color='7'] { background: #9b59b6; }
+.collab-avatar[data-color='8'] { background: #34495e; }
+.collab-avatar[data-color='9'] { background: #e91e63; }
+.collab-avatar[data-color='10'] { background: #00bcd4; }
+.collab-avatar[data-color='11'] { background: #8bc34a; }
+.collab-avatar[data-color='12'] { background: #ff5722; }
+.collab-more,
+.collab-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .topbar-btn {
   border: none;
   background: transparent;

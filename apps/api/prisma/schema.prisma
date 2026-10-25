@@ -120,6 +120,8 @@ model Sheet {
   id        String   @id @default(uuid()) @db.Uuid
   baseId    String   @map("base_id") @db.Uuid
   name      String
+  /** Pad-level revision (WeCom base_rev / new_rev). */
+  sheetRev  Int      @default(0) @map("sheet_rev")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -131,9 +133,27 @@ model Sheet {
   publicViews PublicView[]
   dataSyncs DataSync[]
   savedViews SavedView[]
+  changesets SheetChangeset[]
 
   @@index([baseId])
   @@map("sheets")
+}
+
+/** Append-only changeset log for realtime collab (ACCEPT_COMMIT / NEW_CHANGES). */
+model SheetChangeset {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  sheetId   String   @map("sheet_id") @db.Uuid
+  rev       Int
+  authorId  String?  @map("author_id") @db.Uuid
+  commitId  String   @map("commit_id")
+  mutations Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@unique([sheetId, rev])
+  @@index([sheetId, rev])
+  @@map("sheet_changesets")
 }
 
 model SavedView {

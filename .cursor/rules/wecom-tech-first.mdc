@@ -10,27 +10,28 @@ alwaysApply: true
 - **复刻**企业微信**网页版智能表格**的功能面（表/视图/表单/自动化/仪表盘/权限等）。
 - **登录**用本系统自有账号；不做企微登录、通讯录、企微群等强绑定能力（可用本系统成员/消息表达同类产品语义）。
 - 允许**更强能力**（例：提交后用户页可见消息）。
-- **协同编辑暂缓**：不做多人实时同表 / OT / WS `NEW_CHANGES`；维持 REST + 乐观锁。不因逆向材料去重写协同层。
+- **实时协同按 COLLAB 方案实施**：在线主路径对齐 `USER_CHANGES` → `ACCEPT_COMMIT` → `NEW_CHANGES`（本仓 Nest WS `/collab` + `sheet_rev`）；离线仍走 HTTP `commitchanges`（见 `docs/COLLAB.md` / `docs/OFFLINE.md`）。不做企微登录/真通讯录；不要求 Engine.IO 字节兼容。
 
 ## 技术先行：先查再写
 
-遇到协议、数据模型、渲染、公式、字段类型等问题：
+遇到协议、数据模型、渲染、公式、字段类型、协同 OT 等问题：
 
 1. **先扫技术文档**  
    - `docs/design-refs/wecom/smart-table/HAR-TECH-ANALYSIS.md`  
    - `docs/design-refs/wecom/smart-table/README.md`  
-   - `docs/DATA_MODEL.md`、`docs/REMAINING-GAPS.md`
+   - `docs/DATA_MODEL.md`、`docs/COLLAB.md`、`docs/REMAINING-GAPS.md`
 
 2. **再查材料**（打包 JS / 脱敏实帧；勿当可提交业务源码）  
    - `materials/wecom-js/`  
    - `materials/live-ws-user-changes.redacted.json`  
+   - `materials/wecom-ot-transforms.extracted.json`  
    - HAR 已 gitignore，勿提交含会话捕获
 
 3. **再写本仓库**  
    - 对照**能力与交互**，协议可自洽（不必孪生 Mutation/WS）  
-   - 命名对齐语义，勿照搬混淆符号；缺口标未知，禁止编造
+   - 命名对齐语义，勿照搬混淆符号；缺口标未知，禁止编造；禁止用「先广播 JSON 不做 transform」冒充最严协同
 
 4. **保密**  
    - 不回显 sid / xsrf / cookie / 票据；示例脱敏
 
-简记：**有问题 → HAR-TECH-ANALYSIS → wecom-js → 再改代码；协同编辑现阶段跳过。**
+简记：**有问题 → HAR-TECH-ANALYSIS / COLLAB.md → wecom-js → 再改代码。**

@@ -40,6 +40,16 @@ const props = withDefaults(
       mimetype?: string;
       size?: number;
     }>;
+    peerCursors?: Array<{
+      userId: string;
+      account: string;
+      cursor: {
+        recordId?: string;
+        fieldId?: string;
+        rowIndex?: number;
+        colIndex?: number;
+      };
+    }>;
   }>(),
   {
     records: () => [],
@@ -55,6 +65,7 @@ const props = withDefaults(
     members: () => [],
     sheets: () => [],
     uploadAttachment: undefined,
+    peerCursors: () => [],
   },
 );
 
@@ -87,6 +98,14 @@ const emit = defineEmits<{
   ];
   deleteRecords: [recordIds: string[]];
   deleteField: [field: FieldDto];
+  peerCursor: [
+    payload: {
+      recordId?: string;
+      fieldId?: string;
+      rowIndex?: number;
+      colIndex?: number;
+    },
+  ];
 }>();
 
 const insertMenu = ref<{
@@ -1184,6 +1203,14 @@ function createEngine(): void {
     onCellClick: onCellClick,
     onSelectionChange: (selection) => {
       selectedCell.value = selection;
+      const record = props.records[selection.row];
+      const field = visibleFields.value[selection.col];
+      emit('peerCursor', {
+        recordId: record?.id,
+        fieldId: field?.id,
+        rowIndex: selection.row,
+        colIndex: selection.col,
+      });
     },
     onCellDoubleClick: (selection) => {
       selectedCell.value = selection;
@@ -1259,6 +1286,43 @@ onBeforeUnmount(() => {
   engine = null;
 });
 
+const peerCursorOverlays = computed(() => {
+  if (!engine || !props.peerCursors?.length) return [];
+  const fields = visibleFields.value;
+  return props.peerCursors
+    .map((peer, index) => {
+      let row = peer.cursor.rowIndex;
+      let col = peer.cursor.colIndex;
+      if (row === undefined && peer.cursor.recordId) {
+        row = props.records.findIndex((r) => r.id === peer.cursor.recordId);
+      }
+      if (col === undefined && peer.cursor.fieldId) {
+        col = fields.findIndex((f) => f.id === peer.cursor.fieldId);
+      }
+      if (row === undefined || col === undefined || row < 0 || col < 0) {
+        return null;
+      }
+      const rect = engine!.cellRect(row, col);
+      return {
+        key: peer.userId,
+        label: (peer.account || '?').slice(0, 1),
+        colorId: (index % 12) + 1,
+        style: {
+          left: `${rect.x}px`,
+          top: `${rect.y}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+        },
+      };
+    })
+    .filter(Boolean) as Array<{
+    key: string;
+    label: string;
+    colorId: number;
+    style: Record<string, string>;
+  }>;
+});
+
 defineExpose({
   getEngine: () => engine,
   clearRowSelection,
@@ -1275,6 +1339,16 @@ defineExpose({
     @paste="onHostPaste"
   >
     <div ref="host" class="canvas-grid-host" data-testid="canvas-grid"></div>
+    <div
+      v-for="cursor in peerCursorOverlays"
+      :key="cursor.key"
+      class="peer-cursor"
+      data-testid="peer-cursor"
+      :data-color="cursor.colorId"
+      :style="cursor.style"
+    >
+      <span class="peer-cursor-label">{{ cursor.label }}</span>
+    </div>
     <div
       v-if="insertMenu"
       class="insert-menu-mask"
@@ -1619,6 +1693,39 @@ defineExpose({
   height: 100%;
   min-height: 0;
 }
+.peer-cursor {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--peer-color, #2d8cf0);
+  pointer-events: none;
+  z-index: 5;
+}
+.peer-cursor-label {
+  position: absolute;
+  top: -16px;
+  left: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 2px 2px 2px 0;
+  background: var(--peer-color, #2d8cf0);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+.peer-cursor[data-color='1'] { --peer-color: #e74c3c; }
+.peer-cursor[data-color='2'] { --peer-color: #e67e22; }
+.peer-cursor[data-color='3'] { --peer-color: #f1c40f; }
+.peer-cursor[data-color='4'] { --peer-color: #2ecc71; }
+.peer-cursor[data-color='5'] { --peer-color: #1abc9c; }
+.peer-cursor[data-color='6'] { --peer-color: #3498db; }
+.peer-cursor[data-color='7'] { --peer-color: #9b59b6; }
+.peer-cursor[data-color='8'] { --peer-color: #34495e; }
+.peer-cursor[data-color='9'] { --peer-color: #e91e63; }
+.peer-cursor[data-color='10'] { --peer-color: #00bcd4; }
+.peer-cursor[data-color='11'] { --peer-color: #8bc34a; }
+.peer-cursor[data-color='12'] { --peer-color: #ff5722; }
 .hidden-upload {
   display: none;
 }

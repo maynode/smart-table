@@ -47,6 +47,16 @@ const props = defineProps<{
     mimetype?: string;
     size?: number;
   }>;
+  peerCursors?: Array<{
+    userId: string;
+    account: string;
+    cursor: {
+      recordId?: string;
+      fieldId?: string;
+      rowIndex?: number;
+      colIndex?: number;
+    };
+  }>;
 }>();
 
 const emit = defineEmits<{
@@ -94,6 +104,14 @@ const emit = defineEmits<{
   ];
   deleteField: [field: FieldDto];
   deleteRecords: [recordIds: string[]];
+  peerCursor: [
+    payload: {
+      recordId?: string;
+      fieldId?: string;
+      rowIndex?: number;
+      colIndex?: number;
+    },
+  ];
 }>();
 
 const gridRef = ref<InstanceType<typeof CanvasGrid> | null>(null);
@@ -1591,6 +1609,7 @@ defineExpose({
         :members="members"
         :sheets="sheets"
         :upload-attachment="uploadAttachment"
+        :peer-cursors="peerCursors"
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
         @add-column="openFieldPicker"
@@ -1601,6 +1620,7 @@ defineExpose({
         @insert-columns="emit('insertColumns', $event)"
         @delete-records="emit('deleteRecords', $event)"
         @delete-field="deletingField = $event"
+        @peer-cursor="emit('peerCursor', $event)"
       />
     </div>
 

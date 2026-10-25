@@ -12,8 +12,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 **当前主线（2026-10-26）：** 交付闭环收尾；像素级视觉对齐 mock **本轮不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 可选 `perf:window`（缺千万行 `.perf-env.json`）。  
-**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）。  
-**待定（成熟后再议）：** 多人实时协同 OT/WS；跨端同步；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库。
+**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）。  
+**待定（成熟后再议）：** 跨端同步深化；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
 
 ---
 
@@ -126,8 +126,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 |----|------|------|
 | 断网感知 / 恢复后自动重连或重试 | **已完成（2026-10-26）** | `NetworkError`、`online`/`offline`、壳层 `sync-banner`、恢复自动 `flush` |
 | 离线编辑 / 本地队列 / 回放提交 | **已完成（2026-10-26）** | MessageCenter + IndexedDB + `POST /sheets/:id/commitchanges`；幂等 `clientOpId`；公开表 `Idempotency-Key`；见 `docs/OFFLINE.md` |
-| 多人实时协同（OT / WS / `NEW_CHANGES`） | **待定** | 维持 REST + 行级 `version` 乐观锁；不做光标/OT/房间广播 |
-| 跨端 / 多会话数据同步 | **待定** | 与实时协同同类；不做后台推送对齐 |
+| 多人实时协同（OT / WS / `NEW_CHANGES`） | **已完成（2026-10-26）** | Nest `/collab`：`client_ready`/`heart_beat`/`user_changes`/`accept_commit`/`new_changes`/`cursor`；`sheet_rev`+changeset；共享 OT；在线 MessageCenter→WS，降级 HTTP；见 `docs/COLLAB.md` |
+| 跨端 / 多会话数据同步 | **部分完成** | 同表多会话由 WS `new_changes` 对齐；跨设备离线队列仍走 OFFLINE 回放 |
 | 企微登录 | **待定** | 产品用本系统自有账号；不做企微 OAuth 强绑定登录 |
 | 企微通讯录 / 联系人 | **待定** | 用本系统工作区成员表达同类语义 |
 | 真企微群聊 | **待定** | 自动化群聊走 Local fallback / `wecomChatId`；真企微群 API 不强制 |
@@ -139,23 +139,23 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 **目标：** 功能上**完全复刻企业微信网页版智能表格**（工作表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等），登录用本系统自有账号；在此之上可做更强能力（例：提交后用户页可见消息通知）。
 
-**阶段：** 当前以 **UI/体验打磨 + 稳定性** 为主（见 `docs/UI-POLISH.md`）。断网/离线已按 MessageCenter 对齐落地；**实时协作 / 跨端同步** 仍后置。
+**阶段：** 当前以 **UI/体验打磨 + 稳定性** 为主（见 `docs/UI-POLISH.md`）。断网/离线与实时协同已按 `OFFLINE.md` / `COLLAB.md` 落地。
 
 **其它产品边界（亦待定，非本期）：** 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标。
 
-**技术路径：** 继续当前 Vue Canvas + Nest REST 底座，不推倒；企微 HAR/`wecom-js` 用于能力与交互对照，**不要求**协议级复刻 Mutation/WS 提交。待定项见上表。
+**技术路径：** Vue Canvas + Nest REST/WS；企微 HAR/`wecom-js` 对照能力与 OT 符号；协议自洽不要求 Engine.IO 孪生。待定项见上表。
 
-### 企微实时协作：已了解程度（2026-10-24 备忘）
+### 企微实时协作：已了解程度（2026-10-26 更新）
 
-材料：`HAR-TECH-ANALYSIS.md` §8 / §12；单人实帧 `materials/live-ws-user-changes.redacted.json`。
+材料：`HAR-TECH-ANALYSIS.md` §8 / §12；单人实帧 `materials/live-ws-user-changes.redacted.json`；OT 符号 `materials/wecom-ot-transforms.extracted.json`；本仓 `docs/COLLAB.md`。
 
-| 能还原 | 仍缺 |
+| 能还原 / 已落地 | 仍缺 |
 |--------|------|
-| Engine.IO WS 通道；在线提交 `USER_CHANGES` → `ACCEPT_COMMIT`（`base_rev`→`new_rev`） | 双会话 `NEW_CHANGES` 完整推送体（未抓） |
-| MessageCenter 入队 / flush / 离线路径符号；Mutation `t=30xx`；错误码 | OT 完整 transform 表；服务端合并逻辑 |
-| 心跳、进房、光标、`COMM_NOTICE`（脏区/公式 zip） | — |
+| 在线 `USER_CHANGES` → `ACCEPT_COMMIT` → 对端 `NEW_CHANGES`（本仓语义） | 双会话企微 `NEW_CHANGES` **完整实帧**（仍按 SDK 推断） |
+| MessageCenter 在线 WS / 离线 HTTP；`sheet_rev` + changeset | 跨 sheet `notCrossSheet:false` 复杂包 |
+| 心跳、进房、光标、在线成员、`COMM_NOTICE` dirty | 公式 zip / zlib 孪生（服务端重算即可） |
 
-**补证据（可选，非当前排期）：** 不必第二企微账号——同一账号双浏览器会话（或桌面端+浏览器）同表，在观察端 WS 搜 `NEW_CHANGES`。公开网页/爬虫**拿不到**协议帧；CSDN/腾讯云社区仅有普通文档 OT 通识或近似表格协议，不可当智能表规格。开放平台只有 REST/Webhook，无协同通道。
+**补证据（可选）：** 同账号双浏览器同表抓 `NEW_CHANGES` 脱敏入库后替换 COLLAB「推断」节。
 
 ---
 
