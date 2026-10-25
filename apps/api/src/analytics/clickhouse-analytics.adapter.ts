@@ -1,9 +1,11 @@
+import type { FilterGroup } from 'shared';
 import type {
   AggregateMode,
   AnalyticsQuery,
   AnalyticsQueryPort,
   AnalyticsRow,
 } from './analytics.types';
+import { buildClickHouseFilterSql } from './clickhouse-filter.sql';
 
 type Fetcher = typeof fetch;
 
@@ -41,14 +43,16 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
     const limit = Math.min(Math.max(request.limit ?? 20, 1), 100);
     const sortBy = request.sortBy === 'label' ? 'label' : 'value';
     const sortDir = request.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const filterSql = this.filterClause(request.filters);
 
-    // CH ETL 表无 created_at；时间窗过滤在 PG 指标卡路径处理。
+    // CH ETL 表有 updated_at；时间窗在 PG 指标卡路径处理；此处 filters 与视图同源。
     const sql = request.dimensionFieldId
       ? [
           `SELECT JSONExtractString(cells, '${this.escape(request.dimensionFieldId)}') AS label,`,
           `${aggregation} AS value`,
           'FROM records',
           `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
+          `AND (${filterSql})`,
           'GROUP BY label',
           `ORDER BY ${sortBy} ${sortDir}`,
           `LIMIT ${limit}`,
@@ -58,6 +62,7 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
           `SELECT '全部' AS label, ${aggregation} AS value`,
           'FROM records',
           `WHERE sheet_id = '${this.escape(request.sheetId)}'`,
+          `AND (${filterSql})`,
           'FORMAT JSON',
         ].join(' ');
 
@@ -90,6 +95,11 @@ export class ClickHouseAnalyticsAdapter implements AnalyticsQueryPort {
       label: String(row.label ?? '(空)'),
       value: Number(row.value ?? 0),
     }));
+  }
+
+  private filterClause(filters?: FilterGroup): string {
+    if (!filters) return '1';
+    return buildClickHouseFilterSql(filters, (s) => this.escape(s));
   }
 
   private escape(value: string | undefined): string {

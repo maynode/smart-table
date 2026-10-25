@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -39,6 +41,23 @@ export class AnalysisReportsController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.reports.get(id, user.sub);
+  }
+
+  @Patch('analysis-reports/:id')
+  update(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { name?: string },
+  ) {
+    return this.reports.update(id, user.sub, body ?? {});
+  }
+
+  @Delete('analysis-reports/:id')
+  delete(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.reports.delete(id, user.sub);
   }
 
   @Post('analysis-reports/:id/answer')

@@ -66,6 +66,8 @@ export interface WidgetConfig {
   valuePrefix?: string;
   valueSuffix?: string;
   decimalPlaces?: number;
+  /** 组件级记录筛选 */
+  filters?: import('shared').FilterGroup;
 }
 
 @Injectable()
@@ -97,10 +99,21 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
 
   async list(baseId: string, userId: string, kind?: string) {
     await this.requireBase(baseId, userId, 'viewer');
-    return this.prisma.dashboard.findMany({
+    const rows = await this.prisma.dashboard.findMany({
       where: { baseId, ...(kind ? { kind } : {}) },
       orderBy: { createdAt: 'asc' },
     });
+    const visible = [];
+    for (const row of rows) {
+      const decision = await this.permissions.decision(
+        'dashboard',
+        row.id,
+        userId,
+      );
+      if (decision.level === 'none') continue;
+      visible.push(row);
+    }
+    return visible;
   }
 
   async get(dashboardId: string, userId: string) {
@@ -399,6 +412,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       limit: config.limit,
       sortBy: config.sortBy,
       sortOrder: config.sortOrder,
+      filters: config.filters,
     });
     return {
       id: widget.id,
@@ -443,6 +457,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         aggregation,
         createdAtFrom: windows.currentFrom,
         createdAtTo: windows.currentTo,
+        filters: config.filters,
       });
       const previousRows = await this.analytics.query({
         sheetId,
@@ -450,6 +465,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         aggregation,
         createdAtFrom: windows.previousFrom,
         createdAtTo: windows.previousTo,
+        filters: config.filters,
       });
       value = currentRows[0]?.value ?? 0;
       previousValue = previousRows[0]?.value ?? 0;
@@ -459,6 +475,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         sheetId,
         metricFieldId: config.metricFieldId,
         aggregation,
+        filters: config.filters,
       });
       value = rows[0]?.value ?? 0;
     }
@@ -540,6 +557,12 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         base.workspaceId,
         userId,
         minimum,
+      );
+      await this.permissions.assertCan(
+        'dashboard',
+        dashboardId,
+        userId,
+        minimum === 'editor' ? 'update' : 'read',
       );
     }
     return dashboard;

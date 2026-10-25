@@ -9,7 +9,9 @@ export type AutomationTriggerType =
   | 'recordCreated'
   | 'recordUpdated'
   | 'schedule'
-  | 'recordTimer';
+  | 'recordTimer'
+  | 'formSubmitted'
+  | 'recordButton';
 
 export interface RecordTrigger {
   type: 'recordCreated' | 'recordUpdated';
@@ -37,10 +39,31 @@ export interface RecordTimerTrigger {
   filters?: FilterGroup;
 }
 
+/** 收集表单提交成功后触发（绑定 formId，语义比「表单工作表新增记录」更清晰）. */
+export interface FormSubmittedTrigger {
+  type: 'formSubmitted';
+  formId: string;
+  /** 对写入的记录做条件过滤（字段 id/名）. */
+  filters?: FilterGroup;
+}
+
+/** 用户在表格行上点击自定义按钮时触发. */
+export interface RecordButtonTrigger {
+  type: 'recordButton';
+  sheetId: string;
+  /** 稳定键，同表内唯一；用于 API / UI. */
+  buttonKey: string;
+  /** 按钮展示文案. */
+  buttonLabel: string;
+  filters?: FilterGroup;
+}
+
 export type AutomationTrigger =
   | RecordTrigger
   | ScheduleTrigger
-  | RecordTimerTrigger;
+  | RecordTimerTrigger
+  | FormSubmittedTrigger
+  | RecordButtonTrigger;
 
 
 export type NaturalTime = 'today' | 'tomorrow' | 'yesterday' | 'now';
@@ -90,9 +113,26 @@ export type AutomationStepType =
   | 'createRecord'
   | 'modifyRecords'
   | 'sendMessage'
-  | 'sendHttp';
+  | 'sendHttp'
+  | 'condition'
+  | 'delay';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/** 条件不成立时：跳过后续步骤（整次仍计 success）. */
+export interface ConditionStep extends BaseStep {
+  type: 'condition';
+  /** 默认对照触发记录；可改为对照某步输出的首条记录. */
+  source?: 'trigger' | { stepId: string };
+  filters: FilterGroup;
+}
+
+/** 延迟后继续执行后续步骤（短延迟内联；长延迟走队列/定时续跑）. */
+export interface DelayStep extends BaseStep {
+  type: 'delay';
+  /** 毫秒；校验时限制 1s～24h. */
+  delayMs: number;
+}
 
 export interface FindRecordsStep extends BaseStep {
   type: 'findRecords';
@@ -177,7 +217,9 @@ export type AutomationStep =
   | CreateRecordStep
   | ModifyRecordsStep
   | SendMessageStep
-  | SendHttpStep;
+  | SendHttpStep
+  | ConditionStep
+  | DelayStep;
 
 export interface AutomationDefinition {
   id: string;
@@ -231,9 +273,18 @@ export interface StepOutput {
 
 export type AutomationRunStatus =
   | 'running'
+  | 'waiting'
   | 'success'
   | 'failed'
   | 'skipped';
+
+/** @deprecated 延迟已写入 automation_runs.resume_at，保留字段兼容旧调用方. */
+export interface AutomationPendingDelay {
+  delayMs: number;
+  automationId: string;
+  runId?: string;
+  resumeContext: Record<string, unknown>;
+}
 
 export interface AutomationRunResult {
   runId: string;
@@ -241,4 +292,6 @@ export interface AutomationRunResult {
   stepOutputs: Record<string, string>;
   outputs: StepOutput[];
   error?: string;
+  /** 延迟已落库为 waiting；调用方可忽略. */
+  pendingDelay?: AutomationPendingDelay;
 }

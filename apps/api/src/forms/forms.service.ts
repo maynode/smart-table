@@ -33,6 +33,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { createRedisConnection } from '../queue/redis-connection';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -84,6 +85,7 @@ export class FormsService implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly permissions: PermissionsService,
     private readonly storage: StorageService,
     private readonly automationRunner: AutomationRunnerService,
     private readonly config: ConfigService,
@@ -141,11 +143,16 @@ export class FormsService implements OnModuleDestroy {
     if (!base) {
       throw new NotFoundException('Base 不存在');
     }
-    await this.workspacesService.requireMember(
-      base.workspaceId,
-      userId,
-      'editor',
-    );
+    if (existing) {
+      // update + share config: content ACL on the form object
+      await this.permissions.assertCan('form', formId, userId, 'update');
+    } else {
+      await this.workspacesService.requireMember(
+        base.workspaceId,
+        userId,
+        'editor',
+      );
+    }
 
     if (existing && dto.baseId !== existing.baseId) {
       throw new BadRequestException('不能跨 Base 移动表单');
@@ -236,7 +243,7 @@ export class FormsService implements OnModuleDestroy {
     if (!form) {
       throw new NotFoundException('表单不存在');
     }
-    await this.requireBaseEditor(form.baseId, userId);
+    await this.permissions.assertCan('form', formId, userId, 'read');
     return this.toDto(form);
   }
 
@@ -254,7 +261,23 @@ export class FormsService implements OnModuleDestroy {
       where: { baseId },
       orderBy: { createdAt: 'asc' },
     });
-    return Promise.all(forms.map((form) => this.toDto(form)));
+    const visible = [];
+    for (const form of forms) {
+      const decision = await this.permissions.decision('form', form.id, userId);
+      if (decision.level === 'none') continue;
+      visible.push(form);
+    }
+    return Promise.all(visible.map((form) => this.toDto(form)));
+  }
+
+  async delete(formId: string, userId: string) {
+    const form = await this.prisma.form.findUnique({ where: { id: formId } });
+    if (!form) {
+      throw new NotFoundException('表单不存在');
+    }
+    await this.permissions.assertCan('form', formId, userId, 'delete');
+    await this.prisma.form.delete({ where: { id: formId } });
+    return { id: formId, deleted: true };
   }
 
   async uploadCover(
@@ -270,7 +293,7 @@ export class FormsService implements OnModuleDestroy {
     if (!form) {
       throw new NotFoundException('表单不存在');
     }
-    await this.requireBaseEditor(form.baseId, userId);
+    await this.permissions.assertCan('form', formId, userId, 'update');
 
     await this.quotas.assertStorage(form.base.workspaceId, buffer.byteLength);
     const coverUrl = await this.storage.saveCover(buffer, mimetype);
@@ -448,6 +471,47 @@ export class FormsService implements OnModuleDestroy {
     }
   }
 
+  /** 公开提交 + Idempotency-Key（离线回放防领码双花） */
+  async submitIdempotent(
+    shareToken: string,
+    cells: Record<string, unknown>,
+    ip: string,
+    submitterUserId?: string,
+    idempotencyKey?: string,
+  ) {
+    if (idempotencyKey) {
+      const prior = await this.prisma.formSubmitIdempotency.findUnique({
+        where: { idempotencyKey },
+      });
+      if (prior) {
+        return prior.result as Awaited<ReturnType<FormsService['submit']>>;
+      }
+    }
+    const result = await this.submit(
+      shareToken,
+      cells,
+      ip,
+      submitterUserId,
+    );
+    if (idempotencyKey) {
+      const form = await this.prisma.form.findUnique({
+        where: { shareToken },
+      });
+      if (form) {
+        await this.prisma.formSubmitIdempotency.create({
+          data: {
+            idempotencyKey,
+            formId: form.id,
+            submissionId:
+              (result as { submissionId?: string }).submissionId ?? null,
+            result: result as object,
+          },
+        });
+      }
+    }
+    return result;
+  }
+
   private async acquireSubmitSlot(): Promise<void> {
     if (this.activeSubmits < this.submitMaxConcurrency) {
       this.activeSubmits += 1;
@@ -525,6 +589,12 @@ export class FormsService implements OnModuleDestroy {
         sanitized[config.fieldId] = cells[config.fieldId];
       }
     }
+
+    // Sheet everyone fieldRule: reject non-editable / exhausted submitOnce cells.
+    await this.permissions.assertEveryoneSheetFieldWrites(
+      form.sheetId,
+      sanitized,
+    );
 
     const submissionId = randomUUID();
 
@@ -687,7 +757,7 @@ export class FormsService implements OnModuleDestroy {
   ): Promise<{ recordId: string; stepOutputs: Record<string, string> }> {
     // Claim, form record, and submission commit or roll back together: a
     // submission either gets a serial and a record, or writes nothing at all.
-    return this.prisma.$transaction(
+    const committed = await this.prisma.$transaction(
       async (tx) => {
         if (form.rejectDuplicatePhone) {
           const phoneField = form.sheet.fields.find(
@@ -753,23 +823,44 @@ export class FormsService implements OnModuleDestroy {
           });
         }
 
-        const runs = await this.automationRunner.triggerRecordCreated(
+        const formRuns = await this.automationRunner.triggerFormSubmitted(
+          form.id,
           record.id,
           tx,
-          `submission:${submissionId}`,
+          `formSubmitted:${submissionId}`,
           submitterUserId,
         );
-
-        const blocked = runs.find(
-          (run) => run.status === 'failed' || run.status === 'skipped',
+        // formSubmitted 真正生效（成功/等待续跑）时才跳过 recordCreated；
+        // 仅 skipped 时回退到 recordCreated，避免领取类自动化被跳过却拦截提交
+        const formTookEffect = formRuns.some(
+          (run) => run.status === 'success' || run.status === 'waiting',
         );
-        if (blocked) {
-          if (blocked.status === 'skipped') {
-            throw new ConflictException('序列号已领取完毕，请稍后再试');
-          }
+        const createdRuns = formTookEffect
+          ? []
+          : await this.automationRunner.triggerRecordCreated(
+              record.id,
+              tx,
+              `submission:${submissionId}`,
+              submitterUserId,
+            );
+        const runs = [...formRuns, ...createdRuns];
+
+        const failed = runs.find((run) => run.status === 'failed');
+        if (failed) {
           throw new UnprocessableEntityException(
-            `自动化执行失败：${blocked.error ?? '未知错误'}`,
+            `自动化执行失败：${failed.error ?? '未知错误'}`,
           );
+        }
+        // waiting = 延迟后续异步续跑，同步段已成功
+        const anyOk = runs.some(
+          (run) => run.status === 'success' || run.status === 'waiting',
+        );
+        const anySkipped = runs.some((run) => run.status === 'skipped');
+        if (!anyOk && anySkipped) {
+          throw new ConflictException('序列号已领取完毕，请稍后再试');
+        }
+        if (runs.length > 0 && !anyOk) {
+          throw new ConflictException('序列号已领取完毕，请稍后再试');
         }
 
         const stepOutputs = Object.assign(
@@ -777,10 +868,30 @@ export class FormsService implements OnModuleDestroy {
           ...runs.map((run) => run.stepOutputs),
         ) as Record<string, string>;
 
-        return { recordId: record.id, stepOutputs };
+        const pendingDelays = runs
+          .map((run) => run.pendingDelay)
+          .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+        return { recordId: record.id, stepOutputs, pendingDelays };
       },
       { timeout: 30_000 },
     );
+
+    for (const pending of committed.pendingDelays) {
+      try {
+        await this.automationRunner.schedulePendingDelay(pending);
+      } catch (error) {
+        // 延迟续跑失败不回滚已提交的领取
+        this.logger.error(
+          `form claim delay resume failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return {
+      recordId: committed.recordId,
+      stepOutputs: committed.stepOutputs,
+    };
   }
 
   /**

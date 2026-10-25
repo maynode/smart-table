@@ -4,6 +4,7 @@ import CanvasGrid from './CanvasGrid.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FieldOptionsEditor from './FieldOptionsEditor.vue';
 import { useFloatDrag } from '../composables/useFloatDrag';
+import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import type { GridStats } from '../grid-canvas/engine';
@@ -98,6 +99,10 @@ const emit = defineEmits<{
 const gridRef = ref<InstanceType<typeof CanvasGrid> | null>(null);
 const settingsOpen = ref(false);
 const fieldPickerOpen = ref(false);
+const automationButtons = ref<
+  Array<{ buttonKey: string; buttonLabel: string; automationId: string }>
+>([]);
+const runningButtonKey = ref('');
 const fieldPickerMode = ref<'create' | 'edit'>('create');
 const fieldPickerAnchor = ref<{ top: number; left: number } | null>(null);
 const editingField = ref<FieldDto | null>(null);
@@ -155,6 +160,7 @@ let unsubscribeHistory: (() => void) | null = null;
 onMounted(() => {
   syncHistoryState();
   unsubscribeHistory = subscribeEditHistory(syncHistoryState);
+  void loadAutomationButtons();
 });
 onBeforeUnmount(() => {
   unsubscribeHistory?.();
@@ -303,24 +309,15 @@ const hierarchy = computed(() => {
   return hierarchyOrder(formulaRecords.value, parentFieldId.value);
 });
 
-const displayRecords = computed<RecordDto[]>(() => {
-  const base = hierarchy.value.records;
-  const q = searchQuery.value.trim().toLowerCase();
-  if (!q) return base;
-  return base.filter((record) =>
-    Object.values(record.cells).some((value) => {
-      if (value === null || value === undefined) return false;
-      if (typeof value === 'string') return value.toLowerCase().includes(q);
-      if (typeof value === 'number' || typeof value === 'boolean') {
-        return String(value).toLowerCase().includes(q);
-      }
-      try {
-        return JSON.stringify(value).toLowerCase().includes(q);
-      } catch {
-        return false;
-      }
-    }),
-  );
+/** 搜索走服务端 ViewQuery.search；此处只做层级展开，不再本地截行. */
+const displayRecords = computed<RecordDto[]>(() => hierarchy.value.records);
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(searchQuery, () => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    emitQuery();
+  }, 280);
 });
 
 const rowDepths = computed(() => hierarchy.value.depths);
@@ -427,6 +424,8 @@ function buildQuery(): ViewQuery {
   if (freezeColumnCount.value > 0) {
     query.freezeColumnCount = freezeColumnCount.value;
   }
+  const search = searchQuery.value.trim();
+  if (search) query.search = search;
   return query;
 }
 
@@ -925,12 +924,56 @@ function cancelSelection(): void {
   gridRef.value?.clearRowSelection();
 }
 
+async function loadAutomationButtons(): Promise<void> {
+  try {
+    automationButtons.value = await endpoints.listSheetAutomationButtons(
+      props.sheetId,
+    );
+  } catch {
+    automationButtons.value = [];
+  }
+}
+
+async function runAutomationButton(buttonKey: string): Promise<void> {
+  const recordId = selectedRecordIds.value[0];
+  if (!recordId || runningButtonKey.value) return;
+  runningButtonKey.value = buttonKey;
+  try {
+    const results = await endpoints.runSheetAutomationButton(
+      props.sheetId,
+      recordId,
+      buttonKey,
+    );
+    const failed = results.find((item) => item.status === 'failed');
+    if (failed) {
+      toast('自动化按钮执行失败');
+    } else if (!results.length) {
+      toast('没有匹配的启用自动化');
+    } else {
+      toast('已触发自动化');
+      emit('refresh');
+    }
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '触发失败');
+  } finally {
+    runningButtonKey.value = '';
+  }
+}
+
 function openFieldOptions(field: FieldDto): void {
   optionsField.value = field;
 }
 
+watch(
+  () => props.sheetId,
+  () => {
+    void loadAutomationButtons();
+  },
+);
+
 defineExpose({
   applySavedQuery,
+  clearView,
   currentQuery,
   openFieldOptions,
   clearRowSelection: () => gridRef.value?.clearRowSelection(),
@@ -942,22 +985,6 @@ defineExpose({
     <div class="grid-toolbar">
       <button class="btn btn-primary" data-testid="add-row" @click="emit('addRow')">
         + 添加一行
-      </button>
-      <button
-        class="btn"
-        data-testid="table-settings"
-        :class="{ 'btn-active': settingsOpen }"
-        @click="toggleSettings"
-      >
-        表格设置
-      </button>
-      <button
-        ref="addFieldBtn"
-        class="btn"
-        data-testid="add-field"
-        @click="openFieldPicker"
-      >
-        + 添加字段
       </button>
       <span class="toolbar-divider" />
       <button
@@ -1007,6 +1034,23 @@ defineExpose({
         @click="togglePanel('color')"
       >
         填色<em v-if="activeColorCount">{{ activeColorCount }}</em>
+      </button>
+      <span class="toolbar-divider" />
+      <button
+        ref="addFieldBtn"
+        class="btn btn-ghost"
+        data-testid="add-field"
+        @click="openFieldPicker"
+      >
+        + 字段
+      </button>
+      <button
+        class="btn btn-ghost"
+        data-testid="table-settings"
+        :class="{ 'btn-active': settingsOpen }"
+        @click="toggleSettings"
+      >
+        设置
       </button>
       <button
         v-if="activeConditionLabel"
@@ -1115,6 +1159,23 @@ defineExpose({
     <Transition name="selection-bar">
       <div v-if="selectedRecordIds.length" class="selection-bar">
         <strong class="selection-count">已选 {{ selectedRecordIds.length }} 行</strong>
+        <template v-if="selectedRecordIds.length === 1 && automationButtons.length">
+          <button
+            v-for="btn in automationButtons"
+            :key="btn.buttonKey"
+            class="btn btn-ghost small"
+            type="button"
+            :data-testid="`automation-button-${btn.buttonKey}`"
+            :disabled="runningButtonKey === btn.buttonKey"
+            @click="runAutomationButton(btn.buttonKey)"
+          >
+            {{
+              runningButtonKey === btn.buttonKey
+                ? '执行中…'
+                : btn.buttonLabel
+            }}
+          </button>
+        </template>
         <span class="selection-spacer" />
         <button class="btn btn-danger small" data-testid="delete-selected" @click="deleteSelected">
           删除所选
@@ -1545,7 +1606,7 @@ defineExpose({
 
     <!-- 底栏已画在 Canvas 内；保留测试钩子 -->
     <span class="sr-only" data-testid="record-count">
-      记录数 {{ displayRecords.length }}{{ nextCursor ? '+' : '' }}
+      记录数 {{ displayRecords.length }}
     </span>
 
     <div

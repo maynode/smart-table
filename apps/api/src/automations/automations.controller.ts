@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -32,6 +33,32 @@ export class AutomationsController {
     @Query('baseId', new ParseUUIDPipe()) baseId: string,
   ) {
     return this.automationsService.list(user.sub, baseId);
+  }
+
+  @Get('sheet-buttons')
+  listSheetButtons(
+    @CurrentUser() user: JwtPayload,
+    @Query('sheetId', new ParseUUIDPipe()) sheetId: string,
+  ) {
+    return this.automationsService.listSheetButtons(user.sub, sheetId);
+  }
+
+  @Post('sheet-buttons/run')
+  @HttpCode(HttpStatus.CREATED)
+  runSheetButton(
+    @CurrentUser() user: JwtPayload,
+    @Body()
+    body: { sheetId?: string; recordId?: string; buttonKey?: string },
+  ) {
+    if (!body.sheetId || !body.recordId || !body.buttonKey?.trim()) {
+      throw new BadRequestException('sheetId、recordId、buttonKey 不能为空');
+    }
+    return this.automationsService.runSheetButton(
+      user.sub,
+      body.sheetId,
+      body.recordId,
+      body.buttonKey.trim(),
+    );
   }
 
   @Post()

@@ -45,9 +45,12 @@ export class AutomationSchedulerService
       void this.recordTimers.runDueTimers().catch((error: unknown) => {
         this.logger.warn(`record timer poll failed: ${String(error)}`);
       });
+      void this.runner.runDueDelayedRuns().catch((error: unknown) => {
+        this.logger.warn(`automation delay resume failed: ${String(error)}`);
+      });
     }, 15_000);
     this.timer.unref?.();
-    this.logger.log('automation scheduler started (15s poll)');
+    this.logger.log('automation scheduler started (15s poll, delays+cron+timers)');
   }
 
   onModuleDestroy(): void {

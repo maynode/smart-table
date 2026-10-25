@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { buildFilterSql } from '../automations/automation-filter.sql';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   AggregateMode,
@@ -35,25 +36,24 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
     const aggregation = this.aggregationSql(mode, metric);
     const from = request.createdAtFrom;
     const to = request.createdAtTo;
+    const filterSql = request.filters
+      ? buildFilterSql(request.filters)
+      : Prisma.sql`TRUE`;
+    const timeSql =
+      from && to
+        ? Prisma.sql`"created_at" >= ${from} AND "created_at" < ${to}`
+        : Prisma.sql`TRUE`;
 
     if (!dimension) {
       const rows = await this.prisma.$queryRaw<
         Array<{ value: number | string | null }>
-      >(
-        from && to
-          ? Prisma.sql`
-              SELECT ${aggregation} AS value
-              FROM "records"
-              WHERE "sheet_id" = ${request.sheetId}::uuid
-                AND "created_at" >= ${from}
-                AND "created_at" < ${to}
-            `
-          : Prisma.sql`
-              SELECT ${aggregation} AS value
-              FROM "records"
-              WHERE "sheet_id" = ${request.sheetId}::uuid
-            `,
-      );
+      >(Prisma.sql`
+        SELECT ${aggregation} AS value
+        FROM "records"
+        WHERE "sheet_id" = ${request.sheetId}::uuid
+          AND (${filterSql})
+          AND (${timeSql})
+      `);
       return [
         {
           label: '全部',
@@ -64,29 +64,17 @@ export class PgAnalyticsAdapter implements AnalyticsQueryPort {
 
     const rows = await this.prisma.$queryRaw<
       Array<{ label: string | null; value: number | string | null }>
-    >(
-      from && to
-        ? Prisma.sql`
-            SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
-                   ${aggregation} AS value
-            FROM "records"
-            WHERE "sheet_id" = ${request.sheetId}::uuid
-              AND "created_at" >= ${from}
-              AND "created_at" < ${to}
-            GROUP BY 1
-            ${orderClause}
-            LIMIT ${limit}
-          `
-        : Prisma.sql`
-            SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
-                   ${aggregation} AS value
-            FROM "records"
-            WHERE "sheet_id" = ${request.sheetId}::uuid
-            GROUP BY 1
-            ${orderClause}
-            LIMIT ${limit}
-          `,
-    );
+    >(Prisma.sql`
+      SELECT COALESCE(NULLIF(cells->>${dimension}, ''), '(空)') AS label,
+             ${aggregation} AS value
+      FROM "records"
+      WHERE "sheet_id" = ${request.sheetId}::uuid
+        AND (${filterSql})
+        AND (${timeSql})
+      GROUP BY 1
+      ${orderClause}
+      LIMIT ${limit}
+    `);
 
     return rows.map((row) => ({
       label: String(row.label ?? '(空)'),

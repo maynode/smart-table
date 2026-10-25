@@ -343,14 +343,14 @@ function defaultWidth(field: FieldDto): number {
     case 'progress':
       return 120;
     case 'date':
-      return 140;
+      return 178;
     case 'checkbox':
       return 90;
     case 'person':
       return 120;
     case 'createdAt':
     case 'lastEditedAt':
-      return 160;
+      return 178;
     default:
       return 180;
   }
@@ -436,7 +436,13 @@ function formatCell(field: FieldDto, value: unknown): CellRender | null {
       );
       return choice?.name ?? String(id);
     });
-    return { text: labels.join(', ') };
+    if (!labels.length) return null;
+    return {
+      text: labels.join('、'),
+      pill: true,
+      bg: '#f2f3f5',
+      color: '#646a73',
+    };
   }
 
   if (field.type === 'checkbox') {

@@ -344,6 +344,28 @@ export const endpoints = {
       body: { cells, expectedVersion },
     }),
 
+  commitChanges: (
+    sheetId: string,
+    body: {
+      clientBatchId: string;
+      mutations: unknown[];
+    },
+  ) =>
+    api<{
+      clientBatchId: string;
+      results: Array<{
+        clientOpId: string;
+        status: string;
+        record?: RecordDto;
+        code?: string;
+        message?: string;
+        recordIdMap?: Record<string, string>;
+      }>;
+    }>(`/sheets/${sheetId}/commitchanges`, {
+      method: 'POST',
+      body,
+    }),
+
   createField: (
     sheetId: string,
     body: {
@@ -444,10 +466,20 @@ export const endpoints = {
     };
   },
 
-  submitPublicForm: (token: string, cells: Record<string, unknown>) =>
+  submitPublicForm: (
+    token: string,
+    cells: Record<string, unknown>,
+    idempotencyKey?: string,
+  ) =>
     api<FormSubmitResult>(
       `/public/forms/${encodeURIComponent(token)}/submit`,
-      { body: { cells }, token: null },
+      {
+        body: { cells },
+        token: null,
+        headers: idempotencyKey
+          ? { 'Idempotency-Key': idempotencyKey }
+          : undefined,
+      },
     ),
 
   listAutomations: (baseId: string) =>
@@ -506,6 +538,27 @@ export const endpoints = {
     api<AutomationRunDto[]>(
       `/automations/${automationId}/runs?limit=${limit}`,
     ),
+
+  listSheetAutomationButtons: (sheetId: string) =>
+    api<
+      Array<{ buttonKey: string; buttonLabel: string; automationId: string }>
+    >(`/automations/sheet-buttons?sheetId=${sheetId}`),
+
+  runSheetAutomationButton: (
+    sheetId: string,
+    recordId: string,
+    buttonKey: string,
+  ) =>
+    api<
+      Array<{
+        runId: string;
+        status: string;
+        stepOutputs?: Record<string, string>;
+      }>
+    >(`/automations/sheet-buttons/run`, {
+      method: 'POST',
+      body: { sheetId, recordId, buttonKey },
+    }),
 
   importSheet: importSheetFile,
   exportSheet: exportSheetFile,
@@ -609,12 +662,14 @@ export const endpoints = {
       { method: 'POST' },
     ),
 
-  listTemplates: () => api<TemplateDto[]>('/templates'),
+  listTemplates: (scope: 'workspace' | 'base' = 'workspace') =>
+    api<TemplateDto[]>(`/templates?scope=${scope}`),
 
   instantiateTemplate: (
     key: string,
     body: {
-      workspaceId: string;
+      workspaceId?: string;
+      baseId?: string;
       name?: string;
     },
   ) =>
@@ -655,6 +710,11 @@ export const endpoints = {
   markNotificationRead: (id: string) =>
     api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
 
+  markAllNotificationsRead: () =>
+    api<{ read: boolean; count: number }>('/notifications/read-all', {
+      method: 'POST',
+    }),
+
   listAnalysisReports: (baseId: string) =>
     api<AnalysisReportListItemDto[]>(`/bases/${baseId}/analysis-reports`),
 
@@ -666,6 +726,17 @@ export const endpoints = {
 
   getAnalysisReport: (id: string) =>
     api<AnalysisReportDto>(`/analysis-reports/${id}`),
+
+  updateAnalysisReport: (id: string, name: string) =>
+    api<AnalysisReportDto>(`/analysis-reports/${id}`, {
+      method: 'PATCH',
+      body: { name },
+    }),
+
+  deleteAnalysisReport: (id: string) =>
+    api<{ deleted: boolean; id: string }>(`/analysis-reports/${id}`, {
+      method: 'DELETE',
+    }),
 
   answerAnalysisReport: (
     id: string,

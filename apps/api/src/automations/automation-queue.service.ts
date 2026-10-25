@@ -1,4 +1,6 @@
 import {
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -29,6 +31,7 @@ export class AutomationQueueService implements OnModuleDestroy {
 
   constructor(
     config: ConfigService,
+    @Inject(forwardRef(() => AutomationRunnerService))
     private readonly runner: AutomationRunnerService,
   ) {
     const enabled = config.get<string>('AUTOMATION_QUEUE') === 'bullmq';
@@ -80,6 +83,28 @@ export class AutomationQueueService implements OnModuleDestroy {
       'run',
       { automationId, context },
       { removeOnComplete: 1000, attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+    );
+    return { queued: true, jobId: job.id };
+  }
+
+  /** 延迟续跑（BullMQ delayed job）. */
+  async enqueueDelayed(
+    automationId: string,
+    context: AutomationRunContext,
+    delayMs: number,
+  ): Promise<{ queued: boolean; jobId?: string | number }> {
+    if (!this.queue) {
+      return { queued: false };
+    }
+    const job = await this.queue.add(
+      'run',
+      { automationId, context },
+      {
+        delay: Math.max(0, Math.floor(delayMs)),
+        removeOnComplete: 1000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
+      },
     );
     return { queued: true, jobId: job.id };
   }

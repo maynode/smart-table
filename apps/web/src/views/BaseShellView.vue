@@ -21,17 +21,24 @@ import {
   takeRedo,
   takeUndo,
 } from '../ui/edit-history';
+import {
+  messageCenter,
+  syncBannerText,
+} from '../sync/message-center';
 import { toast } from '../ui/toast';
-import type { ViewQuery } from 'shared';
+import type { MutationResult, ViewQuery } from 'shared';
 import type {
+  AnalysisReportListItemDto,
   BaseDto,
   CommentDto,
+  DashboardDto,
   FieldDto,
   FormDto,
   MemberDto,
   RecordDto,
   SavedViewDto,
   SheetDto,
+  TemplateInstantiateResult,
   WorkspaceDto,
 } from '../api/types';
 
@@ -44,25 +51,36 @@ const workspace = ref<WorkspaceDto | null>(null);
 const base = ref<BaseDto | null>(null);
 const sheets = ref<SheetDto[]>([]);
 const forms = ref<FormDto[]>([]);
+const dashboards = ref<DashboardDto[]>([]);
+const analysisReports = ref<AnalysisReportListItemDto[]>([]);
 const activeSheet = ref<SheetDto | null>(null);
+const activeDashboardId = ref('');
 /**
  * grid：普通工作表网格
  * form：收集表单（编辑/填写）
  * form-results：该表单的提交记录（收集结果，底层仍是表记录网格）
+ * dashboard：仪表盘主区
  */
-const mainView = ref<'grid' | 'form' | 'form-results'>('grid');
+const mainView = ref<'grid' | 'form' | 'form-results' | 'dashboard'>('grid');
 /** 从收集结果返回表单时，恢复编辑/填写 Tab */
 const formReturnTab = ref<'design' | 'preview'>('design');
+
+const knownFormSheetIds = ref(new Set<string>());
+const activeAnalysisReportId = ref('');
 
 const formSheetIds = computed(
   () => new Set(forms.value.map((item) => item.sheetId)),
 );
 
 function sheetHasForm(sheetId: string): boolean {
-  return formSheetIds.value.has(sheetId);
+  return (
+    formSheetIds.value.has(sheetId) || knownFormSheetIds.value.has(sheetId)
+  );
 }
 const records = ref<RecordDto[]>([]);
 const nextCursor = ref<string | null>(null);
+/** 静默续拉世代号：切表时递增，丢弃过期批次 */
+const recordsLoadGen = ref(0);
 const loading = ref(false);
 const bootError = ref('');
 const rowColors = ref<Record<string, string>>({});
@@ -93,22 +111,39 @@ const members = ref<MemberDto[]>([]);
 const automationsOpen = ref(false);
 const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
-const dashboardOpen = ref(false);
-const dashboardKind = ref<'dashboard' | 'report'>('dashboard');
 const analysisOpen = ref(false);
 const templatesOpen = ref(false);
 const publicViewOpen = ref(false);
 
-const createMenuOpen = ref(false);
-
+/** 底部仅保留「导入 / 模板」；工作表等走各分区 + */
 const createMenuItems = [
-  { icon: '▦', label: '工作表', action: 'sheet' as const },
-  { icon: '📊', label: '仪表盘', action: 'dashboard' as const },
-  { icon: '📝', label: '收集表单', action: 'form' as const },
-  { icon: '📈', label: '分析报告', action: 'report' as const },
   { icon: '📥', label: '导入表格', action: 'import' as const },
   { icon: '🧩', label: '从模板新建', action: 'template' as const },
 ];
+
+/** 侧栏分区折叠：仪表盘多时默认收起 */
+const sectionCollapsed = ref({
+  sheets: false,
+  forms: false,
+  dashboards: false,
+  reports: false,
+});
+
+function toggleSection(
+  key: 'sheets' | 'forms' | 'dashboards' | 'reports',
+): void {
+  sectionCollapsed.value = {
+    ...sectionCollapsed.value,
+    [key]: !sectionCollapsed.value[key],
+  };
+}
+
+const dataSheets = computed(() =>
+  sheets.value.filter((sheet) => !isFormSheet(sheet)),
+);
+const formSheets = computed(() =>
+  sheets.value.filter((sheet) => isFormSheet(sheet)),
+);
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : '网络错误，请稍后重试';
@@ -118,21 +153,59 @@ function isFormSheet(sheet: SheetDto): boolean {
   return sheetHasForm(sheet.id) || sheet.name === '收集表单';
 }
 
+function markFormSheet(sheetId: string): void {
+  knownFormSheetIds.value = new Set([...knownFormSheetIds.value, sheetId]);
+}
+
+function applyDefaultView(): void {
+  currentViewId.value = '';
+  savedViewName.value = '';
+  gridRef.value?.clearView?.();
+}
+
 async function bootstrap(): Promise<void> {
   bootError.value = '';
   try {
-    const [ws, baseDetail, sheetList, memberList, formList] = await Promise.all([
+    const [
+      ws,
+      baseDetail,
+      sheetList,
+      memberList,
+      formList,
+      dashboardList,
+      reportList,
+    ] = await Promise.all([
       endpoints.getWorkspace(workspaceId.value),
       endpoints.getBase(baseId.value),
       endpoints.listSheets(baseId.value),
       endpoints.listMembers(workspaceId.value).catch(() => [] as MemberDto[]),
       endpoints.listForms(baseId.value).catch(() => [] as FormDto[]),
+      endpoints
+        .listDashboards(baseId.value, 'dashboard')
+        .catch(() => [] as DashboardDto[]),
+      endpoints
+        .listAnalysisReports(baseId.value)
+        .catch(() => [] as AnalysisReportListItemDto[]),
     ]);
     workspace.value = ws;
     base.value = baseDetail;
     sheets.value = sheetList;
     members.value = memberList;
     forms.value = formList;
+    dashboards.value = dashboardList;
+    analysisReports.value = reportList;
+    if (dashboardList.length > 4) {
+      sectionCollapsed.value = {
+        ...sectionCollapsed.value,
+        dashboards: true,
+      };
+    }
+    if (reportList.length > 4) {
+      sectionCollapsed.value = {
+        ...sectionCollapsed.value,
+        reports: true,
+      };
+    }
 
     const requested =
       typeof route.query.sheet === 'string' ? route.query.sheet : null;
@@ -189,9 +262,11 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     if (activeSheet.value?.id !== sheetId) {
       clearEditHistory();
     }
+    activeDashboardId.value = '';
     activeSheet.value = detail;
     // 企微：收集表单默认进表单 UI；提交数据在「收集结果」里看
     if (isFormSheet(detail)) {
+      sectionCollapsed.value = { ...sectionCollapsed.value, forms: false };
       mainView.value = 'form';
       formBuilderOpen.value = false;
       savedViews.value = views;
@@ -204,6 +279,7 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       nextCursor.value = null;
       return;
     }
+    sectionCollapsed.value = { ...sectionCollapsed.value, sheets: false };
     mainView.value = 'grid';
     savedViews.value = views;
     currentViewId.value = '';
@@ -211,9 +287,10 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     savedViewName.value = '';
     rowColors.value = {};
     viewGroups.value = [];
-    const page = await endpoints.listRecords(sheetId, null, 100);
+    const page = await endpoints.listRecords(sheetId, null, 200);
     records.value = page.records;
     nextCursor.value = page.nextCursor;
+    void drainRecordsInBackground(sheetId);
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -241,14 +318,26 @@ async function insertRows(payload: {
 }): Promise<void> {
   if (!activeSheet.value) return;
   const count = Math.min(100, Math.max(1, Math.floor(payload.count || 1)));
+  const sheetId = activeSheet.value.id;
   try {
-    const created = [];
+    const created: RecordDto[] = [];
     for (let i = 0; i < count; i += 1) {
-      created.push(
-        await endpoints.createRecord(activeSheet.value.id, {}),
-      );
+      const clientRecordId = crypto.randomUUID();
+      const temp: RecordDto = {
+        id: clientRecordId,
+        sheetId,
+        cells: {},
+        version: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      created.push(temp);
+      await messageCenter.enqueue(sheetId, {
+        type: 'createRecord',
+        clientRecordId,
+        cells: {},
+      });
     }
-    // 无持久行 order：按 atIndex 插入本地列表，刷新后仍按 id 排序。
     if (typeof payload.atIndex === 'number') {
       const index = Math.max(
         0,
@@ -359,39 +448,97 @@ async function commitCell(payload: {
   previous?: unknown;
 }): Promise<void> {
   if (!activeSheet.value) return;
+  const coerced =
+    typeof payload.value === 'string'
+      ? coerceCellValue(payload.field, payload.value)
+      : payload.value;
+  const previous =
+    payload.previous !== undefined
+      ? payload.previous
+      : payload.record.cells[payload.field.id];
+  // 乐观本地应用；MessageCenter 持久化后 flush
+  records.value = records.value.map((record) =>
+    record.id === payload.record.id
+      ? {
+          ...record,
+          cells: { ...record.cells, [payload.field.id]: coerced },
+          version: record.version,
+        }
+      : record,
+  );
+  pushEdit({
+    sheetId: activeSheet.value.id,
+    recordId: payload.record.id,
+    fieldId: payload.field.id,
+    fieldName: payload.field.name,
+    previous,
+    next: coerced,
+    label: `${payload.field.name}: ${formatHistoryValue(previous)} → ${formatHistoryValue(coerced)}`,
+  });
   try {
-    const coerced =
-      typeof payload.value === 'string'
-        ? coerceCellValue(payload.field, payload.value)
-        : payload.value;
-    const previous =
-      payload.previous !== undefined
-        ? payload.previous
-        : payload.record.cells[payload.field.id];
-    const updated = await endpoints.updateRecord(
-      payload.record.id,
-      { [payload.field.id]: coerced },
-      payload.record.version,
-    );
-    records.value = records.value.map((record) =>
-      record.id === updated.id ? updated : record,
-    );
-    pushEdit({
-      sheetId: activeSheet.value.id,
-      recordId: updated.id,
-      fieldId: payload.field.id,
-      fieldName: payload.field.name,
-      previous,
-      next: coerced,
-      label: `${payload.field.name}: ${formatHistoryValue(previous)} → ${formatHistoryValue(coerced)}`,
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'setRecord',
+      recordId: payload.record.id,
+      cells: { [payload.field.id]: coerced },
+      baseVersion: payload.record.version,
     });
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409) {
-      toast('记录已被他人修改，正在刷新…');
-      await reloadActiveRecords();
-      return;
-    }
     toast(messageOf(error));
+  }
+}
+
+function onCommitAccept(results: MutationResult[]): void {
+  for (const result of results) {
+    if (result.status !== 'ok' && result.status !== 'duplicate') continue;
+    if (result.record) {
+      const rec = result.record;
+      records.value = records.value.map((item) =>
+        item.id === rec.id
+          ? {
+              ...item,
+              id: rec.id,
+              cells: rec.cells,
+              version: rec.version,
+            }
+          : item,
+      );
+    }
+    if (result.recordIdMap) {
+      for (const [clientId, serverId] of Object.entries(result.recordIdMap)) {
+        records.value = records.value.map((item) =>
+          item.id === clientId ? { ...item, id: serverId } : item,
+        );
+      }
+    }
+    if (result.fieldIdMap && activeSheet.value) {
+      for (const [clientId, serverId] of Object.entries(result.fieldIdMap)) {
+        activeSheet.value = {
+          ...activeSheet.value,
+          fields: (activeSheet.value.fields ?? []).map((field) =>
+            field.id === clientId ? { ...field, id: serverId } : field,
+          ),
+        };
+      }
+    }
+    if (result.field && activeSheet.value) {
+      const f = result.field;
+      activeSheet.value = {
+        ...activeSheet.value,
+        fields: (activeSheet.value.fields ?? []).map((field) =>
+          field.id === f.id
+            ? {
+                ...field,
+                name: f.name,
+                type: f.type,
+                options: (f.options as FieldDto['options']) ?? field.options,
+                order: f.order ?? field.order,
+                required: f.required ?? field.required,
+                hidden: f.hidden ?? field.hidden,
+              }
+            : field,
+        ),
+      };
+    }
   }
 }
 
@@ -412,26 +559,24 @@ async function applyHistoryValue(
   value: unknown,
 ): Promise<boolean> {
   const record = records.value.find((item) => item.id === recordId);
-  if (!record) {
+  if (!record || !activeSheet.value) {
     toast('记录已不存在，无法撤销/重做');
     return false;
   }
+  records.value = records.value.map((item) =>
+    item.id === recordId
+      ? { ...item, cells: { ...item.cells, [fieldId]: value } }
+      : item,
+  );
   try {
-    const updated = await endpoints.updateRecord(
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'setRecord',
       recordId,
-      { [fieldId]: value },
-      record.version,
-    );
-    records.value = records.value.map((item) =>
-      item.id === updated.id ? updated : item,
-    );
+      cells: { [fieldId]: value },
+      baseVersion: record.version,
+    });
     return true;
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409) {
-      toast('记录版本已过期，已刷新最新内容');
-      await reloadActiveRecords();
-      return false;
-    }
     toast(messageOf(error));
     return false;
   }
@@ -471,40 +616,55 @@ async function refreshSheet(): Promise<void> {
   toast('已刷新');
 }
 
+/**
+ * 静默续拉剩余行（无分页 UI）。Canvas 虚拟滚动只渲染可视区；
+ * 批次在后台拼齐，体验对齐 Excel「整表在内存、滚动浏览」。
+ */
+async function drainRecordsInBackground(sheetId: string): Promise<void> {
+  const gen = ++recordsLoadGen.value;
+  let cursor = nextCursor.value;
+  while (cursor && gen === recordsLoadGen.value && activeSheet.value?.id === sheetId) {
+    try {
+      const page = await endpoints.listRecords(sheetId, cursor, 2000);
+      if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) {
+        return;
+      }
+      records.value = [...records.value, ...page.records];
+      nextCursor.value = page.nextCursor;
+      cursor = page.nextCursor;
+    } catch {
+      return;
+    }
+  }
+}
+
 async function loadMore(): Promise<void> {
   if (!activeSheet.value || !nextCursor.value || loading.value) return;
-  loading.value = true;
-  try {
-    const page = await endpoints.listRecords(
-      activeSheet.value.id,
-      nextCursor.value,
-      100,
-    );
-    records.value = [...records.value, ...page.records];
-    nextCursor.value = page.nextCursor;
-  } catch (error) {
-    toast(messageOf(error));
-  } finally {
-    loading.value = false;
-  }
+  // 触发后台拉齐即可；滚动触底时也走同一路径
+  void drainRecordsInBackground(activeSheet.value.id);
 }
 
 async function toggleField(payload: {
   field: FieldDto;
   hidden: boolean;
 }): Promise<void> {
+  if (!activeSheet.value) return;
+  if (activeSheet.value) {
+    activeSheet.value = {
+      ...activeSheet.value,
+      fields: (activeSheet.value.fields ?? []).map((field) =>
+        field.id === payload.field.id
+          ? { ...field, hidden: payload.hidden }
+          : field,
+      ),
+    };
+  }
   try {
-    const updated = await endpoints.updateField(payload.field.id, {
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'updateField',
+      fieldId: payload.field.id,
       hidden: payload.hidden,
     });
-    if (activeSheet.value) {
-      activeSheet.value = {
-        ...activeSheet.value,
-        fields: (activeSheet.value.fields ?? []).map((field) =>
-          field.id === updated.id ? updated : field,
-        ),
-      };
-    }
   } catch (error) {
     toast(messageOf(error));
   }
@@ -516,28 +676,39 @@ async function createField(payload: {
   options?: Record<string, unknown>;
 }): Promise<void> {
   if (!activeSheet.value) return;
+  const clientFieldId = crypto.randomUUID();
+  const created: FieldDto = {
+    id: clientFieldId,
+    name: payload.name,
+    type: payload.type,
+    options: payload.options ?? null,
+    order: (activeSheet.value.fields ?? []).length,
+    required: false,
+    hidden: false,
+  };
+  activeSheet.value = {
+    ...activeSheet.value,
+    fields: [...(activeSheet.value.fields ?? []), created],
+  };
+  toast(`已添加字段「${created.name}」`);
   try {
-    const created = await endpoints.createField(activeSheet.value.id, {
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'createField',
+      clientFieldId,
       name: payload.name,
-      type: payload.type,
-      options: payload.options,
+      fieldType: payload.type,
+      options: payload.options ?? null,
     });
-    activeSheet.value = {
-      ...activeSheet.value,
-      fields: [...(activeSheet.value.fields ?? []), created],
-    };
-    toast(`已添加字段「${created.name}」`);
-    // Relation / formula / lookup need follow-up config (企微加列后进配置).
-    if (
-      created.type === 'relation' ||
-      created.type === 'formula' ||
-      created.type === 'lookup' ||
-      created.type === 'ai'
-    ) {
-      gridRef.value?.openFieldOptions?.(created);
-    }
   } catch (error) {
     toast(messageOf(error));
+  }
+  if (
+    created.type === 'relation' ||
+    created.type === 'formula' ||
+    created.type === 'lookup' ||
+    created.type === 'ai'
+  ) {
+    gridRef.value?.openFieldOptions?.(created);
   }
 }
 
@@ -547,48 +718,59 @@ async function updateFieldMeta(payload: {
   type: string;
   options?: Record<string, unknown>;
 }): Promise<void> {
-  try {
-    const patch: {
-      name?: string;
-      type?: string;
-      options?: Record<string, unknown>;
-    } = {};
-    if (payload.name !== payload.field.name) patch.name = payload.name;
-    if (payload.type !== payload.field.type) patch.type = payload.type;
-    if (payload.options !== undefined) patch.options = payload.options;
-    if (Object.keys(patch).length === 0) return;
+  if (!activeSheet.value) return;
+  const patch: {
+    name?: string;
+    options?: Record<string, unknown> | null;
+  } = {};
+  if (payload.name !== payload.field.name) patch.name = payload.name;
+  if (payload.options !== undefined) patch.options = payload.options;
+  if (Object.keys(patch).length === 0) return;
 
-    const updated = await endpoints.updateField(payload.field.id, patch);
-    if (activeSheet.value) {
-      activeSheet.value = {
-        ...activeSheet.value,
-        fields: (activeSheet.value.fields ?? []).map((field) =>
-          field.id === updated.id ? updated : field,
-        ),
-      };
-    }
-    toast(`已更新字段「${updated.name}」`);
+  activeSheet.value = {
+    ...activeSheet.value,
+    fields: (activeSheet.value.fields ?? []).map((field) =>
+      field.id === payload.field.id
+        ? {
+            ...field,
+            name: payload.name,
+            type: payload.type,
+            options: payload.options ?? field.options,
+          }
+        : field,
+    ),
+  };
+  toast(`已更新字段「${payload.name}」`);
+  try {
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'updateField',
+      fieldId: payload.field.id,
+      name: patch.name,
+      options: patch.options,
+    });
   } catch (error) {
     toast(messageOf(error));
   }
 }
 
 async function deleteField(field: FieldDto): Promise<void> {
+  if (!activeSheet.value) return;
   try {
-    await endpoints.deleteField(field.id);
-    if (activeSheet.value) {
-      activeSheet.value = {
-        ...activeSheet.value,
-        fields: (activeSheet.value.fields ?? []).filter(
-          (item) => item.id !== field.id,
-        ),
-      };
-      records.value = records.value.map((record) => {
-        const cells = { ...record.cells };
-        delete cells[field.id];
-        return { ...record, cells };
-      });
-    }
+    activeSheet.value = {
+      ...activeSheet.value,
+      fields: (activeSheet.value.fields ?? []).filter(
+        (item) => item.id !== field.id,
+      ),
+    };
+    records.value = records.value.map((record) => {
+      const cells = { ...record.cells };
+      delete cells[field.id];
+      return { ...record, cells };
+    });
+    await messageCenter.enqueue(activeSheet.value.id, {
+      type: 'deleteField',
+      fieldId: field.id,
+    });
     toast(`已删除字段「${field.name}」`);
   } catch (error) {
     toast(messageOf(error));
@@ -597,11 +779,17 @@ async function deleteField(field: FieldDto): Promise<void> {
 
 async function deleteRecords(recordIds: string[]): Promise<void> {
   if (!activeSheet.value || recordIds.length === 0) return;
+  const sheetId = activeSheet.value.id;
   try {
-    await Promise.all(recordIds.map((recordId) => endpoints.deleteRecord(recordId)));
     records.value = records.value.filter(
       (record) => !recordIds.includes(record.id),
     );
+    for (const recordId of recordIds) {
+      await messageCenter.enqueue(sheetId, {
+        type: 'deleteRecord',
+        recordId,
+      });
+    }
     toast(`已删除 ${recordIds.length} 条记录`);
   } catch (error) {
     toast(messageOf(error));
@@ -610,6 +798,22 @@ async function deleteRecords(recordIds: string[]): Promise<void> {
 
 async function uploadToSheet(file: File) {
   if (!activeSheet.value) throw new Error('no active sheet');
+  if (!navigator.onLine) {
+    const blobId = crypto.randomUUID();
+    const { idbPutBlob } = await import('../sync/idb-store');
+    await idbPutBlob(blobId, file, {
+      fileName: file.name,
+      contentType: file.type || 'application/octet-stream',
+      sheetId: activeSheet.value.id,
+    });
+    return {
+      url: `pending-blob:${blobId}`,
+      name: file.name,
+      mimetype: file.type,
+      size: file.size,
+      pendingBlobId: blobId,
+    };
+  }
   return endpoints.uploadAttachment(activeSheet.value.id, file);
 }
 
@@ -752,15 +956,17 @@ function onQueryChange(query: ViewQuery): void {
 }
 
 async function openOrCreateFormSheet(): Promise<void> {
-  const existing = sheets.value.find((sheet) => isFormSheet(sheet));
-  if (existing) {
-    await selectSheet(existing.id);
-    return;
-  }
+  sectionCollapsed.value = { ...sectionCollapsed.value, forms: false };
+  const formCount = sheets.value.filter((sheet) => isFormSheet(sheet)).length;
+  const defaultName =
+    formCount === 0 ? '收集表单' : `收集表单 ${formCount + 1}`;
+  const name = (await promptDialog('新收集表单名称', defaultName))?.trim();
+  if (!name) return;
   try {
-    const sheet = await endpoints.createSheet(baseId.value, '收集表单');
+    const sheet = await endpoints.createSheet(baseId.value, name);
     sheets.value = [...sheets.value, sheet];
-    // 尚无 Form 记录时靠名称识别为表单视图；保存后 listForms 会挂上
+    markFormSheet(sheet.id);
+    // 尚无 Form 记录时靠本地标记识别为表单视图；保存后 listForms 会挂上
     mainView.value = 'form';
     await selectSheet(sheet.id);
   } catch (error) {
@@ -768,13 +974,69 @@ async function openOrCreateFormSheet(): Promise<void> {
   }
 }
 
+function openAnalysisReport(reportId: string): void {
+  sectionCollapsed.value = { ...sectionCollapsed.value, reports: false };
+  activeAnalysisReportId.value = reportId;
+  analysisOpen.value = true;
+}
+
+async function createAnalysisReport(): Promise<void> {
+  sectionCollapsed.value = { ...sectionCollapsed.value, reports: false };
+  const defaultName = '分析报告';
+  const name = (await promptDialog('新分析报告名称', defaultName))?.trim();
+  if (!name) return;
+  try {
+    const created = await endpoints.createAnalysisReport(baseId.value, name);
+    analysisReports.value = [
+      {
+        id: created.id,
+        baseId: created.baseId,
+        name: created.name,
+        status: created.status,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      },
+      ...analysisReports.value,
+    ];
+    openAnalysisReport(created.id);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 async function createSheet(): Promise<void> {
+  sectionCollapsed.value = { ...sectionCollapsed.value, sheets: false };
   const name = (await promptDialog('新工作表名称', '新工作表'))?.trim();
   if (!name) return;
   try {
     const sheet = await endpoints.createSheet(baseId.value, name);
     sheets.value = [...sheets.value, sheet];
     await selectSheet(sheet.id);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+function openDashboard(dashboardId: string): void {
+  sectionCollapsed.value = { ...sectionCollapsed.value, dashboards: false };
+  activeDashboardId.value = dashboardId;
+  mainView.value = 'dashboard';
+  sheetMenuId.value = null;
+}
+
+async function createDashboard(): Promise<void> {
+  sectionCollapsed.value = { ...sectionCollapsed.value, dashboards: false };
+  const defaultName = `仪表盘 ${dashboards.value.length + 1}`;
+  const name = (await promptDialog('新仪表盘名称', defaultName))?.trim();
+  if (!name) return;
+  try {
+    const created = await endpoints.createDashboard(baseId.value, {
+      name,
+      kind: 'dashboard',
+    });
+    dashboards.value = [...dashboards.value, created];
+    openDashboard(created.id);
+    toast('已创建仪表盘');
   } catch (error) {
     toast(messageOf(error));
   }
@@ -914,30 +1176,12 @@ const importInput = ref<HTMLInputElement | null>(null);
 function handleCreateAction(
   action: (typeof createMenuItems)[number]['action'],
 ): void {
-  createMenuOpen.value = false;
-  if (action === 'sheet') {
-    void createSheet();
-    return;
-  }
-  if (action === 'form') {
-    void openOrCreateFormSheet();
-    return;
-  }
   if (action === 'import') {
     if (!activeSheet.value) {
       toast('请先选择一张工作表');
       return;
     }
     importInput.value?.click();
-    return;
-  }
-  if (action === 'dashboard') {
-    dashboardKind.value = 'dashboard';
-    dashboardOpen.value = true;
-    return;
-  }
-  if (action === 'report') {
-    analysisOpen.value = true;
     return;
   }
   if (action === 'template') {
@@ -1018,6 +1262,44 @@ function openCreatedBase(result: { baseId: string }): void {
   void router.push(`/workspaces/${workspaceId.value}/bases/${result.baseId}`);
 }
 
+async function onObjectTemplateCreated(
+  result: TemplateInstantiateResult,
+): Promise<void> {
+  templatesOpen.value = false;
+  try {
+    if (result.kind === 'sheet' || result.kind === 'form') {
+      const [sheetList, formList] = await Promise.all([
+        endpoints.listSheets(baseId.value),
+        endpoints.listForms(baseId.value).catch(() => [] as FormDto[]),
+      ]);
+      sheets.value = sheetList;
+      forms.value = formList;
+      if (result.kind === 'form' && result.sheetId) {
+        markFormSheet(result.sheetId);
+      }
+      if (result.sheetId) {
+        await selectSheet(result.sheetId);
+      }
+      return;
+    }
+    if (result.kind === 'dashboard' && result.dashboardId) {
+      dashboards.value = await endpoints
+        .listDashboards(baseId.value, 'dashboard')
+        .catch(() => dashboards.value);
+      openDashboard(result.dashboardId);
+      return;
+    }
+    if (result.kind === 'report' && result.reportId) {
+      analysisReports.value = await endpoints
+        .listAnalysisReports(baseId.value)
+        .catch(() => analysisReports.value);
+      openAnalysisReport(result.reportId);
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 function onGlobalKeydown(event: KeyboardEvent): void {
   const mod = event.metaKey || event.ctrlKey;
   if (!mod) return;
@@ -1044,12 +1326,17 @@ function onGlobalKeydown(event: KeyboardEvent): void {
   }
 }
 
+let unsubAccept: (() => void) | null = null;
+
 onMounted(() => {
   void bootstrap();
+  void messageCenter.bootstrap();
+  unsubAccept = messageCenter.onAccept(onCommitAccept);
   window.addEventListener('keydown', onGlobalKeydown);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
+  unsubAccept?.();
 });
 </script>
 
@@ -1076,44 +1363,31 @@ onBeforeUnmount(() => {
           <span class="crumb-sep">/</span>
           <span class="crumb-current">{{ base?.name ?? 'Base' }}</span>
         </nav>
+        <span
+          v-if="syncBannerText"
+          class="sync-banner"
+          data-testid="sync-banner"
+          :data-status="messageCenter.status.value"
+        >
+          {{ syncBannerText }}
+          <button
+            v-if="messageCenter.status.value === 'conflict'"
+            type="button"
+            class="sync-banner-btn"
+            @click="messageCenter.retryConflicts(); reloadActiveRecords()"
+          >
+            重试
+          </button>
+        </span>
       </div>
       <div class="topbar-right">
         <NotificationBell />
-        <button
-          class="topbar-btn"
-          data-testid="comments-toggle"
-          @click="openComments"
-        >
-          评论
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="permissions-open"
-          @click="permissionsOpen = true"
-        >
-          内容权限
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="public-view-open"
-          :disabled="!activeSheet"
-          @click="publicViewOpen = true"
-        >
-          公开视图
-        </button>
         <button
           class="topbar-btn"
           data-testid="automation-open"
           @click="automationsOpen = true"
         >
           自动化
-        </button>
-        <button
-          class="topbar-btn"
-          data-testid="excel-export"
-          @click="exportActiveSheet"
-        >
-          导出
         </button>
         <div class="more-wrap">
           <button
@@ -1125,6 +1399,32 @@ onBeforeUnmount(() => {
           </button>
           <Transition name="menu-fade">
             <div v-if="moreOpen" class="more-menu" data-testid="more-menu">
+              <button
+                data-testid="comments-toggle"
+                @click="openComments(); moreOpen = false"
+              >
+                评论
+              </button>
+              <button
+                data-testid="permissions-open"
+                @click="permissionsOpen = true; moreOpen = false"
+              >
+                内容权限
+              </button>
+              <button
+                data-testid="public-view-open"
+                :disabled="!activeSheet"
+                @click="publicViewOpen = true; moreOpen = false"
+              >
+                公开视图
+              </button>
+              <button
+                data-testid="excel-export"
+                @click="exportActiveSheet(); moreOpen = false"
+              >
+                导出 Excel
+              </button>
+              <div class="more-sep"></div>
               <button @click="renameActiveSheet">重命名当前工作表</button>
               <button
                 data-testid="more-public-view"
@@ -1133,7 +1433,6 @@ onBeforeUnmount(() => {
               >
                 公开只读视图
               </button>
-              <button @click="exportActiveSheet(); moreOpen = false">导出 Excel</button>
               <div class="more-sep"></div>
               <button
                 class="danger"
@@ -1151,141 +1450,256 @@ onBeforeUnmount(() => {
 
     <div class="base-body">
       <aside class="sidebar">
-        <div class="sidebar-section">
-          <div class="sidebar-title">
-            <span>工作表</span>
-            <button
-              class="icon-btn"
-              title="新建工作表"
-              data-testid="create-sheet"
-              @click="createSheet"
-            >
-              +
-            </button>
-          </div>
-          <div
-            v-for="sheet in sheets"
-            :key="sheet.id"
-            class="sheet-row"
-            :class="{ active: sheet.id === activeSheet?.id }"
-          >
-            <button class="sidebar-item" @click="selectSheet(sheet.id)">
-              <span class="sheet-icon">{{
-                isFormSheet(sheet) ? '📝' : '▦'
-              }}</span>
-              <span class="sheet-label">{{ sheet.name }}</span>
-            </button>
-            <button
-              class="sheet-more"
-              title="工作表操作"
-              :data-testid="`sheet-menu-${sheet.name}`"
-              @click.stop="sheetMenuId = sheetMenuId === sheet.id ? null : sheet.id"
-            >
-              ⋯
-            </button>
-            <Transition name="menu-fade">
-              <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
-                <button @click.stop="renameSheet(sheet)">重命名</button>
-                <button class="danger" @click.stop="deleteSheet(sheet)">删除工作表</button>
-              </div>
-            </Transition>
-          </div>
-        </div>
-
-        <div
-          v-if="activeSheet && mainView === 'grid'"
-          class="sidebar-section views-section"
-        >
-          <div class="sidebar-title">
-            <span>视图</span>
-            <button
-              v-if="savedViews.length"
-              class="icon-btn"
-              title="保存当前视图"
-              data-testid="save-view-toggle"
-              @click="saveCurrentView"
-            >
-              +
-            </button>
-          </div>
-          <div class="saved-view-create">
-            <input
-              v-model="savedViewName"
-              placeholder="输入视图名称"
-              data-testid="saved-view-name"
-              @keydown.enter.prevent="saveCurrentView"
-            />
-            <button
-              class="btn btn-primary btn-mini"
-              data-testid="saved-view-save"
-              :disabled="savingView"
-              @click="saveCurrentView"
-            >
-              保存
-            </button>
-          </div>
-          <div
-            v-for="view in savedViews"
-            :key="view.id"
-            class="saved-view-row"
-            :class="{ active: currentViewId === view.id }"
-          >
-            <button
-              class="saved-view-apply"
-              :data-testid="`saved-view-${view.name}`"
-              @click="applySavedView(view)"
-            >
-              <span class="view-icon">▤</span>{{ view.name }}
-            </button>
-            <button class="icon-btn" title="重命名视图" @click="renameSavedView(view)">
-              ✎
-            </button>
-            <button class="icon-btn danger" title="删除视图" @click="deleteSavedView(view)">
-              ×
-            </button>
-          </div>
-          <p v-if="savedViews.length === 0" class="sidebar-hint">
-            设置筛选/排序后输入名称保存为命名视图。
-          </p>
-        </div>
-
-        <div class="sidebar-section create-section">
-          <button
-            class="sidebar-create"
-            data-testid="create-menu-toggle"
-            @click="createMenuOpen = !createMenuOpen"
-          >
-            <span>+ 新建</span>
-            <span class="create-caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
-          </button>
-          <Transition name="menu-fade">
-            <div v-if="createMenuOpen" class="create-menu" data-testid="create-menu">
-            <button
-              v-for="item in createMenuItems"
-              :key="item.action"
-              class="create-menu-item"
-              :data-testid="
-                item.action === 'form'
-                  ? 'forms-open'
-                  : item.action === 'dashboard'
-                    ? 'dashboard-open'
-                    : item.action === 'report'
-                      ? 'report-open'
-                      : item.action === 'template'
-                        ? 'template-open'
-                        : undefined
-              "
-              @click="handleCreateAction(item.action)"
-            >
-              <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
-            </button>
+        <div class="sidebar-scroll">
+          <div class="sidebar-section">
+            <div class="sidebar-title">
+              <button
+                type="button"
+                class="section-toggle"
+                @click="toggleSection('sheets')"
+              >
+                <span class="section-caret">{{
+                  sectionCollapsed.sheets ? '▸' : '▾'
+                }}</span>
+                <span>工作表</span>
+                <span v-if="dataSheets.length" class="section-count">{{
+                  dataSheets.length
+                }}</span>
+              </button>
+              <button
+                class="icon-btn"
+                title="新建工作表"
+                data-testid="create-sheet"
+                @click="createSheet"
+              >
+                +
+              </button>
             </div>
-          </Transition>
+            <template v-if="!sectionCollapsed.sheets">
+              <div
+                v-for="sheet in dataSheets"
+                :key="sheet.id"
+                class="sheet-row"
+                :class="{
+                  active:
+                    mainView !== 'dashboard' && sheet.id === activeSheet?.id,
+                }"
+              >
+                <button class="sidebar-item" @click="selectSheet(sheet.id)">
+                  <span class="sheet-icon">▦</span>
+                  <span class="sheet-label">{{ sheet.name }}</span>
+                </button>
+                <button
+                  class="sheet-more"
+                  title="工作表操作"
+                  :data-testid="`sheet-menu-${sheet.name}`"
+                  @click.stop="
+                    sheetMenuId = sheetMenuId === sheet.id ? null : sheet.id
+                  "
+                >
+                  ⋯
+                </button>
+                <Transition name="menu-fade">
+                  <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+                    <button @click.stop="renameSheet(sheet)">重命名</button>
+                    <button class="danger" @click.stop="deleteSheet(sheet)">
+                      删除工作表
+                    </button>
+                  </div>
+                </Transition>
+              </div>
+              <p v-if="!dataSheets.length" class="sidebar-hint">暂无工作表</p>
+            </template>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-title">
+              <button
+                type="button"
+                class="section-toggle"
+                @click="toggleSection('forms')"
+              >
+                <span class="section-caret">{{
+                  sectionCollapsed.forms ? '▸' : '▾'
+                }}</span>
+                <span>收集表单</span>
+                <span v-if="formSheets.length" class="section-count">{{
+                  formSheets.length
+                }}</span>
+              </button>
+              <button
+                class="icon-btn"
+                title="新建收集表单"
+                data-testid="forms-open"
+                @click="openOrCreateFormSheet"
+              >
+                +
+              </button>
+            </div>
+            <template v-if="!sectionCollapsed.forms">
+              <div
+                v-for="sheet in formSheets"
+                :key="sheet.id"
+                class="sheet-row"
+                :class="{
+                  active:
+                    mainView !== 'dashboard' && sheet.id === activeSheet?.id,
+                }"
+              >
+                <button class="sidebar-item" @click="selectSheet(sheet.id)">
+                  <span class="sheet-icon">📝</span>
+                  <span class="sheet-label">{{ sheet.name }}</span>
+                </button>
+                <button
+                  class="sheet-more"
+                  title="表单操作"
+                  :data-testid="`sheet-menu-${sheet.name}`"
+                  @click.stop="
+                    sheetMenuId = sheetMenuId === sheet.id ? null : sheet.id
+                  "
+                >
+                  ⋯
+                </button>
+                <Transition name="menu-fade">
+                  <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+                    <button @click.stop="renameSheet(sheet)">重命名</button>
+                    <button class="danger" @click.stop="deleteSheet(sheet)">
+                      删除表单
+                    </button>
+                  </div>
+                </Transition>
+              </div>
+              <p v-if="!formSheets.length" class="sidebar-hint">暂无收集表单</p>
+            </template>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-title">
+              <button
+                type="button"
+                class="section-toggle"
+                @click="toggleSection('dashboards')"
+              >
+                <span class="section-caret">{{
+                  sectionCollapsed.dashboards ? '▸' : '▾'
+                }}</span>
+                <span>仪表盘</span>
+                <span v-if="dashboards.length" class="section-count">{{
+                  dashboards.length
+                }}</span>
+              </button>
+              <button
+                class="icon-btn"
+                title="新建仪表盘"
+                data-testid="dashboard-open"
+                @click="createDashboard"
+              >
+                +
+              </button>
+            </div>
+            <template v-if="!sectionCollapsed.dashboards">
+              <div
+                v-for="dashboard in dashboards"
+                :key="dashboard.id"
+                class="sheet-row"
+                :class="{
+                  active:
+                    mainView === 'dashboard' &&
+                    activeDashboardId === dashboard.id,
+                }"
+              >
+                <button
+                  class="sidebar-item"
+                  type="button"
+                  data-testid="dashboard-row"
+                  @click="openDashboard(dashboard.id)"
+                >
+                  <span class="sheet-icon">📊</span>
+                  <span class="sheet-label">{{ dashboard.name }}</span>
+                </button>
+              </div>
+              <p v-if="!dashboards.length" class="sidebar-hint">暂无仪表盘</p>
+            </template>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-title">
+              <button
+                type="button"
+                class="section-toggle"
+                @click="toggleSection('reports')"
+              >
+                <span class="section-caret">{{
+                  sectionCollapsed.reports ? '▸' : '▾'
+                }}</span>
+                <span>分析报告</span>
+                <span v-if="analysisReports.length" class="section-count">{{
+                  analysisReports.length
+                }}</span>
+              </button>
+              <button
+                class="icon-btn"
+                title="新建分析报告"
+                data-testid="report-open"
+                @click="createAnalysisReport"
+              >
+                +
+              </button>
+            </div>
+            <template v-if="!sectionCollapsed.reports">
+              <div
+                v-for="report in analysisReports"
+                :key="report.id"
+                class="sheet-row"
+                :class="{
+                  active:
+                    analysisOpen && activeAnalysisReportId === report.id,
+                }"
+              >
+                <button
+                  class="sidebar-item"
+                  type="button"
+                  data-testid="analysis-report-row"
+                  @click="openAnalysisReport(report.id)"
+                >
+                  <span class="sheet-icon">📈</span>
+                  <span class="sheet-label">{{ report.name }}</span>
+                </button>
+              </div>
+              <p v-if="!analysisReports.length" class="sidebar-hint">
+                暂无分析报告
+              </p>
+            </template>
+          </div>
+        </div>
+
+        <div class="sidebar-create" data-testid="create-menu">
+          <button
+            v-for="item in createMenuItems"
+            :key="item.action"
+            type="button"
+            class="create-menu-item"
+            :data-testid="
+              item.action === 'template' ? 'template-open' : undefined
+            "
+            @click="handleCreateAction(item.action)"
+          >
+            <span class="sheet-icon">{{ item.icon }}</span>{{ item.label }}
+          </button>
         </div>
       </aside>
 
       <main class="base-main">
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
+        <DashboardPanel
+          v-else-if="mainView === 'dashboard' && activeDashboardId"
+          :key="activeDashboardId"
+          embedded
+          :base-id="baseId"
+          :dashboard-id="activeDashboardId"
+          kind="dashboard"
+          :sheets="sheets"
+        />
         <template
           v-else-if="
             activeSheet &&
@@ -1314,7 +1728,7 @@ onBeforeUnmount(() => {
               @click="openFormResults"
             >
               收集结果
-              <span v-if="records.length" class="form-object-count">{{ records.length }}{{ nextCursor ? '+' : '' }}</span>
+              <span v-if="records.length" class="form-object-count">{{ records.length }}</span>
             </button>
           </div>
           <FormBuilderPanel
@@ -1370,38 +1784,104 @@ onBeforeUnmount(() => {
             />
           </div>
         </template>
-        <GridPanel
-          v-else-if="activeSheet"
-          ref="gridRef"
-          :key="activeSheet.id"
-          :sheet-id="activeSheet.id"
-          :sheet-name="activeSheet.name"
-          :fields="activeSheet.fields ?? []"
-          :records="records"
-          :next-cursor="nextCursor"
-          :loading="loading"
-          :row-colors="rowColors"
-          :row-height="rowHeightPx"
-          :groups="viewGroups"
-          :members="members"
-          :sheets="sheets"
-          :upload-attachment="uploadToSheet"
-          @add-row="addRow"
-          @insert-rows="insertRows"
-          @insert-columns="insertColumns"
-          @load-more="loadMore"
-          @refresh="refreshSheet"
-          @undo="undoEdit"
-          @redo="redoEdit"
-          @commit="commitCell"
-          @toggle-field="toggleField"
-          @create-field="createField"
-          @update-field="updateFieldMeta"
-          @delete-field="deleteField"
-          @delete-records="deleteRecords"
-          @query="applyViewQuery"
-          @query-change="onQueryChange"
-        />
+        <template v-else-if="activeSheet">
+          <div class="view-tabs-bar" data-testid="view-tabs-bar">
+            <div class="view-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                class="view-tab"
+                :class="{ active: !currentViewId }"
+                data-testid="view-tab-default"
+                :aria-selected="!currentViewId"
+                @click="applyDefaultView"
+              >
+                全部记录
+              </button>
+              <div
+                v-for="view in savedViews"
+                :key="view.id"
+                class="view-tab-wrap"
+                :class="{ active: currentViewId === view.id }"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  class="view-tab"
+                  :class="{ active: currentViewId === view.id }"
+                  :data-testid="`saved-view-${view.name}`"
+                  :aria-selected="currentViewId === view.id"
+                  @click="applySavedView(view)"
+                >
+                  {{ view.name }}
+                </button>
+                <button
+                  type="button"
+                  class="view-tab-action"
+                  title="重命名"
+                  @click.stop="renameSavedView(view)"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  class="view-tab-action danger"
+                  title="删除"
+                  @click.stop="deleteSavedView(view)"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div class="view-save">
+              <input
+                v-model="savedViewName"
+                placeholder="保存为视图…"
+                data-testid="saved-view-name"
+                @keydown.enter.prevent="saveCurrentView"
+              />
+              <button
+                class="btn btn-primary btn-mini"
+                data-testid="saved-view-save"
+                :disabled="savingView"
+                @click="saveCurrentView"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+          <GridPanel
+            ref="gridRef"
+            :key="activeSheet.id"
+            :sheet-id="activeSheet.id"
+            :sheet-name="activeSheet.name"
+            :fields="activeSheet.fields ?? []"
+            :records="records"
+            :next-cursor="nextCursor"
+            :loading="loading"
+            :row-colors="rowColors"
+            :row-height="rowHeightPx"
+            :groups="viewGroups"
+            :members="members"
+            :sheets="sheets"
+            :upload-attachment="uploadToSheet"
+            @add-row="addRow"
+            @insert-rows="insertRows"
+            @insert-columns="insertColumns"
+            @load-more="loadMore"
+            @refresh="refreshSheet"
+            @undo="undoEdit"
+            @redo="redoEdit"
+            @commit="commitCell"
+            @toggle-field="toggleField"
+            @create-field="createField"
+            @update-field="updateFieldMeta"
+            @delete-field="deleteField"
+            @delete-records="deleteRecords"
+            @query="applyViewQuery"
+            @query-change="onQueryChange"
+          />
+        </template>
         <div v-else class="empty-state">
           <p class="empty-state-title">还没有工作表</p>
           <p class="empty-state-hint">点击左侧「+」或「新建」创建第一张表，开始录入数据。</p>
@@ -1511,18 +1991,6 @@ onBeforeUnmount(() => {
       />
     </div>
     <div
-      v-if="dashboardOpen"
-      class="modal-mask"
-      @click.self="dashboardOpen = false"
-    >
-      <DashboardPanel
-        :base-id="baseId"
-        :kind="dashboardKind"
-        :sheets="sheets"
-        @close="dashboardOpen = false"
-      />
-    </div>
-    <div
       v-if="analysisOpen"
       class="modal-mask"
       @click.self="analysisOpen = false"
@@ -1530,7 +1998,8 @@ onBeforeUnmount(() => {
       <AnalysisReportPanel
         :base-id="baseId"
         :sheets="sheets"
-        @close="analysisOpen = false"
+        :report-id="activeAnalysisReportId || undefined"
+        @close="analysisOpen = false; activeAnalysisReportId = ''"
       />
     </div>
     <div
@@ -1550,9 +2019,11 @@ onBeforeUnmount(() => {
       @click.self="templatesOpen = false"
     >
       <TemplatePanel
+        mode="base"
         :workspace-id="workspaceId"
+        :base-id="baseId"
         @close="templatesOpen = false"
-        @created="openCreatedBase"
+        @created="onObjectTemplateCreated"
       />
     </div>
   </div>
@@ -1574,44 +2045,133 @@ onBeforeUnmount(() => {
   max-height: 90vh;
   overflow: auto;
 }
-.create-section {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--text-tertiary, #8f959e);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
-.sidebar-create {
+.section-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary, #646a73);
+}
+.section-caret {
+  width: 10px;
+  font-size: 10px;
+  color: #a5a9b2;
+}
+.section-count {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef0f3;
+  color: #8a9099;
+  font-size: 11px;
+  font-weight: 500;
+}
+.view-tabs-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  height: 32px;
+  gap: 12px;
+  flex: none;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border, #e5e6eb);
+  background: #fff;
+}
+.view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.view-tab-wrap {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.view-tab-wrap:hover,
+.view-tab-wrap.active {
+  background: #f2f3f5;
+}
+.view-tab-wrap.active {
+  background: #e8f3ff;
+}
+.view-tab {
+  height: 28px;
   padding: 0 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
+  color: var(--text-secondary, #646a73);
   font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.sidebar-create:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+.view-tab:hover {
+  color: var(--text, #1f2329);
 }
-.create-caret {
-  font-size: 10px;
-  opacity: 0.7;
+.view-tab.active {
+  color: #1d6fdc;
+  font-weight: 600;
+  background: #e8f3ff;
 }
-.create-menu {
+.view-tab-wrap .view-tab {
+  background: transparent;
+}
+.view-tab-wrap .view-tab.active {
+  background: transparent;
+}
+.view-tab-action {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #8f959e;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+}
+.view-tab-wrap:hover .view-tab-action {
+  opacity: 1;
+}
+.view-tab-action:hover {
+  background: #e5e6eb;
+  color: #1f2329;
+}
+.view-tab-action.danger:hover {
+  color: #d4380d;
+  background: #fff1f0;
+}
+.view-save {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 4px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 4px 16px rgba(31, 35, 41, 0.08);
-  animation: shell-menu-in 0.14s ease;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.view-save input {
+  width: 140px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d0d3d9;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.view-save input:focus {
+  outline: none;
+  border-color: #2d8cf0;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.12);
 }
 @keyframes shell-menu-in {
   from {
@@ -1628,7 +2188,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -1695,6 +2255,7 @@ onBeforeUnmount(() => {
 }
 .sheet-row.active {
   background: #e8f3ff;
+  box-shadow: inset 3px 0 0 #2d8cf0;
 }
 .sheet-row .sidebar-item {
   flex: 1;
@@ -1702,7 +2263,7 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .sheet-row.active .sidebar-item {
-  color: #1d6fdc;
+  color: #1a6dcc;
   font-weight: 600;
 }
 .sheet-label {
@@ -1754,71 +2315,21 @@ onBeforeUnmount(() => {
 .sheet-menu button.danger {
   color: #d4380d;
 }
-.views-section {
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-}
-.saved-view-create {
-  display: flex;
-  gap: 5px;
-  padding: 2px 4px 6px;
-}
-.saved-view-create input {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 7px;
-  border: 1px solid #d0d3d9;
-  border-radius: 6px;
-  font-size: 12px;
-}
 .btn-mini {
   height: 28px !important;
   padding: 0 9px !important;
   font-size: 12px;
 }
-.saved-view-row {
-  display: flex;
-  align-items: center;
-  border-radius: 6px;
-}
-.saved-view-row:hover {
-  background: var(--bg-hover);
-}
-.saved-view-row.active {
-  background: #e8f3ff;
-}
-.saved-view-apply {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.saved-view-row.active .saved-view-apply {
-  color: #1d6fdc;
-  font-weight: 600;
-}
-.view-icon {
-  color: #8f959e;
-  font-size: 11px;
-}
 .sidebar-hint {
-  margin: 2px 6px 4px;
+  margin: 2px 10px 4px;
   color: #a5a9b2;
   font-size: 11px;
   line-height: 1.5;
+}
+.sidebar-create {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .form-object-tabs {
   display: flex;

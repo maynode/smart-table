@@ -15,15 +15,19 @@ import type {
   SheetDto,
 } from '../api/types';
 
-const props = defineProps<{
-  baseId: string;
-  kind: 'dashboard' | 'report';
-  sheets: SheetDto[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    baseId: string;
+    dashboardId: string;
+    kind?: 'dashboard' | 'report';
+    sheets: SheetDto[];
+    embedded?: boolean;
+  }>(),
+  { embedded: false, kind: 'dashboard' },
+);
 
 const emit = defineEmits<{ close: [] }>();
 
-const dashboards = ref<DashboardDto[]>([]);
 const active = ref<DashboardDto | null>(null);
 const data = ref<DashboardDataDto | null>(null);
 const schedules = ref<DashboardScheduleDto[]>([]);
@@ -93,6 +97,10 @@ const yMax = ref<number | null>(null);
 const logScale = ref(false);
 const compareMode = ref<'none' | 'mom' | 'yoy'>('none');
 const compareWindowDays = ref(30);
+/** 组件级筛选（写入 config.filters） */
+const filterFieldId = ref('');
+const filterOperator = ref<'equals' | 'notEquals' | 'contains' | 'isEmpty' | 'isNotEmpty'>('equals');
+const filterValue = ref('');
 const trendEnabled = ref(false);
 const trendDays = ref(7);
 const valuePrefix = ref('');
@@ -244,58 +252,36 @@ async function onDrop(widget: DashboardWidgetData): Promise<void> {
   }
 }
 
-const title = computed(() =>
-  props.kind === 'report' ? '分析报告' : '仪表盘',
+const title = computed(
+  () =>
+    active.value?.name ||
+    (props.kind === 'report' ? '分析报告' : '仪表盘'),
 );
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : String(error);
 }
 
-async function loadDashboards(): Promise<void> {
-  loading.value = true;
-  try {
-    dashboards.value = await endpoints.listDashboards(props.baseId, props.kind);
-    if (dashboards.value[0]) {
-      await selectDashboard(dashboards.value[0]);
-    } else {
-      active.value = null;
-      data.value = null;
-      schedules.value = [];
-    }
-  } catch (error) {
-    toast(messageOf(error));
-  } finally {
-    loading.value = false;
+async function loadDashboard(dashboardId: string): Promise<void> {
+  if (!dashboardId) {
+    active.value = null;
+    data.value = null;
+    schedules.value = [];
+    return;
   }
-}
-
-async function createDashboard(): Promise<void> {
-  try {
-    const created = await endpoints.createDashboard(props.baseId, {
-      name: `${title.value} ${dashboards.value.length + 1}`,
-      kind: props.kind,
-    });
-    dashboards.value = [...dashboards.value, created];
-    await selectDashboard(created);
-  } catch (error) {
-    toast(messageOf(error));
-  }
-}
-
-async function selectDashboard(dashboard: DashboardDto): Promise<void> {
-  active.value = dashboard;
   loading.value = true;
   try {
     const [detail, dashboardData, scheduleList] = await Promise.all([
-      endpoints.getDashboard(dashboard.id),
-      endpoints.getDashboardData(dashboard.id),
-      endpoints.listDashboardSchedules(dashboard.id),
+      endpoints.getDashboard(dashboardId),
+      endpoints.getDashboardData(dashboardId),
+      endpoints.listDashboardSchedules(dashboardId),
     ]);
+    active.value = detail;
     data.value = dashboardData;
     schedules.value = scheduleList;
-    const firstWidget = (detail as unknown as { widgets?: Array<{ sheetId?: string }> })
-      .widgets?.[0];
+    const firstWidget = (
+      detail as unknown as { widgets?: Array<{ sheetId?: string }> }
+    ).widgets?.[0];
     if (firstWidget?.sheetId) {
       widgetSheetId.value = firstWidget.sheetId;
       await loadFields(firstWidget.sheetId);
@@ -305,6 +291,9 @@ async function selectDashboard(dashboard: DashboardDto): Promise<void> {
     }
   } catch (error) {
     toast(messageOf(error));
+    active.value = null;
+    data.value = null;
+    schedules.value = [];
   } finally {
     loading.value = false;
   }
@@ -386,6 +375,23 @@ async function addWidget(): Promise<void> {
         yMax: yMax.value,
         logScale: logScale.value,
         textContent: widgetText.value || undefined,
+        ...(filterFieldId.value
+          ? {
+              filters: {
+                conjunction: 'and' as const,
+                conditions: [
+                  {
+                    fieldId: filterFieldId.value,
+                    operator: filterOperator.value,
+                    ...(filterOperator.value === 'isEmpty' ||
+                    filterOperator.value === 'isNotEmpty'
+                      ? {}
+                      : { value: filterValue.value }),
+                  },
+                ],
+              },
+            }
+          : {}),
         ...(widgetType.value === 'metric'
           ? {
               compareMode: compareMode.value,
@@ -401,7 +407,7 @@ async function addWidget(): Promise<void> {
       },
       layout: { w: widgetType.value === 'metric' ? 4 : 6, h: 3 },
     });
-    await selectDashboard(active.value);
+    await loadDashboard(active.value.id);
     toast('图表已添加');
   } catch (error) {
     toast(messageOf(error));
@@ -433,43 +439,44 @@ async function runSchedule(schedule: DashboardScheduleDto): Promise<void> {
   }
 }
 
-onMounted(loadDashboards);
+watch(
+  () => props.dashboardId,
+  (id) => {
+    void loadDashboard(id);
+  },
+);
+
+onMounted(() => {
+  void loadDashboard(props.dashboardId);
+});
 </script>
 
 <template>
-  <section class="dashboard-panel" data-testid="dashboard-panel">
-    <header class="panel-header">
+  <section
+    class="dashboard-panel"
+    :class="{ embedded }"
+    data-testid="dashboard-panel"
+  >
+    <header class="panel-header" :class="{ embedded }">
       <div>
         <strong>{{ title }}</strong>
         <p class="panel-subtitle">多图布局 · 定时推送</p>
       </div>
-      <button class="icon-btn" data-testid="dashboard-close" @click="emit('close')">
+      <button
+        v-if="!embedded"
+        class="icon-btn"
+        data-testid="dashboard-close"
+        @click="emit('close')"
+      >
         ×
       </button>
     </header>
 
     <div class="dashboard-body">
-      <aside class="dashboard-list">
-        <button class="btn btn-primary dashboard-create" data-testid="dashboard-create" @click="createDashboard">
-          + 新建{{ title }}
-        </button>
-        <button
-          v-for="dashboard in dashboards"
-          :key="dashboard.id"
-          class="dashboard-row"
-          :class="{ active: active?.id === dashboard.id }"
-          data-testid="dashboard-row"
-          @click="selectDashboard(dashboard)"
-        >
-          {{ dashboard.name }}
-        </button>
-        <div v-if="!dashboards.length && !loading" class="list-empty">
-          <p class="list-empty-title">还没有{{ title }}</p>
-          <p class="list-empty-hint">新建后可添加图表、调整布局与定时推送。</p>
-        </div>
-      </aside>
-
-      <div v-if="active" class="dashboard-main">
+      <div v-if="loading && !active" class="dashboard-main dashboard-main-empty">
+        <p class="list-empty-hint">加载中…</p>
+      </div>
+      <div v-else-if="active" class="dashboard-main">
         <section class="widget-builder chart-config">
           <div class="chart-config-main">
           <h4>添加图表</h4>
@@ -597,6 +604,39 @@ onMounted(loadDashboards);
                   <option value="max">最大</option>
                 </select>
               </label>
+              <label>
+                数据筛选字段
+                <select v-model="filterFieldId" data-testid="dashboard-widget-filter-field">
+                  <option value="">不筛选</option>
+                  <option v-for="field in sheetFields" :key="field.id" :value="field.id">
+                    {{ field.name }}
+                  </option>
+                </select>
+              </label>
+              <template v-if="filterFieldId">
+                <label>
+                  条件
+                  <select v-model="filterOperator" data-testid="dashboard-widget-filter-op">
+                    <option value="equals">等于</option>
+                    <option value="notEquals">不等于</option>
+                    <option value="contains">包含</option>
+                    <option value="isEmpty">为空</option>
+                    <option value="isNotEmpty">不为空</option>
+                  </select>
+                </label>
+                <label
+                  v-if="
+                    filterOperator !== 'isEmpty' && filterOperator !== 'isNotEmpty'
+                  "
+                >
+                  值
+                  <input
+                    v-model="filterValue"
+                    data-testid="dashboard-widget-filter-value"
+                    placeholder="筛选值"
+                  />
+                </label>
+              </template>
               <template v-if="widgetType === 'metric'">
                 <label>
                   对比期
@@ -921,8 +961,6 @@ onMounted(loadDashboards);
               渠道
               <select v-model="channel">
                 <option value="notification">站内通知</option>
-                <option value="group-chat">群聊</option>
-                <option value="wecom">企微应用消息</option>
               </select>
             </label>
             <button
@@ -959,11 +997,8 @@ onMounted(loadDashboards);
         </section>
       </div>
       <div v-else class="dashboard-main dashboard-main-empty">
-        <p class="list-empty-title">未选择{{ title }}</p>
-        <p class="list-empty-hint">从左侧选择已有看板，或点击「新建」开始。</p>
-        <button class="btn btn-primary" type="button" @click="createDashboard">
-          + 新建{{ title }}
-        </button>
+        <p class="list-empty-title">仪表盘不存在或已删除</p>
+        <p class="list-empty-hint">请从左侧工作表下方重新打开。</p>
       </div>
     </div>
   </section>
@@ -980,11 +1015,24 @@ onMounted(loadDashboards);
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
 }
+.dashboard-panel.embedded {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #f7f8fa;
+}
 .panel-header {
   display: flex;
   justify-content: space-between;
   padding: 18px 22px;
   border-bottom: 1px solid #e5e6eb;
+  background: #fff;
+}
+.panel-header.embedded {
+  padding: 14px 20px;
+  flex: none;
 }
 .panel-subtitle {
   margin: 4px 0 0;
@@ -995,47 +1043,6 @@ onMounted(loadDashboards);
   display: flex;
   flex: 1;
   min-height: 0;
-}
-.dashboard-list {
-  width: 232px;
-  padding: 14px 12px;
-  background: #fafbfc;
-  border-right: 1px solid #e5e6eb;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.dashboard-create {
-  width: 100%;
-  justify-content: center;
-}
-.dashboard-row {
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-  font-size: 13px;
-  color: #1f2329;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.dashboard-row:hover {
-  background: #f2f3f5;
-}
-.dashboard-row.active {
-  background: #e8f3ff;
-  border-color: #91caff;
-  color: #1d6fdc;
-  font-weight: 600;
-}
-.dashboard-row:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.28);
 }
 .list-empty,
 .canvas-empty,

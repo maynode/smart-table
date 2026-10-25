@@ -275,12 +275,17 @@ model AutomationRun {
   startedAt       DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
   finishedAt      DateTime? @map("finished_at") @db.Timestamptz(6)
   durationMs      Int?      @map("duration_ms")
+  /** 延迟步骤：waiting 状态下到期后续跑 */
+  resumeAt        DateTime? @map("resume_at") @db.Timestamptz(6)
+  resumeContext   Json?     @map("resume_context")
+  parentRunId     String?   @map("parent_run_id") @db.Uuid
 
   automation Automation        @relation(fields: [automationId], references: [id], onDelete: Cascade)
   steps      AutomationRunStep[]
 
   @@unique([automationId, idempotencyKey])
   @@index([automationId, startedAt])
+  @@index([status, resumeAt])
   @@map("automation_runs")
 }
 
@@ -631,4 +636,31 @@ model DataSyncFile {
 
   @@index([sheetId])
   @@map("data_sync_files")
+}
+
+/** MessageCenter / commitchanges 幂等：clientOpId 去重（对齐 ERR_COMMIT_DUPLICATED） */
+model CommitOp {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  clientOpId String   @unique @map("client_op_id")
+  sheetId    String?  @map("sheet_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  opType     String   @map("op_type")
+  result     Json
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([sheetId, createdAt])
+  @@map("commit_ops")
+}
+
+/** 公开表单提交幂等（领码防双花） */
+model FormSubmitIdempotency {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  idempotencyKey   String   @unique @map("idempotency_key")
+  formId           String   @map("form_id") @db.Uuid
+  submissionId     String?  @map("submission_id") @db.Uuid
+  result           Json
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([formId])
+  @@map("form_submit_idempotency")
 }

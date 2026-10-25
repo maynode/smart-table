@@ -6,9 +6,15 @@ import { promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import type { TemplateDto, TemplateInstantiateResult } from '../api/types';
 
-const props = defineProps<{
-  workspaceId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    workspaceId: string;
+    /** workspace：新建整表；base：向当前表格追加对象 */
+    mode?: 'workspace' | 'base';
+    baseId?: string;
+  }>(),
+  { mode: 'workspace' },
+);
 const emit = defineEmits<{
   close: [];
   created: [result: TemplateInstantiateResult];
@@ -19,6 +25,17 @@ const loading = ref(false);
 const busyKey = ref('');
 const search = ref('');
 const expanded = ref<Record<string, boolean>>({});
+const kindFilter = ref<string>('all');
+
+const isBaseMode = computed(() => props.mode === 'base');
+
+const kindTabs = [
+  { id: 'all', label: '全部' },
+  { id: 'sheet', label: '工作表' },
+  { id: 'dashboard', label: '仪表盘' },
+  { id: 'form', label: '收集表单' },
+  { id: 'report', label: '分析报告' },
+];
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : String(error);
@@ -27,7 +44,9 @@ function messageOf(error: unknown): string {
 async function load(): Promise<void> {
   loading.value = true;
   try {
-    templates.value = await endpoints.listTemplates();
+    templates.value = await endpoints.listTemplates(
+      isBaseMode.value ? 'base' : 'workspace',
+    );
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -36,8 +55,11 @@ async function load(): Promise<void> {
 }
 
 async function useTemplate(template: TemplateDto): Promise<void> {
+  const promptTitle = isBaseMode.value
+    ? `新建${template.category || '对象'}名称`
+    : '新建 Base 名称';
   const name = (
-    await promptDialog('新建 Base 名称', template.name, {
+    await promptDialog(promptTitle, template.name, {
       confirmLabel: '创建',
     })
   )?.trim();
@@ -46,6 +68,7 @@ async function useTemplate(template: TemplateDto): Promise<void> {
   try {
     const result = await endpoints.instantiateTemplate(template.key, {
       workspaceId: props.workspaceId,
+      baseId: isBaseMode.value ? props.baseId : undefined,
       name,
     });
     toast(`已从「${template.name}」创建「${name}」`);
@@ -59,13 +82,21 @@ async function useTemplate(template: TemplateDto): Promise<void> {
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
-  if (!q) return templates.value;
-  return templates.value.filter(
-    (item) =>
+  return templates.value.filter((item) => {
+    if (
+      isBaseMode.value &&
+      kindFilter.value !== 'all' &&
+      item.kind !== kindFilter.value
+    ) {
+      return false;
+    }
+    if (!q) return true;
+    return (
       item.name.toLowerCase().includes(q) ||
       item.description.toLowerCase().includes(q) ||
-      item.category.toLowerCase().includes(q),
-  );
+      item.category.toLowerCase().includes(q)
+    );
+  });
 });
 
 const sections = computed(() => {
@@ -90,6 +121,17 @@ function toggleSection(title: string): void {
   };
 }
 
+function metaLine(template: TemplateDto): string {
+  if (!template.sheets?.length) {
+    if (template.kind === 'dashboard') return '空白仪表盘';
+    if (template.kind === 'report') return 'AI 分析报告';
+    return template.category;
+  }
+  return template.sheets
+    .map((sheet) => `${sheet.name}（${sheet.fields} 字段）`)
+    .join(' · ');
+}
+
 onMounted(load);
 </script>
 
@@ -97,8 +139,14 @@ onMounted(load);
   <section class="template-panel" data-testid="template-panel">
     <header class="panel-header">
       <div>
-        <strong>模板库</strong>
-        <p class="panel-subtitle">从模板快速新建表格、表单与仪表盘。</p>
+        <strong>{{ isBaseMode ? '对象模板' : '模板库' }}</strong>
+        <p class="panel-subtitle">
+          {{
+            isBaseMode
+              ? '从模板新建工作表、仪表盘、收集表单或分析报告。'
+              : '从模板快速新建整套智能表格。'
+          }}
+        </p>
       </div>
       <button class="icon-btn" data-testid="template-close" @click="emit('close')">
         ×
@@ -112,14 +160,20 @@ onMounted(load);
         data-testid="template-search"
         placeholder="搜索模板"
       />
-      <div class="quick-actions">
-        <button class="quick-btn" type="button" disabled title="即将支持">
-          导入 Excel 文件
-        </button>
-        <button class="quick-btn" type="button" disabled title="即将支持">
-          我的模板
-        </button>
-      </div>
+      <!-- 未就绪能力不展示占位入口（导入请用壳层「导入」；我的模板未上线） -->
+    </div>
+
+    <div v-if="isBaseMode" class="kind-tabs" role="tablist">
+      <button
+        v-for="tab in kindTabs"
+        :key="tab.id"
+        type="button"
+        class="kind-tab"
+        :class="{ active: kindFilter === tab.id }"
+        @click="kindFilter = tab.id"
+      >
+        {{ tab.label }}
+      </button>
     </div>
 
     <div class="template-body">
@@ -148,13 +202,7 @@ onMounted(load);
             <strong>{{ template.name }}</strong>
             <span class="template-category">{{ template.category }}</span>
             <p>{{ template.description }}</p>
-            <small>
-              {{
-                template.sheets
-                  .map((sheet) => `${sheet.name}（${sheet.fields} 字段）`)
-                  .join(' · ')
-              }}
-            </small>
+            <small>{{ metaLine(template) }}</small>
             <button
               class="btn btn-primary"
               data-testid="template-use"
@@ -215,15 +263,16 @@ onMounted(load);
   min-width: 180px;
   height: 34px;
   padding: 0 12px;
-  border: 1px solid #d0d5dd;
+  border: 1px solid #d0d3d9;
   border-radius: 8px;
-  font-size: 13px;
   background: #fff;
+  font: inherit;
+  font-size: 13px;
 }
 .search-input:focus {
   outline: none;
-  border-color: #3370ff;
-  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.12);
+  border-color: #2d8cf0;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.12);
 }
 .quick-actions {
   display: flex;
@@ -234,118 +283,122 @@ onMounted(load);
   padding: 0 12px;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
-  background: #f0f2f5;
-  color: #98a2b3;
+  background: #fff;
+  color: #8a9099;
   font-size: 12px;
   cursor: not-allowed;
 }
+.kind-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 20px 0;
+  border-bottom: 1px solid #eef0f3;
+  background: #fff;
+}
+.kind-tab {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #646a73;
+  font-size: 13px;
+  cursor: pointer;
+}
+.kind-tab.active {
+  color: #1a6dcc;
+  border-bottom-color: #2d8cf0;
+  font-weight: 600;
+}
 .template-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 14px 20px 22px;
-  background: #f5f6f8;
+  padding: 16px 20px 24px;
 }
 .template-section + .template-section {
   margin-top: 20px;
 }
 .section-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 10px;
 }
 .section-head h4 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #4e5969;
-  letter-spacing: 0.02em;
+  color: #646a73;
 }
 .expand-btn {
-  border: none;
+  border: 0;
   background: transparent;
-  color: #1d6fdc;
+  color: #1a6dcc;
   font-size: 12px;
-  font-weight: 500;
   cursor: pointer;
-}
-.expand-btn:hover {
-  color: #245bdb;
 }
 .template-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
 }
 .template-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px;
+  gap: 6px;
+  padding: 14px;
   border: 1px solid #e5e6eb;
   border-radius: 12px;
   background: #fff;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .template-card:hover {
   border-color: #91caff;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
-}
-.template-card:hover .btn-primary {
-  background: #245bdb;
-}
-.template-card strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f2329;
-}
-.template-card p {
-  flex: 1;
-  margin: 0;
-  color: #4e5969;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.template-card small {
-  color: #8a9099;
-  font-size: 11px;
-  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.08);
 }
 .template-icon {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: #eef3ff;
   font-size: 22px;
   line-height: 1;
 }
-.template-category {
-  align-self: flex-start;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: #eef4ff;
-  color: #2d6cdf;
-  font-size: 11px;
-  font-weight: 500;
+.template-card strong {
+  font-size: 14px;
+  color: #1f2329;
 }
-.template-card .btn-primary {
-  margin-top: 4px;
-  align-self: stretch;
+.template-category {
+  font-size: 11px;
+  color: #8a9099;
+}
+.template-card p {
+  margin: 0;
+  font-size: 12px;
+  color: #646a73;
+  line-height: 1.45;
+  min-height: 34px;
+}
+.template-card small {
+  font-size: 11px;
+  color: #8a9099;
+}
+.template-card .btn {
+  margin-top: 6px;
+  width: 100%;
+  justify-content: center;
 }
 .empty-hint {
-  margin: 40px 0;
+  margin: 48px 0;
+  text-align: center;
   color: #8a9099;
   font-size: 13px;
-  text-align: center;
 }
-@media (max-width: 800px) {
-  .template-grid {
-    grid-template-columns: 1fr;
-  }
+.icon-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  color: #8f959e;
 }
 </style>

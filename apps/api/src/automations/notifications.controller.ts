@@ -31,6 +31,15 @@ export class NotificationsController {
     return { notifications };
   }
 
+  @Post('read-all')
+  async markAllRead(@CurrentUser() user: JwtPayload) {
+    const updated = await this.prisma.notification.updateMany({
+      where: { userId: user.sub, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { read: true, count: updated.count };
+  }
+
   @Post(':id/read')
   async markRead(
     @CurrentUser() user: JwtPayload,

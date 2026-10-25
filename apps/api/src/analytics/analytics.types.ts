@@ -1,3 +1,5 @@
+import type { FilterGroup } from 'shared';
+
 export type AggregateMode = 'sum' | 'count' | 'avg' | 'min' | 'max';
 
 export interface AnalyticsQuery {
@@ -14,6 +16,8 @@ export interface AnalyticsQuery {
   /** 可选：按 records.created_at 过滤（指标对比期） */
   createdAtFrom?: Date;
   createdAtTo?: Date;
+  /** 可选：记录级筛选（与视图筛选同一套 FilterGroup） */
+  filters?: FilterGroup;
 }
 
 export interface AnalyticsRow {

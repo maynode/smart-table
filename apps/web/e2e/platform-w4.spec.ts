@@ -125,10 +125,9 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
   await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
   // Dashboard: add two different chart types, resize, and run a scheduled push.
-  await page.getByTestId('create-menu-toggle').click();
   await page.getByTestId('dashboard-open').click();
+  await page.getByTestId('app-dialog-confirm').click();
   await expect(page.getByTestId('dashboard-panel')).toBeVisible();
-  await page.getByTestId('dashboard-create').click();
   await expect(page.getByTestId('dashboard-row').first()).toBeVisible();
 
   async function addWidget(

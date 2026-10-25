@@ -61,11 +61,15 @@ export class PublicFormsController {
     // Optional Bearer — WeCom sends 填写者 from the logged-in filler;
     // anonymous public fill still works and falls back to workspace admins.
     const submitterUserId = await this.optionalUserId(request);
-    const result = await this.formsService.submit(
+    const idempotencyKey = String(
+      request.headers['idempotency-key'] ?? '',
+    ).trim();
+    const result = await this.formsService.submitIdempotent(
       token,
       dto.cells,
       request.ip,
       submitterUserId,
+      idempotencyKey || undefined,
     );
     if (result.status === 'queued') {
       reply.code(HttpStatus.ACCEPTED);

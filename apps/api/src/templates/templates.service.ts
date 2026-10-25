@@ -7,6 +7,12 @@ import { Prisma } from '@prisma/client';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import {
+  OBJECT_KIND_LABEL,
+  OBJECT_TEMPLATE_CATALOG,
+  type ObjectTemplateDefinition,
+  type ObjectTemplateKind,
+} from './object-templates';
 
 interface TemplateFieldDefinition {
   name: string;
@@ -153,11 +159,25 @@ export class TemplatesService {
     private readonly workspaces: WorkspacesService,
   ) {}
 
-  list() {
+  list(scope: 'workspace' | 'base' = 'workspace') {
+    if (scope === 'base') {
+      return OBJECT_TEMPLATE_CATALOG.map((template) => ({
+        key: template.key,
+        name: template.name,
+        category: OBJECT_KIND_LABEL[template.kind],
+        kind: template.kind,
+        icon: template.icon,
+        description: template.description,
+        sheets: template.fields
+          ? [{ name: template.name, fields: template.fields.length }]
+          : [],
+      }));
+    }
     return TEMPLATE_CATALOG.map((template) => ({
       key: template.key,
       name: template.name,
       category: template.category,
+      kind: 'base' as const,
       icon: template.icon,
       description: template.description,
       sheets: template.sheets.map((sheet) => ({
@@ -172,7 +192,18 @@ export class TemplatesService {
     userId: string,
     key: string,
     name?: string | null,
+    baseId?: string | null,
   ) {
+    const objectTemplate = OBJECT_TEMPLATE_CATALOG.find(
+      (item) => item.key === key,
+    );
+    if (objectTemplate) {
+      if (!baseId) {
+        throw new BadRequestException('对象模板需要 baseId');
+      }
+      return this.instantiateIntoBase(baseId, userId, objectTemplate, name);
+    }
+
     await this.workspaces.requireMember(workspaceId, userId, 'editor');
     const template = TEMPLATE_CATALOG.find((item) => item.key === key);
     if (!template) throw new BadRequestException('模板不存在');
@@ -182,6 +213,187 @@ export class TemplatesService {
       return this.instantiateSerialClaim(workspaceId, template, baseName);
     }
     return this.instantiateSimple(workspaceId, template, baseName);
+  }
+
+  private async instantiateIntoBase(
+    baseId: string,
+    userId: string,
+    template: ObjectTemplateDefinition,
+    name?: string | null,
+  ) {
+    const base = await this.prisma.base.findUnique({ where: { id: baseId } });
+    if (!base) throw new BadRequestException('Base 不存在');
+    await this.workspaces.requireMember(base.workspaceId, userId, 'editor');
+    const objectName = (name ?? '').trim() || template.name;
+
+    if (template.kind === 'sheet' || template.kind === 'form') {
+      return this.instantiateSheetOrForm(base.id, userId, template, objectName);
+    }
+    if (template.kind === 'dashboard') {
+      const dashboard = await this.prisma.dashboard.create({
+        data: {
+          baseId: base.id,
+          name: objectName,
+          kind: 'dashboard',
+          createdBy: userId,
+        },
+      });
+      return {
+        template: template.key,
+        kind: 'dashboard' as ObjectTemplateKind,
+        baseId: base.id,
+        dashboardId: dashboard.id,
+        name: dashboard.name,
+      };
+    }
+    if (template.kind === 'report') {
+      const sheets = await this.prisma.sheet.findMany({
+        where: { baseId: base.id },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, name: true },
+      });
+      const now = new Date().toISOString();
+      const messages =
+        sheets.length === 0
+          ? [
+              {
+                id: randomUUID(),
+                role: 'assistant',
+                content: '当前文档还没有工作表，请先新建表格后再试。',
+                kind: 'text',
+                createdAt: now,
+              },
+            ]
+          : [
+              {
+                id: randomUUID(),
+                role: 'assistant',
+                content:
+                  sheets.length === 1
+                    ? `当前文档包含工作表「${sheets[0]!.name}」。确认后我将开始分析。`
+                    : `当前文档包含 ${sheets.length} 张表，您想分析哪张表的数据？`,
+                kind: sheets.length <= 1 ? 'text' : 'choice',
+                options:
+                  sheets.length <= 1
+                    ? undefined
+                    : [
+                        ...sheets.map((s) => ({
+                          id: `sheet:${s.id}`,
+                          label: s.name,
+                        })),
+                        {
+                          id: 'all',
+                          label: `综合/全景（${sheets.length} 张表都看）`,
+                        },
+                        { id: 'other', label: '请输入其他…' },
+                      ],
+                createdAt: now,
+              },
+            ];
+      const sheetIds = sheets.length === 1 ? [sheets[0]!.id] : [];
+      const report = await this.prisma.analysisReport.create({
+        data: {
+          baseId: base.id,
+          name: objectName,
+          status: sheets.length === 0 ? 'failed' : 'asking',
+          messages: messages as unknown as Prisma.InputJsonValue,
+          steps: [] as unknown as Prisma.InputJsonValue,
+          sheetIds: sheetIds as unknown as Prisma.InputJsonValue,
+          createdBy: userId,
+          error: sheets.length === 0 ? '没有可分析的工作表' : null,
+        },
+      });
+      return {
+        template: template.key,
+        kind: 'report' as ObjectTemplateKind,
+        baseId: base.id,
+        reportId: report.id,
+        name: report.name,
+      };
+    }
+    throw new BadRequestException('不支持的模板类型');
+  }
+
+  private async instantiateSheetOrForm(
+    baseId: string,
+    userId: string,
+    template: ObjectTemplateDefinition,
+    objectName: string,
+  ) {
+    const fields = template.fields ?? [];
+    const result = await this.prisma.$transaction(async (tx) => {
+      const sheet = await tx.sheet.create({
+        data: { baseId, name: objectName },
+      });
+      const fieldMap = new Map<string, string>();
+      const fieldIds: string[] = [];
+      for (const [order, field] of fields.entries()) {
+        const created = await tx.field.create({
+          data: {
+            sheetId: sheet.id,
+            name: field.name,
+            type: field.type,
+            required: field.required ?? false,
+            order,
+            options: (field.options ?? {}) as Prisma.InputJsonValue,
+          },
+        });
+        fieldMap.set(field.name, created.id);
+        fieldIds.push(created.id);
+      }
+      for (const record of template.records ?? []) {
+        const cells: Record<string, unknown> = {};
+        for (const [name, value] of Object.entries(record)) {
+          const fieldId = fieldMap.get(name);
+          if (fieldId) cells[fieldId] = value;
+        }
+        await tx.recordRow.create({
+          data: {
+            sheetId: sheet.id,
+            cells: cells as Prisma.InputJsonValue,
+            createdBy: userId,
+          },
+        });
+      }
+
+      let formId: string | undefined;
+      if (template.kind === 'form') {
+        const shareToken = randomBytes(12).toString('base64url');
+        const form = await tx.form.create({
+          data: {
+            baseId,
+            sheetId: sheet.id,
+            name: objectName,
+            shareToken,
+            fields: fieldIds.map((fieldId) => ({
+              fieldId,
+              required:
+                fields.find((f) => fieldMap.get(f.name) === fieldId)
+                  ?.required ?? false,
+            })) as Prisma.InputJsonValue,
+            share: {
+              enabled: true,
+              audience: 'anyone',
+              expiresAt: null,
+            } as Prisma.InputJsonValue,
+            successTemplate: template.successTemplate ?? '',
+            rejectDuplicatePhone: true,
+          },
+        });
+        formId = form.id;
+      }
+
+      return { sheetId: sheet.id, formId, name: sheet.name };
+    });
+
+    return {
+      template: template.key,
+      kind: template.kind,
+      baseId,
+      sheetId: result.sheetId,
+      formId: result.formId,
+      name: result.name,
+    };
   }
 
   private async assertBaseNameAvailable(

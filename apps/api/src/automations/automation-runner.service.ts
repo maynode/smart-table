@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   Prisma,
   WorkspaceRole,
@@ -16,10 +22,14 @@ import {
   type AutomationStep,
   type AutomationTrigger,
   type CellMapping,
+  type ConditionStep,
+  type DelayStep,
   type FilterGroup,
   type FindEmptyBehavior,
   type FindRecordsStep,
+  type FormSubmittedTrigger,
   type ModifyRecordsStep,
+  type RecordButtonTrigger,
   type StepOutput,
   type StepValueExpression,
 } from 'shared';
@@ -28,6 +38,7 @@ import {
   buildFilterSql,
   buildSortSql,
 } from './automation-filter.sql';
+import { AutomationQueueService } from './automation-queue.service';
 import {
   NOTIFY_ADAPTER,
   type NotifyAdapter,
@@ -39,12 +50,23 @@ export interface AutomationRunContext {
   /** Submitter of a public form, used for 填写者 recipients. */
   submitterUserId?: string;
   idempotencyKey?: string;
+  /** 续跑：从该下标开始执行（延迟步骤用）. */
+  startStepIndex?: number;
+  /** 续跑时带入已产出的扁平变量. */
+  priorFlatValues?: Record<string, string>;
+  /** 续跑时带入前序步骤输出（JSON 可序列化）. */
+  priorStepOutputs?: StepOutput[];
+  /** BullMQ/调度器续跑时指向 waiting 的同一 run. */
+  resumeRunId?: string;
+  /** 进入 delay 时快照的步骤，续跑不受中途改定义影响. */
+  stepsSnapshot?: AutomationStep[];
 }
 
 type InternalStepOutput = StepOutput;
 
 interface ExecutionState {
   automation: AutomationDefinition;
+  triggerRecordId?: string;
   triggerCells: Record<string, unknown>;
   triggerByName: Map<string, unknown>;
   triggerUser?: string;
@@ -55,7 +77,15 @@ interface ExecutionState {
 interface StepExecution {
   output: InternalStepOutput;
   stop?: boolean;
+  /** 条件不成立：跳过后续但仍 success. */
+  skipRest?: boolean;
+  /** 延迟后续步骤（毫秒）. */
+  delayMs?: number;
 }
+
+type ExecuteResult = Omit<AutomationRunResult, 'pendingDelay'> & {
+  pendingDelay?: { delayMs: number; resumeContext: AutomationRunContext };
+};
 
 @Injectable()
 export class AutomationRunnerService {
@@ -64,6 +94,8 @@ export class AutomationRunnerService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(NOTIFY_ADAPTER) private readonly notify: NotifyAdapter,
+    @Inject(forwardRef(() => AutomationQueueService))
+    private readonly queue: AutomationQueueService,
   ) {}
 
   async runAutomation(
@@ -71,15 +103,24 @@ export class AutomationRunnerService {
     context: AutomationRunContext = {},
     outerTx?: Prisma.TransactionClient,
   ): Promise<AutomationRunResult> {
+    if (context.resumeRunId) {
+      return this.resumeWaitingRun(context.resumeRunId, automationId, context);
+    }
+
     if (outerTx) {
-      return this.execute(automationId, context, outerTx);
+      return this.toPublicResult(
+        await this.execute(automationId, context, outerTx),
+        automationId,
+      );
     }
 
     try {
-      return await this.prisma.$transaction(
+      const result = await this.prisma.$transaction(
         (tx) => this.execute(automationId, context, tx),
-        { timeout: 15_000 },
+        { timeout: 30_000 },
       );
+      await this.maybeEnqueueDelay(result, automationId);
+      return this.toPublicResult(result, automationId);
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -98,6 +139,179 @@ export class AutomationRunnerService {
       }
       throw error;
     }
+  }
+
+  /**
+   * 认领 waiting run 并续跑（认领与执行同一事务：崩溃回滚仍为 waiting）.
+   * 与 DB 轮询 / BullMQ 共用，避免再开新 run.
+   */
+  private async resumeWaitingRun(
+    runId: string,
+    automationId: string,
+    context: AutomationRunContext,
+  ): Promise<AutomationRunResult> {
+    const { resumeRunId: _omit, ...resumeContext } = context;
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const claimed = await tx.$executeRaw(Prisma.sql`
+          UPDATE automation_runs
+          SET status = 'running', resume_at = NULL
+          WHERE id = ${runId}::uuid
+            AND automation_id = ${automationId}::uuid
+            AND status = 'waiting'
+        `);
+        if (Number(claimed) === 0) return null;
+        return this.execute(automationId, resumeContext, tx, {
+          existingRunId: runId,
+        });
+      },
+      { timeout: 30_000 },
+    );
+
+    if (!result) {
+      const existing = await this.prisma.automationRun.findUnique({
+        where: { id: runId },
+      });
+      if (existing) return this.resultFromRun(existing);
+      throw new NotFoundException('待续跑的自动化运行不存在');
+    }
+
+    await this.maybeEnqueueDelay(result, automationId);
+    return this.toPublicResult(result, automationId);
+  }
+
+  private async maybeEnqueueDelay(
+    result: ExecuteResult,
+    automationId: string,
+  ): Promise<void> {
+    if (!result.pendingDelay || !this.queue.isQueueEnabled()) return;
+    await this.queue
+      .enqueueDelayed(
+        automationId,
+        {
+          ...result.pendingDelay.resumeContext,
+          resumeRunId: result.runId,
+        },
+        result.pendingDelay.delayMs,
+      )
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `bullmq delay enqueue failed, DB poll will pick up: ${String(error)}`,
+        ),
+      );
+  }
+
+  /**
+   * 事务提交后调用：有 BullMQ 时加速续跑；否则仅靠 scheduler 扫 resume_at.
+   */
+  async schedulePendingDelay(pending: {
+    delayMs: number;
+    automationId: string;
+    resumeContext: Record<string, unknown>;
+    runId?: string;
+  }): Promise<void> {
+    if (!this.queue.isQueueEnabled()) return;
+    const resumeRunId =
+      pending.runId ??
+      (typeof pending.resumeContext.resumeRunId === 'string'
+        ? pending.resumeContext.resumeRunId
+        : undefined);
+    await this.queue
+      .enqueueDelayed(
+        pending.automationId,
+        {
+          ...(pending.resumeContext as AutomationRunContext),
+          ...(resumeRunId ? { resumeRunId } : {}),
+        },
+        pending.delayMs,
+      )
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `schedulePendingDelay enqueue failed, DB poll will pick up: ${String(error)}`,
+        ),
+      );
+  }
+
+  /** 轮询到期的 waiting 运行并续跑（耐久，不依赖进程内 setTimeout）. */
+  async runDueDelayedRuns(limit = 20): Promise<
+    Array<{ runId: string; automationId: string; status: string }>
+  > {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        automation_id: string;
+        resume_context: unknown;
+      }>
+    >(Prisma.sql`
+      SELECT id, automation_id, resume_context
+      FROM automation_runs
+      WHERE status = 'waiting'
+        AND resume_at IS NOT NULL
+        AND resume_at <= NOW()
+      ORDER BY resume_at ASC
+      LIMIT ${Math.min(Math.max(limit, 1), 100)}
+    `);
+
+    const results: Array<{
+      runId: string;
+      automationId: string;
+      status: string;
+    }> = [];
+
+    for (const row of rows) {
+      const ctx = {
+        ...((row.resume_context ?? {}) as AutomationRunContext),
+        resumeRunId: row.id,
+      };
+      try {
+        const result = await this.resumeWaitingRun(
+          row.id,
+          row.automation_id,
+          ctx,
+        );
+        results.push({
+          runId: result.runId,
+          automationId: row.automation_id,
+          status: result.status,
+        });
+      } catch (error) {
+        results.push({
+          runId: row.id,
+          automationId: row.automation_id,
+          status: 'failed',
+        });
+        this.logger.error(
+          `delay resume ${row.id} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return results;
+  }
+
+  private toPublicResult(
+    result: ExecuteResult,
+    automationId: string,
+  ): AutomationRunResult {
+    return {
+      runId: result.runId,
+      status: result.status,
+      stepOutputs: result.stepOutputs,
+      outputs: result.outputs,
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.pendingDelay
+        ? {
+            pendingDelay: {
+              delayMs: result.pendingDelay.delayMs,
+              automationId,
+              runId: result.runId,
+              resumeContext: result.pendingDelay
+                .resumeContext as unknown as Record<string, unknown>,
+            },
+          }
+        : {}),
+    };
   }
 
   /** Runs every enabled automation whose recordCreated trigger matches. */
@@ -129,6 +343,132 @@ export class AutomationRunnerService {
       idempotencyKey,
       submitterUserId,
     );
+  }
+
+  /** 收集表单提交成功后触发 formSubmitted 自动化. */
+  async triggerFormSubmitted(
+    formId: string,
+    recordId: string,
+    outerTx?: Prisma.TransactionClient,
+    idempotencyKey?: string,
+    submitterUserId?: string,
+  ): Promise<AutomationRunResult[]> {
+    const db = outerTx ?? this.prisma;
+    const record = await db.recordRow.findUnique({
+      where: { id: recordId },
+      include: { sheet: { select: { baseId: true } } },
+    });
+    if (!record) return [];
+
+    const fields = await db.field.findMany({
+      where: { sheetId: record.sheetId },
+    });
+    const cells = (record.cells ?? {}) as Record<string, unknown>;
+    const automations = await db.automation.findMany({
+      where: { enabled: true, baseId: record.sheet.baseId },
+    });
+
+    const results: AutomationRunResult[] = [];
+    for (const automation of automations) {
+      const trigger = automation.trigger as unknown as AutomationTrigger;
+      if (trigger.type !== 'formSubmitted') continue;
+      const formTrigger = trigger as FormSubmittedTrigger;
+      if (formTrigger.formId !== formId) continue;
+      if (formTrigger.filters) {
+        const normalized = this.normalizeFilterFieldIds(
+          formTrigger.filters,
+          fields,
+        );
+        if (!evaluateFilterGroup(normalized, cells)) continue;
+      }
+      results.push(
+        await this.runAutomation(
+          automation.id,
+          {
+            triggerRecordId: record.id,
+            submitterUserId,
+            idempotencyKey:
+              idempotencyKey ?? `formSubmitted:${formId}:${record.id}`,
+          },
+          outerTx,
+        ),
+      );
+    }
+    return results;
+  }
+
+  /** 表格行自定义按钮触发. */
+  async triggerRecordButton(
+    sheetId: string,
+    recordId: string,
+    buttonKey: string,
+    userId?: string,
+  ): Promise<AutomationRunResult[]> {
+    const record = await this.prisma.recordRow.findUnique({
+      where: { id: recordId },
+      include: { sheet: { select: { baseId: true, id: true } } },
+    });
+    if (!record || record.sheetId !== sheetId) return [];
+
+    const fields = await this.prisma.field.findMany({
+      where: { sheetId },
+    });
+    const cells = (record.cells ?? {}) as Record<string, unknown>;
+    const automations = await this.prisma.automation.findMany({
+      where: { enabled: true, baseId: record.sheet.baseId },
+    });
+
+    const results: AutomationRunResult[] = [];
+    for (const automation of automations) {
+      const trigger = automation.trigger as unknown as AutomationTrigger;
+      if (trigger.type !== 'recordButton') continue;
+      const btn = trigger as RecordButtonTrigger;
+      if (btn.sheetId !== sheetId || btn.buttonKey !== buttonKey) continue;
+      if (btn.filters) {
+        const normalized = this.normalizeFilterFieldIds(btn.filters, fields);
+        if (!evaluateFilterGroup(normalized, cells)) continue;
+      }
+      // 固定 inflight 键 + 唯一约束：并发点击合并到同一次；终态会清键以便重跑
+      results.push(
+        await this.runAutomation(automation.id, {
+          triggerRecordId: record.id,
+          submitterUserId: userId,
+          idempotencyKey: `recordButton:${automation.id}:${buttonKey}:${record.id}:inflight`,
+        }),
+      );
+    }
+    return results;
+  }
+
+  /** 列出某表上可用的自动化按钮（启用且类型为 recordButton）. */
+  async listRecordButtons(
+    sheetId: string,
+  ): Promise<Array<{ buttonKey: string; buttonLabel: string; automationId: string }>> {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      select: { baseId: true },
+    });
+    if (!sheet) return [];
+    const automations = await this.prisma.automation.findMany({
+      where: { enabled: true, baseId: sheet.baseId },
+    });
+    const buttons: Array<{
+      buttonKey: string;
+      buttonLabel: string;
+      automationId: string;
+    }> = [];
+    for (const automation of automations) {
+      const trigger = automation.trigger as unknown as AutomationTrigger;
+      if (trigger.type !== 'recordButton') continue;
+      const btn = trigger as RecordButtonTrigger;
+      if (btn.sheetId !== sheetId) continue;
+      buttons.push({
+        buttonKey: btn.buttonKey,
+        buttonLabel: btn.buttonLabel || btn.buttonKey,
+        automationId: automation.id,
+      });
+    }
+    return buttons;
   }
 
   private async triggerRecord(
@@ -210,7 +550,8 @@ export class AutomationRunnerService {
     automationId: string,
     context: AutomationRunContext,
     tx: Prisma.TransactionClient,
-  ): Promise<AutomationRunResult> {
+    options?: { existingRunId?: string },
+  ): Promise<ExecuteResult> {
     const automation = await tx.automation.findUnique({
       where: { id: automationId },
     });
@@ -218,9 +559,15 @@ export class AutomationRunnerService {
       throw new NotFoundException('自动化不存在');
     }
 
-    const definition = this.toDefinition(automation);
+    const baseDefinition = this.toDefinition(automation);
+    const definition: AutomationDefinition = {
+      ...baseDefinition,
+      ...(context.stepsSnapshot
+        ? { steps: context.stepsSnapshot }
+        : {}),
+    };
 
-    if (context.idempotencyKey) {
+    if (context.idempotencyKey && !options?.existingRunId) {
       const existing = await tx.automationRun.findUnique({
         where: {
           automationId_idempotencyKey: {
@@ -229,28 +576,61 @@ export class AutomationRunnerService {
           },
         },
       });
-      if (existing?.status === 'success') {
+      if (
+        existing &&
+        (existing.status === 'success' ||
+          existing.status === 'running' ||
+          existing.status === 'waiting' ||
+          existing.status === 'skipped')
+      ) {
         return this.resultFromRun(existing);
       }
     }
 
     const startedAt = new Date();
-    const run = await tx.automationRun.create({
-      data: {
-        automationId,
-        status: definition.enabled ? 'running' : 'skipped',
-        idempotencyKey: context.idempotencyKey ?? null,
-        triggerRecordId: context.triggerRecordId ?? null,
-        startedAt,
-        ...(definition.enabled
-          ? {}
-          : { finishedAt: startedAt, durationMs: 0 }),
-      },
-    });
+    let runId: string;
+    if (options?.existingRunId) {
+      runId = options.existingRunId;
+      await tx.automationRun.update({
+        where: { id: runId },
+        data: { status: 'running', error: null },
+      });
+    } else {
+      const run = await tx.automationRun.create({
+        data: {
+          automationId,
+          status: definition.enabled ? 'running' : 'skipped',
+          idempotencyKey: context.idempotencyKey ?? null,
+          triggerRecordId: context.triggerRecordId ?? null,
+          startedAt,
+          ...(definition.enabled
+            ? {}
+            : { finishedAt: startedAt, durationMs: 0 }),
+        },
+      });
+      runId = run.id;
+    }
 
     if (!definition.enabled) {
+      // 续跑遇到已停用：必须落库 skipped，避免卡在 running
+      if (options?.existingRunId) {
+        await tx.$executeRaw(Prisma.sql`
+          UPDATE automation_runs
+          SET status = 'skipped',
+              error = NULL,
+              finished_at = NOW(),
+              duration_ms = ${Date.now() - startedAt.getTime()},
+              resume_at = NULL,
+              resume_context = NULL,
+              idempotency_key = CASE
+                WHEN idempotency_key LIKE '%:inflight' THEN NULL
+                ELSE idempotency_key
+              END
+          WHERE id = ${runId}::uuid
+        `);
+      }
       return {
-        runId: run.id,
+        runId,
         status: 'skipped',
         stepOutputs: {},
         outputs: [],
@@ -258,12 +638,19 @@ export class AutomationRunnerService {
     }
 
     const state = await this.buildState(definition, context, tx);
-    const outputs: InternalStepOutput[] = [];
+    const outputs: InternalStepOutput[] = [
+      ...(context.priorStepOutputs ?? []),
+    ];
+    for (const prior of context.priorStepOutputs ?? []) {
+      state.stepOutputs.set(prior.stepId, prior);
+    }
     let status: AutomationRunStatus = 'success';
     let errorMessage: string | undefined;
+    let pendingDelay: ExecuteResult['pendingDelay'];
+    const startIndex = Math.max(0, context.startStepIndex ?? 0);
 
-    for (let index = 0; index < definition.steps.length; index += 1) {
-      const step = definition.steps[index];
+    for (let index = startIndex; index < definition.steps.length; index += 1) {
+      const step = definition.steps[index]!;
       const stepStarted = Date.now();
       let stepExecution: StepExecution;
 
@@ -288,7 +675,7 @@ export class AutomationRunnerService {
 
       await tx.automationRunStep.create({
         data: {
-          runId: run.id,
+          runId,
           stepIndex: index,
           type: step.type,
           status: output.error ? 'failed' : 'success',
@@ -303,22 +690,73 @@ export class AutomationRunnerService {
         status = 'skipped';
         break;
       }
+      if (stepExecution.skipRest) {
+        break;
+      }
+      if (stepExecution.delayMs && stepExecution.delayMs > 0) {
+        const resumeIndex = index + 1;
+        if (resumeIndex < definition.steps.length) {
+          const resumeContext: AutomationRunContext = {
+            triggerRecordId: context.triggerRecordId,
+            triggerCells: context.triggerCells,
+            submitterUserId: context.submitterUserId,
+            startStepIndex: resumeIndex,
+            priorFlatValues: { ...state.flatValues },
+            priorStepOutputs: outputs.map((item) => ({ ...item })),
+            stepsSnapshot: definition.steps,
+            // 保持原幂等键，waiting 期间并发触发可合并到同一 run
+            idempotencyKey: context.idempotencyKey,
+          };
+          pendingDelay = {
+            delayMs: stepExecution.delayMs,
+            resumeContext,
+          };
+          const resumeAt = new Date(Date.now() + stepExecution.delayMs);
+          const durationMs = Date.now() - startedAt.getTime();
+          await tx.$executeRaw(Prisma.sql`
+            UPDATE automation_runs
+            SET status = 'waiting',
+                resume_at = ${resumeAt},
+                resume_context = ${JSON.stringify(resumeContext)}::jsonb,
+                outputs = ${JSON.stringify(state.flatValues)}::jsonb,
+                error = NULL,
+                finished_at = NULL,
+                duration_ms = ${durationMs}
+            WHERE id = ${runId}::uuid
+          `);
+          return {
+            runId,
+            status: 'waiting',
+            stepOutputs: state.flatValues,
+            outputs,
+            pendingDelay,
+          };
+        }
+        break;
+      }
     }
 
     const durationMs = Date.now() - startedAt.getTime();
-    await tx.automationRun.update({
-      where: { id: run.id },
-      data: {
-        status,
-        outputs: state.flatValues as Prisma.InputJsonValue,
-        error: errorMessage ?? null,
-        finishedAt: new Date(),
-        durationMs,
-      },
-    });
+    // failed / 按钮 inflight：清键以便重试；success/waiting/skipped 保留防重放
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE automation_runs
+      SET status = ${status},
+          outputs = ${JSON.stringify(state.flatValues)}::jsonb,
+          error = ${errorMessage ?? null},
+          finished_at = NOW(),
+          duration_ms = ${durationMs},
+          resume_at = NULL,
+          resume_context = NULL,
+          idempotency_key = CASE
+            WHEN ${status} = 'failed' THEN NULL
+            WHEN idempotency_key LIKE '%:inflight' THEN NULL
+            ELSE idempotency_key
+          END
+      WHERE id = ${runId}::uuid
+    `);
 
     return {
-      runId: run.id,
+      runId,
       status,
       stepOutputs: state.flatValues,
       outputs,
@@ -357,6 +795,7 @@ export class AutomationRunnerService {
       昨天: this.naturalTime('yesterday'),
       操作时间: new Date().toISOString().replace('T', ' ').slice(0, 19),
       提交时间: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      ...(context.priorFlatValues ?? {}),
     };
     if (context.triggerRecordId) {
       flatValues['记录链接'] = `/records/${context.triggerRecordId}`;
@@ -381,6 +820,7 @@ export class AutomationRunnerService {
 
     return {
       automation: definition,
+      triggerRecordId: context.triggerRecordId,
       triggerCells,
       triggerByName,
       triggerUser: context.submitterUserId,
@@ -405,11 +845,127 @@ export class AutomationRunnerService {
         return this.sendMessage(step, state, tx);
       case 'sendHttp':
         return this.sendHttp(step, state);
+      case 'condition':
+        return this.runCondition(step, state, tx);
+      case 'delay':
+        return this.runDelay(step);
       default:
         throw new Error(
           `未知自动化步骤: ${(step as { type: string }).type}`,
         );
     }
+  }
+
+  private async runCondition(
+    step: ConditionStep,
+    state: ExecutionState,
+    tx: Prisma.TransactionClient,
+  ): Promise<StepExecution> {
+    let cells = state.triggerCells;
+    let sheetIdForFields: string | undefined;
+
+    if (step.source && step.source !== 'trigger') {
+      const prior = state.stepOutputs.get(step.source.stepId);
+      const record = prior?.records?.[0];
+      if (record?.id) {
+        // 读库上的最新 cells，避免同 run 内 modify/create 后仍用步骤快照
+        const live = await tx.recordRow.findUnique({
+          where: { id: record.id },
+        });
+        if (!live) {
+          return {
+            output: {
+              stepId: step.id,
+              type: 'condition',
+              values: { 条件结果: 'false', 原因: '对照记录不存在' },
+            },
+            skipRest: true,
+          };
+        }
+        cells = (live.cells ?? {}) as Record<string, unknown>;
+        sheetIdForFields = live.sheetId;
+      } else if (record) {
+        cells = record.cells;
+        sheetIdForFields = record.sheetId;
+      } else {
+        return {
+          output: {
+            stepId: step.id,
+            type: 'condition',
+            values: { 条件结果: 'false', 原因: '对照步骤无记录' },
+          },
+          skipRest: true,
+        };
+      }
+    } else if (state.triggerRecordId) {
+      const live = await tx.recordRow.findUnique({
+        where: { id: state.triggerRecordId },
+      });
+      if (live) {
+        cells = (live.cells ?? {}) as Record<string, unknown>;
+        sheetIdForFields = live.sheetId;
+      }
+    }
+
+    if (!sheetIdForFields) {
+      const anyFieldId = step.filters.conditions.find(
+        (node: FilterGroup['conditions'][number]) =>
+          !Array.isArray((node as FilterGroup).conditions),
+      ) as { fieldId?: string } | undefined;
+      if (anyFieldId?.fieldId) {
+        const field = await tx.field.findUnique({
+          where: { id: anyFieldId.fieldId },
+          select: { sheetId: true },
+        });
+        sheetIdForFields = field?.sheetId;
+      }
+    }
+
+    let fields: Field[] = [];
+    if (sheetIdForFields) {
+      fields = await tx.field.findMany({ where: { sheetId: sheetIdForFields } });
+    } else {
+      // 用触发记录的字段名映射：把 name→临时伪 field 不够；改为按 name 匹配 cells key
+      fields = [...state.triggerByName.keys()].map(
+        (name, index) =>
+          ({
+            id: name,
+            name,
+            sheetId: '',
+            type: 'text',
+            order: index,
+          }) as Field,
+      );
+      // cells keyed by field id — also project name keys
+      const byName: Record<string, unknown> = {};
+      for (const [name, value] of state.triggerByName) {
+        byName[name] = value;
+      }
+      cells = { ...cells, ...byName };
+    }
+
+    const normalized = this.normalizeFilterFieldIds(step.filters, fields);
+    const matched = evaluateFilterGroup(normalized, cells);
+    return {
+      output: {
+        stepId: step.id,
+        type: 'condition',
+        values: { 条件结果: matched ? 'true' : 'false' },
+      },
+      skipRest: !matched,
+    };
+  }
+
+  private runDelay(step: DelayStep): StepExecution {
+    const delayMs = Math.max(0, Math.floor(step.delayMs || 0));
+    return {
+      output: {
+        stepId: step.id,
+        type: 'delay',
+        values: { 延迟毫秒: String(delayMs) },
+      },
+      delayMs,
+    };
   }
 
   private async findRecords(

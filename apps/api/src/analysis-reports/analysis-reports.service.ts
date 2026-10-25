@@ -1,10 +1,13 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import {
   generateAnalysisMarkdown,
@@ -22,9 +25,12 @@ const TOP_VALUE_LIMIT = 5;
 
 @Injectable()
 export class AnalysisReportsService {
+  private readonly logger = new Logger(AnalysisReportsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   async list(baseId: string, userId: string) {
@@ -49,11 +55,7 @@ export class AnalysisReportsService {
 
   async create(baseId: string, userId: string, name?: string) {
     const base = await this.requireBase(baseId, userId, 'editor');
-    const sheets = await this.prisma.sheet.findMany({
-      where: { baseId },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, name: true },
-    });
+    const sheets = await this.listReadableSheets(baseId, userId);
 
     const now = new Date().toISOString();
     const messages: AnalysisMessage[] = [
@@ -69,7 +71,7 @@ export class AnalysisReportsService {
         role: 'assistant',
         content:
           sheets.length === 0
-            ? '当前文档还没有工作表，请先新建表格后再试。'
+            ? '当前文档没有可分析的工作表，请先新建表格或确认内容权限后再试。'
             : sheets.length === 1
               ? `当前文档包含工作表「${sheets[0].name}」。确认后我将开始分析。`
               : `当前文档包含 ${sheets.length} 张表，您想分析哪张表的数据？`,
@@ -109,6 +111,28 @@ export class AnalysisReportsService {
     });
   }
 
+  async update(
+    id: string,
+    userId: string,
+    body: { name?: string },
+  ) {
+    const report = await this.requireReport(id, userId, 'editor');
+    const name = body.name?.trim();
+    if (!name) {
+      throw new BadRequestException('名称不能为空');
+    }
+    return this.prisma.analysisReport.update({
+      where: { id: report.id },
+      data: { name },
+    });
+  }
+
+  async delete(id: string, userId: string) {
+    const report = await this.requireReport(id, userId, 'editor');
+    await this.prisma.analysisReport.delete({ where: { id: report.id } });
+    return { deleted: true, id: report.id };
+  }
+
   async answer(
     id: string,
     userId: string,
@@ -126,11 +150,7 @@ export class AnalysisReportsService {
       throw new BadRequestException('正在生成中，请稍候');
     }
 
-    const sheets = await this.prisma.sheet.findMany({
-      where: { baseId: report.baseId },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, name: true },
-    });
+    const sheets = await this.listReadableSheets(report.baseId, userId);
     if (sheets.length === 0) {
       throw new BadRequestException('没有可分析的工作表');
     }
@@ -154,13 +174,17 @@ export class AnalysisReportsService {
     } else if (body.optionId === 'other' || body.text?.trim()) {
       const text = body.text?.trim() || '';
       userLabel = text || '其他';
-      // match by name contains
       const matched = sheets.filter(
         (s) => text && s.name.includes(text),
       );
-      sheetIds = matched.length > 0 ? matched.map((s) => s.id) : sheets.map((s) => s.id);
+      sheetIds =
+        matched.length > 0 ? matched.map((s) => s.id) : sheets.map((s) => s.id);
     } else if ((report.sheetIds as string[])?.length) {
-      sheetIds = report.sheetIds as string[];
+      const requested = report.sheetIds as string[];
+      sheetIds = requested.filter((sid) => sheets.some((s) => s.id === sid));
+      if (sheetIds.length === 0) {
+        throw new BadRequestException('没有可分析的工作表');
+      }
       userLabel = '确认';
     } else {
       throw new BadRequestException('请选择要分析的表或跳过');
@@ -193,8 +217,8 @@ export class AnalysisReportsService {
       },
     });
 
-    // Fire generation (await so client gets ready state on same request for local mode)
-    return this.runGenerate(updated.id, userId);
+    this.scheduleGenerate(updated.id, userId);
+    return updated;
   }
 
   async generate(id: string, userId: string) {
@@ -203,7 +227,10 @@ export class AnalysisReportsService {
     if (sheetIds.length === 0) {
       throw new BadRequestException('请先选择要分析的工作表');
     }
-    await this.prisma.analysisReport.update({
+    if (report.status === 'exploring' || report.status === 'generating') {
+      throw new BadRequestException('正在生成中，请稍候');
+    }
+    const updated = await this.prisma.analysisReport.update({
       where: { id },
       data: {
         status: 'exploring',
@@ -211,11 +238,30 @@ export class AnalysisReportsService {
         error: null,
       },
     });
-    return this.runGenerate(id, userId);
+    this.scheduleGenerate(id, userId);
+    return updated;
+  }
+
+  private scheduleGenerate(id: string, userId: string) {
+    setImmediate(() => {
+      void this.runGenerate(id, userId).catch((error: unknown) => {
+        this.logger.error(
+          `analysis report ${id} generate failed`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
+    });
   }
 
   private async runGenerate(id: string, userId: string) {
-    const report = await this.requireReport(id, userId, 'editor');
+    const report = await this.prisma.analysisReport.findUnique({
+      where: { id },
+    });
+    if (!report) return;
+    if (report.status !== 'exploring' && report.status !== 'generating') {
+      return;
+    }
+
     const base = await this.prisma.base.findUnique({
       where: { id: report.baseId },
     });
@@ -230,10 +276,13 @@ export class AnalysisReportsService {
         },
       });
 
-      const digests = await this.buildDigests(sheetIds);
-      const conversation = (report.messages as unknown as AnalysisMessage[]).map(
-        (m) => ({ role: m.role, content: m.content }),
-      );
+      const digests = await this.buildDigests(sheetIds, userId);
+      if (digests.length === 0) {
+        throw new Error('没有可读取的工作表数据（可能受内容权限限制）');
+      }
+      const conversation = (
+        report.messages as unknown as AnalysisMessage[]
+      ).map((m) => ({ role: m.role, content: m.content }));
       const markdown = await generateAnalysisMarkdown({
         baseName: base?.name ?? '智能表格',
         digests,
@@ -243,7 +292,6 @@ export class AnalysisReportsService {
       const messages = [
         ...(report.messages as unknown as AnalysisMessage[]),
       ];
-      // avoid duplicating if answer already pushed exploring message
       const last = messages[messages.length - 1];
       if (!last || last.content !== '分析报告已生成，请在左侧查看。') {
         messages.push({
@@ -255,7 +303,7 @@ export class AnalysisReportsService {
         });
       }
 
-      return this.prisma.analysisReport.update({
+      await this.prisma.analysisReport.update({
         where: { id },
         data: {
           status: 'ready',
@@ -268,7 +316,7 @@ export class AnalysisReportsService {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : '生成报告失败';
-      return this.prisma.analysisReport.update({
+      await this.prisma.analysisReport.update({
         where: { id },
         data: {
           status: 'failed',
@@ -279,9 +327,30 @@ export class AnalysisReportsService {
     }
   }
 
-  private async buildDigests(sheetIds: string[]): Promise<SheetDigest[]> {
+  private async buildDigests(
+    sheetIds: string[],
+    userId: string,
+  ): Promise<SheetDigest[]> {
     const digests: SheetDigest[] = [];
     for (const sheetId of sheetIds) {
+      let decision;
+      try {
+        decision = await this.permissions.assertCan(
+          'sheet',
+          sheetId,
+          userId,
+          'read',
+        );
+      } catch (error) {
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        ) {
+          continue;
+        }
+        throw error;
+      }
+
       const sheet = await this.prisma.sheet.findUnique({
         where: { id: sheetId },
         include: {
@@ -289,17 +358,35 @@ export class AnalysisReportsService {
         },
       });
       if (!sheet) continue;
-      const recordCount = await this.prisma.recordRow.count({
-        where: { sheetId },
-      });
-      const rows = await this.prisma.recordRow.findMany({
+
+      const visibleFields = this.permissions.filterVisibleFields(
+        decision,
+        sheet.fields,
+      );
+
+      const canSeeAllRows =
+        decision.role === 'owner' ||
+        decision.role === 'admin' ||
+        !decision.recordRule ||
+        decision.recordRule.mode === 'all';
+
+      const rawRows = await this.prisma.recordRow.findMany({
         where: { sheetId },
         take: SAMPLE_LIMIT,
         orderBy: { id: 'asc' },
-        select: { cells: true },
+        select: { id: true, cells: true, createdBy: true },
       });
+      const rows = this.permissions.applyReadScope(
+        decision,
+        rawRows,
+        userId,
+      );
 
-      const fields = sheet.fields.map((field) => {
+      const recordCount = canSeeAllRows
+        ? await this.prisma.recordRow.count({ where: { sheetId } })
+        : rows.length;
+
+      const fields = visibleFields.map((field) => {
         const counts = new Map<string, number>();
         let nonEmpty = 0;
         let empty = 0;
@@ -318,10 +405,9 @@ export class AnalysisReportsService {
           .sort((a, b) => b[1] - a[1])
           .slice(0, TOP_VALUE_LIMIT)
           .map(([value, count]) => ({ value: value.slice(0, 40), count }));
-        // scale empty for unread rows roughly
         const sampled = rows.length;
         const scale =
-          sampled > 0 && recordCount > sampled
+          canSeeAllRows && sampled > 0 && recordCount > sampled
             ? recordCount / sampled
             : 1;
         return {
@@ -336,12 +422,36 @@ export class AnalysisReportsService {
       digests.push({
         sheetId: sheet.id,
         sheetName: sheet.name,
-        fieldCount: sheet.fields.length,
+        fieldCount: visibleFields.length,
         recordCount,
         fields,
       });
     }
     return digests;
+  }
+
+  private async listReadableSheets(baseId: string, userId: string) {
+    const sheets = await this.prisma.sheet.findMany({
+      where: { baseId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, name: true },
+    });
+    const readable: Array<{ id: string; name: string }> = [];
+    for (const sheet of sheets) {
+      try {
+        await this.permissions.assertCan('sheet', sheet.id, userId, 'read');
+        readable.push(sheet);
+      } catch (error) {
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    return readable;
   }
 
   private async requireBase(

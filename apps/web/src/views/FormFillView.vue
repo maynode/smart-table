@@ -101,8 +101,16 @@ async function submit(): Promise<void> {
 
   submitting.value = true;
   try {
-    const result = await endpoints.submitPublicForm(token.value, cells);
-    successHtml.value = result.success.html;
+    const { enqueuePublicFormSubmit } = await import(
+      '../sync/public-form-outbox'
+    );
+    const outcome = await enqueuePublicFormSubmit(token.value, cells);
+    if (outcome.queued) {
+      successHtml.value =
+        '<p>当前离线，提交已保存在本机。网络恢复后将自动提交（幂等防重复领取）。</p>';
+    } else if (outcome.result?.success?.html) {
+      successHtml.value = outcome.result.success.html;
+    }
   } catch (caught) {
     error.value =
       caught instanceof ApiError ? caught.message : '提交失败，请稍后再试';

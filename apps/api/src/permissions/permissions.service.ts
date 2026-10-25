@@ -9,6 +9,12 @@ import { evaluateFilterGroup, type FilterGroup } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharingService } from '../sharing/sharing.service';
+import {
+  aclLevelLabel,
+  actorDisplayName,
+  notifyUser,
+  objectKindLabel,
+} from '../notifications/user-notify';
 
 export type AclLevel = 'full' | 'edit' | 'view' | 'none';
 export type AclAction = 'read' | 'create' | 'update' | 'delete';
@@ -359,6 +365,23 @@ export class PermissionsService {
         subjectId: memberId,
       },
     });
+    if (memberId !== userId) {
+      const actorName = await actorDisplayName(this.prisma, userId);
+      const kind = objectKindLabel(objectType);
+      await notifyUser(this.prisma, {
+        userId: memberId,
+        title: '你的内容权限已移除',
+        body: `${actorName} 移除了你对${kind}「${object.name}」的权限`,
+        data: {
+          kind: 'content_permission_removed',
+          objectType,
+          objectId,
+          baseId: object.baseId,
+          workspaceId: object.workspaceId,
+          actorId: userId,
+        },
+      });
+    }
     return this.getSettings(objectType, objectId, userId);
   }
 
@@ -439,6 +462,15 @@ export class PermissionsService {
     const everyone = body.everyone;
     const members = Array.isArray(body.members) ? body.members : [];
 
+    const beforeRows = Array.isArray(body.members)
+      ? await this.prisma.contentPermission.findMany({
+          where: { objectType, objectId, subjectType: 'member' },
+        })
+      : [];
+    const beforeLevel = new Map(
+      beforeRows.map((row) => [row.subjectId, row.level]),
+    );
+
     await this.prisma.$transaction(async (tx) => {
       if (everyone) {
         const config = this.validateConfig(everyone);
@@ -493,6 +525,68 @@ export class PermissionsService {
         }
       }
     });
+
+    if (Array.isArray(body.members)) {
+      const actorName = await actorDisplayName(this.prisma, userId);
+      const kind = objectKindLabel(objectType);
+      const afterIds = new Set(members.map((item) => item.userId));
+
+      for (const member of members) {
+        if (!member.userId || member.userId === userId) continue;
+        const config = this.validateConfig(member);
+        const prev = beforeLevel.get(member.userId);
+        if (!prev) {
+          await notifyUser(this.prisma, {
+            userId: member.userId,
+            title: '你获得了内容权限',
+            body: `${actorName} 为你分配了${kind}「${object.name}」的${aclLevelLabel(config.level)}权限`,
+            data: {
+              kind: 'content_permission_assigned',
+              objectType,
+              objectId,
+              baseId: object.baseId,
+              workspaceId: object.workspaceId,
+              level: config.level,
+              actorId: userId,
+            },
+          });
+        } else if (prev !== config.level) {
+          await notifyUser(this.prisma, {
+            userId: member.userId,
+            title: '你的内容权限已变更',
+            body: `${actorName} 将你在${kind}「${object.name}」的权限从${aclLevelLabel(prev)}调整为${aclLevelLabel(config.level)}`,
+            data: {
+              kind: 'content_permission_changed',
+              objectType,
+              objectId,
+              baseId: object.baseId,
+              workspaceId: object.workspaceId,
+              previousLevel: prev,
+              level: config.level,
+              actorId: userId,
+            },
+          });
+        }
+      }
+
+      for (const [subjectId, prev] of beforeLevel) {
+        if (afterIds.has(subjectId) || subjectId === userId) continue;
+        await notifyUser(this.prisma, {
+          userId: subjectId,
+          title: '你的内容权限已移除',
+          body: `${actorName} 移除了你对${kind}「${object.name}」的${aclLevelLabel(prev)}权限`,
+          data: {
+            kind: 'content_permission_removed',
+            objectType,
+            objectId,
+            baseId: object.baseId,
+            workspaceId: object.workspaceId,
+            previousLevel: prev,
+            actorId: userId,
+          },
+        });
+      }
+    }
 
     return this.getSettings(objectType, objectId, userId);
   }
@@ -560,7 +654,45 @@ export class PermissionsService {
     );
   }
 
-  private assertFieldWrites(
+  /**
+   * Public / anonymous sheet writes (e.g. form submit) use the sheet's
+   * `everyone` fieldRule so non-editable and exhausted submitOnce fields
+   * cannot be written beyond policy.
+   */
+  async assertEveryoneSheetFieldWrites(
+    sheetId: string,
+    changes: Record<string, unknown>,
+    existing: Record<string, unknown> = {},
+  ): Promise<void> {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      include: { base: true },
+    });
+    if (!sheet) throw new NotFoundException('工作表不存在');
+
+    const everyone = await this.prisma.contentPermission.findFirst({
+      where: {
+        objectType: 'sheet',
+        objectId: sheetId,
+        subjectType: 'everyone',
+      },
+    });
+    if (!everyone?.fieldRule) return;
+
+    const decision: AclDecision = {
+      objectType: 'sheet',
+      objectId: sheetId,
+      workspaceId: sheet.base.workspaceId,
+      baseId: sheet.baseId,
+      // Non-admin so fieldRule checks apply (same path as member writes).
+      role: 'viewer',
+      level: this.parseLevel(everyone.level),
+      fieldRule: everyone.fieldRule as unknown as AclFieldRule,
+    };
+    this.assertFieldWrites(decision, changes, existing);
+  }
+
+  assertFieldWrites(
     decision: AclDecision,
     changes: Record<string, unknown>,
     existing: Record<string, unknown>,

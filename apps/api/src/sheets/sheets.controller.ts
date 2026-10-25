@@ -24,12 +24,17 @@ import { ListRecordsQueryDto } from './dto/list-records.query';
 import { UpdateFieldDto } from './dto/update-field.dto';
 import { UpdateRecordDto } from './dto/update-record.dto';
 import { UpdateSheetDto } from './dto/update-sheet.dto';
+import { CommitChangesDto } from './dto/commit-changes.dto';
+import { CommitChangesService } from './commit-changes.service';
 import { SheetsService } from './sheets.service';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class SheetsController {
-  constructor(private readonly sheetsService: SheetsService) {}
+  constructor(
+    private readonly sheetsService: SheetsService,
+    private readonly commitChangesService: CommitChangesService,
+  ) {}
 
   @Post('bases/:baseId/sheets')
   createSheet(
@@ -128,6 +133,22 @@ export class SheetsController {
     @Query() query: ListRecordsQueryDto,
   ) {
     return this.sheetsService.listRecords(sheetId, user.sub, query);
+  }
+
+  @Post('sheets/:sheetId/commitchanges')
+  @HttpCode(HttpStatus.OK)
+  commitChanges(
+    @CurrentUser() user: JwtPayload,
+    @Param('sheetId') sheetId: string,
+    @Body() dto: CommitChangesDto,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.commitChangesService.commit(
+      sheetId,
+      user.sub,
+      dto,
+      request.ip ?? '0.0.0.0',
+    );
   }
 
   @Post('sheets/:sheetId/records')

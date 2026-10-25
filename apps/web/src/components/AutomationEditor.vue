@@ -26,7 +26,9 @@ type StepType =
   | 'createRecord'
   | 'modifyRecords'
   | 'sendMessage'
-  | 'sendHttp';
+  | 'sendHttp'
+  | 'condition'
+  | 'delay';
 
 interface MappingRow {
   fieldId: string;
@@ -62,6 +64,9 @@ interface UiStep {
   httpHeadersJson: string;
   httpBody: string;
   httpTimeoutMs: number;
+  /** condition：对照触发或某步 */
+  conditionSource: 'trigger' | string;
+  delaySeconds: number;
 }
 
 interface VariableMenuGroup {
@@ -77,10 +82,18 @@ const error = ref('');
 
 const name = ref('');
 const enabled = ref(false);
-const triggerType = ref<'recordCreated' | 'recordUpdated' | 'schedule' | 'recordTimer'>(
-  'recordCreated',
-);
+const triggerType = ref<
+  | 'recordCreated'
+  | 'recordUpdated'
+  | 'schedule'
+  | 'recordTimer'
+  | 'formSubmitted'
+  | 'recordButton'
+>('recordCreated');
 const triggerSheetId = ref('');
+const triggerFormId = ref('');
+const buttonKey = ref('run');
+const buttonLabel = ref('运行');
 const triggerFilters = ref<
   Array<{ fieldId: string; operator: string; value: string }>
 >([{ fieldId: '', operator: 'equals', value: '' }]);
@@ -88,6 +101,7 @@ const triggerConjunction = ref<'and' | 'or'>('and');
 const cron = ref('0 9 * * *');
 const timezone = ref('Asia/Shanghai');
 const timerFieldId = ref('');
+const forms = ref<Array<{ id: string; name: string; sheetId: string }>>([]);
 const onFindEmpty = ref<'continue' | 'stop'>('continue');
 const monthlyQuota = ref<number | null>(null);
 const steps = ref<UiStep[]>([]);
@@ -118,18 +132,37 @@ const stepTypes: Array<{
   { value: 'modifyRecords', label: '修改记录', icon: '✏️', color: '#fa8c16' },
   { value: 'findRecords', label: '查找记录', icon: '🔍', color: '#722ed1' },
   { value: 'sendHttp', label: '发送HTTP请求', icon: '🌐', color: '#595959' },
+  { value: 'condition', label: '条件判断', icon: '⑂', color: '#13c2c2' },
+  { value: 'delay', label: '延迟等待', icon: '⏱', color: '#8c8c8c' },
 ];
 
 const typeMenuStepId = ref('');
 
+const triggerSheetIdForFields = computed(() => {
+  if (triggerType.value === 'formSubmitted') {
+    return (
+      forms.value.find((item) => item.id === triggerFormId.value)?.sheetId ?? ''
+    );
+  }
+  return triggerSheetId.value;
+});
 const triggerFields = computed(() =>
-  sheetFields(triggerSheetId.value),
+  sheetFields(triggerSheetIdForFields.value),
 );
 const triggerSheet = computed(() =>
-  sheets.value.find((sheet) => sheet.id === triggerSheetId.value),
+  sheets.value.find((sheet) => sheet.id === triggerSheetIdForFields.value),
 );
 const previousFindSteps = computed(() =>
   steps.value.filter((step) => step.type === 'findRecords'),
+);
+/** 条件步可对照：查找 / 创建 / 修改产出的记录 */
+const previousRecordSteps = computed(() =>
+  steps.value.filter(
+    (step) =>
+      step.type === 'findRecords' ||
+      step.type === 'createRecord' ||
+      step.type === 'modifyRecords',
+  ),
 );
 
 function sheetFields(sheetId: string): FieldDto[] {
@@ -192,6 +225,8 @@ function blankStep(type: StepType): UiStep {
     httpHeadersJson: '',
     httpBody: '',
     httpTimeoutMs: 15_000,
+    conditionSource: 'trigger',
+    delaySeconds: 60,
   };
 }
 
@@ -293,6 +328,13 @@ function triggerSummary(): string {
     const field = fieldName(triggerSheetId.value, timerFieldId.value) || '日期字段';
     return `当「${sheet}」的「${field}」到达时`;
   }
+  if (triggerType.value === 'formSubmitted') {
+    const form = forms.value.find((item) => item.id === triggerFormId.value);
+    return `当收集表单「${form?.name ?? '未选'}」提交时`;
+  }
+  if (triggerType.value === 'recordButton') {
+    return `当在「${sheetLabel(triggerSheetId.value)}」点击按钮「${buttonLabel.value || buttonKey.value}」时`;
+  }
   const when =
     triggerType.value === 'recordUpdated' ? '记录被更新时' : '新增记录时';
   const sheet = sheetLabel(triggerSheetId.value);
@@ -351,6 +393,22 @@ function stepSummary(step: UiStep): string {
       const url = step.httpUrl.trim() || '…';
       return `${step.httpMethod} ${url.length > 40 ? `${url.slice(0, 40)}…` : url}`;
     }
+    case 'condition': {
+      const sheetId =
+        step.conditionSource === 'trigger'
+          ? triggerSheetIdForFields.value
+          : steps.value.find((item) => item.id === step.conditionSource)
+              ?.sheetId ?? triggerSheetIdForFields.value;
+      const conditions = step.filterRows
+        .filter((row) => row.fieldId)
+        .map((row) => formatConditionRow(sheetId, row));
+      const joiner = step.filterConjunction === 'or' ? ' 或 ' : ' 且 ';
+      return conditions.length
+        ? `若满足 ${conditions.join(joiner)}，否则跳过后续`
+        : '条件判断（未配置）';
+    }
+    case 'delay':
+      return `等待 ${step.delaySeconds} 秒后继续`;
     default:
       return stepTypeLabel(step.type);
   }
@@ -786,6 +844,22 @@ function buildTrigger(): Record<string, unknown> {
       filters: buildFilter(triggerFilters.value, triggerConjunction.value),
     };
   }
+  if (triggerType.value === 'formSubmitted') {
+    return {
+      type: 'formSubmitted',
+      formId: triggerFormId.value,
+      filters: buildFilter(triggerFilters.value, triggerConjunction.value),
+    };
+  }
+  if (triggerType.value === 'recordButton') {
+    return {
+      type: 'recordButton',
+      sheetId: triggerSheetId.value,
+      buttonKey: buttonKey.value.trim(),
+      buttonLabel: buttonLabel.value.trim(),
+      filters: buildFilter(triggerFilters.value, triggerConjunction.value),
+    };
+  }
   return {
     type: triggerType.value,
     sheetId: triggerSheetId.value,
@@ -874,6 +948,22 @@ function buildSteps(): Array<Record<string, unknown>> {
           timeoutMs: step.httpTimeoutMs,
         };
       }
+      case 'condition':
+        return {
+          id: step.id,
+          type: step.type,
+          source:
+            step.conditionSource === 'trigger'
+              ? 'trigger'
+              : { stepId: step.conditionSource },
+          filters: buildFilter(step.filterRows, step.filterConjunction),
+        };
+      case 'delay':
+        return {
+          id: step.id,
+          type: step.type,
+          delayMs: Math.max(1, Math.floor(step.delaySeconds)) * 1000,
+        };
       default:
         return { id: step.id, type: step.type };
     }
@@ -882,8 +972,19 @@ function buildSteps(): Array<Record<string, unknown>> {
 
 function validate(): string {
   if (!name.value.trim()) return '请输入自动化名称';
-  if (triggerType.value !== 'schedule' && !triggerSheetId.value) {
+  if (
+    triggerType.value !== 'schedule' &&
+    triggerType.value !== 'formSubmitted' &&
+    !triggerSheetId.value
+  ) {
     return '请选择触发工作表';
+  }
+  if (triggerType.value === 'formSubmitted' && !triggerFormId.value) {
+    return '请选择收集表单';
+  }
+  if (triggerType.value === 'recordButton') {
+    if (!buttonKey.value.trim()) return '请填写按钮键';
+    if (!buttonLabel.value.trim()) return '请填写按钮名称';
   }
   if (triggerType.value === 'schedule' && !cron.value.trim()) {
     return '请输入 cron 表达式';
@@ -903,6 +1004,15 @@ function validate(): string {
     }
     if (step.type === 'modifyRecords' && !step.fromStepId) {
       return `第 ${index + 1} 步需要绑定之前的查找记录步骤`;
+    }
+    if (step.type === 'condition') {
+      const hasField = step.filterRows.some((row) => row.fieldId);
+      if (!hasField) return `第 ${index + 1} 步条件缺少字段`;
+    }
+    if (step.type === 'delay') {
+      if (step.delaySeconds < 1 || step.delaySeconds > 86_400) {
+        return `第 ${index + 1} 步延迟需在 1 秒～24 小时`;
+      }
     }
     if (step.type === 'sendMessage') {
       flushMessageTail(step);
@@ -1030,6 +1140,19 @@ function toUiStep(raw: Record<string, unknown>, index: number): UiStep {
     headers && typeof headers === 'object' && !Array.isArray(headers)
       ? JSON.stringify(headers, null, 2)
       : '';
+  if (type === 'condition') {
+    const source = raw.source;
+    step.conditionSource =
+      source &&
+      typeof source === 'object' &&
+      typeof (source as { stepId?: string }).stepId === 'string'
+        ? String((source as { stepId: string }).stepId)
+        : 'trigger';
+  }
+  if (type === 'delay') {
+    const ms = Number(raw.delayMs ?? 60_000);
+    step.delaySeconds = Math.max(1, Math.round(ms / 1000) || 60);
+  }
   return step;
 }
 
@@ -1040,6 +1163,16 @@ async function load(): Promise<void> {
     sheets.value = await Promise.all(
       sheetList.map((sheet) => endpoints.getSheet(sheet.id)),
     );
+    forms.value = await endpoints
+      .listForms(props.baseId)
+      .then((list) =>
+        list.map((item) => ({
+          id: item.id,
+          name: item.name,
+          sheetId: item.sheetId,
+        })),
+      )
+      .catch(() => [] as Array<{ id: string; name: string; sheetId: string }>);
     members.value = await endpoints.listMembers(
       // Members are only used for pickers; the API call is safe to skip on error.
       (await endpoints.getBase(props.baseId)).workspaceId,
@@ -1052,6 +1185,9 @@ async function load(): Promise<void> {
       // Keep any title / sheet the user already chose while sheets were loading.
       if (!typedDuringLoad) name.value = '未命名流程';
       if (!triggerSheetId.value) triggerSheetId.value = triggerSheetCandidate;
+      if (!triggerFormId.value && forms.value[0]) {
+        triggerFormId.value = forms.value[0].id;
+      }
       enabled.value = false;
       return;
     }
@@ -1061,16 +1197,23 @@ async function load(): Promise<void> {
         : automation.name;
     enabled.value = automation.enabled;
     const trigger = automation.trigger as Record<string, unknown>;
+    const type = String(trigger.type ?? 'recordCreated');
     triggerType.value =
-      trigger.type === 'schedule'
-        ? 'schedule'
-        : trigger.type === 'recordTimer'
-          ? 'recordTimer'
-          : trigger.type === 'recordUpdated'
-            ? 'recordUpdated'
-            : 'recordCreated';
+      type === 'schedule' ||
+      type === 'recordTimer' ||
+      type === 'recordUpdated' ||
+      type === 'formSubmitted' ||
+      type === 'recordButton' ||
+      type === 'recordCreated'
+        ? type
+        : 'recordCreated';
     timerFieldId.value = String(trigger.fieldId ?? '');
     triggerSheetId.value = String(trigger.sheetId ?? triggerSheetCandidate);
+    triggerFormId.value = String(
+      trigger.formId ?? forms.value[0]?.id ?? '',
+    );
+    buttonKey.value = String(trigger.buttonKey ?? 'run');
+    buttonLabel.value = String(trigger.buttonLabel ?? '运行');
     cron.value = String(trigger.cron ?? '0 9 * * *');
     timezone.value = String(trigger.timezone ?? 'Asia/Shanghai');
     const parsedTriggerFilters = parseFilterRows(
@@ -1146,36 +1289,12 @@ onMounted(load);
             <select v-model="triggerType" class="nl-chip" data-testid="trigger-type">
               <option value="recordCreated">添加新记录时</option>
               <option value="recordUpdated">更新记录时</option>
+              <option value="formSubmitted">收集表单提交时</option>
+              <option value="recordButton">点击记录按钮时</option>
               <option value="schedule">定时触发</option>
               <option value="recordTimer">到达记录时间</option>
             </select>
-            <template v-if="triggerType !== 'schedule'">
-              <span>在</span>
-              <select v-model="triggerSheetId" class="nl-chip" data-testid="trigger-sheet">
-                <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
-                  {{ sheet.name }}
-                </option>
-              </select>
-              <span v-if="triggerType === 'recordTimer'">的</span>
-              <select
-                v-if="triggerType === 'recordTimer'"
-                v-model="timerFieldId"
-                class="nl-chip"
-                data-testid="timer-field"
-              >
-                <option value="">选择日期字段</option>
-                <option
-                  v-for="field in triggerFields.filter((item) => item.type === 'date')"
-                  :key="field.id"
-                  :value="field.id"
-                >
-                  {{ field.name }}
-                </option>
-              </select>
-              <span v-if="triggerType === 'recordTimer'">到达时</span>
-              <span v-else>里{{ triggerType === 'recordCreated' ? '添加新记录' : '更新记录' }}时</span>
-            </template>
-            <template v-else>
+            <template v-if="triggerType === 'schedule'">
               <span>按</span>
               <input v-model="cron" class="nl-chip nl-chip-input" data-testid="trigger-cron" />
               <select v-model="timezone" class="nl-chip" data-testid="trigger-timezone">
@@ -1183,9 +1302,77 @@ onMounted(load);
                 <option value="UTC">UTC</option>
               </select>
             </template>
+            <template v-else-if="triggerType === 'formSubmitted'">
+              <span>在</span>
+              <select
+                v-model="triggerFormId"
+                class="nl-chip"
+                data-testid="trigger-form"
+              >
+                <option value="">选择表单</option>
+                <option
+                  v-for="form in forms"
+                  :key="form.id"
+                  :value="form.id"
+                >
+                  {{ form.name }}
+                </option>
+              </select>
+              <span>提交时</span>
+            </template>
+            <template v-else>
+              <span>在</span>
+              <select v-model="triggerSheetId" class="nl-chip" data-testid="trigger-sheet">
+                <option v-for="sheet in sheets" :key="sheet.id" :value="sheet.id">
+                  {{ sheet.name }}
+                </option>
+              </select>
+              <template v-if="triggerType === 'recordButton'">
+                <span>点击按钮</span>
+                <input
+                  v-model="buttonLabel"
+                  class="nl-chip nl-chip-input"
+                  data-testid="trigger-button-label"
+                  placeholder="按钮名称"
+                />
+                <input
+                  v-model="buttonKey"
+                  class="nl-chip nl-chip-input"
+                  data-testid="trigger-button-key"
+                  placeholder="buttonKey"
+                />
+                <span>时</span>
+              </template>
+              <template v-else-if="triggerType === 'recordTimer'">
+                <span>的</span>
+                <select
+                  v-model="timerFieldId"
+                  class="nl-chip"
+                  data-testid="timer-field"
+                >
+                  <option value="">选择日期字段</option>
+                  <option
+                    v-for="field in triggerFields.filter((item) => item.type === 'date')"
+                    :key="field.id"
+                    :value="field.id"
+                  >
+                    {{ field.name }}
+                  </option>
+                </select>
+                <span>到达时</span>
+              </template>
+              <span v-else
+                >里{{
+                  triggerType === 'recordCreated' ? '添加新记录' : '更新记录'
+                }}时</span
+              >
+            </template>
           </div>
 
-          <div v-if="triggerType !== 'schedule'" class="nl-filters">
+          <div
+            v-if="triggerType !== 'schedule'"
+            class="nl-filters"
+          >
             <div class="nl-sentence">
               <span>满足以下</span>
               <select
@@ -1231,14 +1418,17 @@ onMounted(load);
                 v-if="
                   filter.operator !== 'isEmpty' &&
                   filter.operator !== 'isNotEmpty' &&
-                  fieldChoices(triggerSheetId, filter.fieldId).length
+                  fieldChoices(triggerSheetIdForFields, filter.fieldId).length
                 "
                 v-model="filter.value"
                 class="nl-chip"
               >
                 <option value="">选择选项</option>
                 <option
-                  v-for="choice in fieldChoices(triggerSheetId, filter.fieldId)"
+                  v-for="choice in fieldChoices(
+                    triggerSheetIdForFields,
+                    filter.fieldId,
+                  )"
                   :key="choice.id"
                   :value="choice.id"
                 >
@@ -1752,6 +1942,137 @@ onMounted(load);
                   data-testid="step-http-timeout"
                 />
               </label>
+            </template>
+
+            <template v-else-if="step.type === 'condition'">
+              <div class="nl-sentence">
+                <span>对照</span>
+                <select
+                  v-model="step.conditionSource"
+                  class="nl-chip"
+                  data-testid="step-condition-source"
+                >
+                  <option value="trigger">触发记录</option>
+                  <option
+                    v-for="prior in previousRecordSteps"
+                    :key="prior.id"
+                    :value="prior.id"
+                  >
+                    {{
+                      prior.type === 'findRecords'
+                        ? '查找'
+                        : prior.type === 'createRecord'
+                          ? '创建'
+                          : '修改'
+                    }}步骤「{{ prior.name || prior.id.slice(0, 6) }}」
+                  </option>
+                </select>
+              </div>
+              <div class="nl-sentence">
+                <span>满足以下</span>
+                <select v-model="step.filterConjunction" class="nl-chip">
+                  <option value="and">全部</option>
+                  <option value="or">任意</option>
+                </select>
+                <span>条件，否则跳过后续步骤</span>
+              </div>
+              <div
+                v-for="(filter, filterIndex) in step.filterRows"
+                :key="filterIndex"
+                class="nl-sentence"
+              >
+                <select v-model="filter.fieldId" class="nl-chip">
+                  <option value="">选择字段</option>
+                  <option
+                    v-for="field in sheetFields(
+                      step.conditionSource === 'trigger'
+                        ? triggerSheetIdForFields
+                        : steps.find((item) => item.id === step.conditionSource)
+                            ?.sheetId || triggerSheetIdForFields,
+                    )"
+                    :key="field.id"
+                    :value="field.id"
+                  >
+                    {{ field.name }}
+                  </option>
+                </select>
+                <select v-model="filter.operator" class="nl-chip">
+                  <option value="equals">等于</option>
+                  <option value="notEquals">不等于</option>
+                  <option value="contains">包含</option>
+                  <option value="isEmpty">为空</option>
+                  <option value="isNotEmpty">不为空</option>
+                </select>
+                <select
+                  v-if="
+                    filter.operator !== 'isEmpty' &&
+                    filter.operator !== 'isNotEmpty' &&
+                    fieldChoices(
+                      step.conditionSource === 'trigger'
+                        ? triggerSheetIdForFields
+                        : steps.find((item) => item.id === step.conditionSource)
+                            ?.sheetId || triggerSheetIdForFields,
+                      filter.fieldId,
+                    ).length
+                  "
+                  v-model="filter.value"
+                  class="nl-chip"
+                  data-testid="step-condition-choice"
+                >
+                  <option value="">选择选项</option>
+                  <option
+                    v-for="choice in fieldChoices(
+                      step.conditionSource === 'trigger'
+                        ? triggerSheetIdForFields
+                        : steps.find((item) => item.id === step.conditionSource)
+                            ?.sheetId || triggerSheetIdForFields,
+                      filter.fieldId,
+                    )"
+                    :key="choice.id"
+                    :value="choice.id"
+                  >
+                    {{ choice.name }}
+                  </option>
+                </select>
+                <input
+                  v-else-if="
+                    filter.operator !== 'isEmpty' &&
+                    filter.operator !== 'isNotEmpty'
+                  "
+                  v-model="filter.value"
+                  class="nl-chip nl-chip-input"
+                  placeholder="值"
+                  data-testid="step-condition-value"
+                />
+              </div>
+              <button
+                class="nl-add-link"
+                type="button"
+                @click="
+                  step.filterRows.push({
+                    fieldId: '',
+                    operator: 'equals',
+                    value: '',
+                  })
+                "
+              >
+                + 添加条件
+              </button>
+            </template>
+
+            <template v-else-if="step.type === 'delay'">
+              <div class="nl-sentence">
+                <span>等待</span>
+                <input
+                  v-model.number="step.delaySeconds"
+                  class="nl-chip nl-chip-input"
+                  type="number"
+                  min="1"
+                  max="86400"
+                  data-testid="step-delay-seconds"
+                />
+                <span>秒后继续执行后续步骤</span>
+              </div>
             </template>
           </div>
         </article>

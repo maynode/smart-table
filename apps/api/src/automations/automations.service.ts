@@ -27,6 +27,8 @@ const TRIGGER_TYPES = [
   'recordUpdated',
   'schedule',
   'recordTimer',
+  'formSubmitted',
+  'recordButton',
 ];
 const STEP_TYPES = [
   'findRecords',
@@ -34,8 +36,12 @@ const STEP_TYPES = [
   'modifyRecords',
   'sendMessage',
   'sendHttp',
+  'condition',
+  'delay',
 ];
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const MIN_DELAY_MS = 1_000;
+const MAX_DELAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class AutomationsService {
@@ -121,7 +127,12 @@ export class AutomationsService {
     const steps =
       dto.steps ??
       (automation.steps as unknown as Array<Record<string, unknown>>);
-    await this.validateDefinition(automation.baseId, trigger, steps);
+    await this.validateDefinition(
+      automation.baseId,
+      trigger,
+      steps,
+      automationId,
+    );
 
     const nextEnabled = dto.enabled ?? automation.enabled;
     let nextRunAt: Date | null | undefined;
@@ -215,6 +226,45 @@ export class AutomationsService {
     return this.queue.enqueue(automationId, context);
   }
 
+  async listSheetButtons(userId: string, sheetId: string) {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      include: { base: true },
+    });
+    if (!sheet) throw new NotFoundException('工作表不存在');
+    await this.workspacesService.requireMember(
+      sheet.base.workspaceId,
+      userId,
+      'viewer',
+    );
+    return this.runner.listRecordButtons(sheetId);
+  }
+
+  async runSheetButton(
+    userId: string,
+    sheetId: string,
+    recordId: string,
+    buttonKey: string,
+  ) {
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      include: { base: true },
+    });
+    if (!sheet) throw new NotFoundException('工作表不存在');
+    await this.workspacesService.requireMember(
+      sheet.base.workspaceId,
+      userId,
+      'editor',
+    );
+    await this.quotas.assertAutomationRun(sheet.base.workspaceId);
+    return this.runner.triggerRecordButton(
+      sheetId,
+      recordId,
+      buttonKey,
+      userId,
+    );
+  }
+
   private async findAccessible(
     automationId: string,
     userId: string,
@@ -256,6 +306,7 @@ export class AutomationsService {
     baseId: string,
     trigger: Record<string, unknown> | undefined,
     steps: Array<Record<string, unknown>> | undefined,
+    excludeAutomationId?: string,
   ): Promise<void> {
     if (!trigger || typeof trigger !== 'object') {
       throw new BadRequestException('缺少触发器配置');
@@ -297,6 +348,37 @@ export class AutomationsService {
         throw new BadRequestException('到达时间触发必须选择日期字段');
       }
       if (trigger.filters) this.validateFilters(trigger.filters);
+    } else if (triggerType === 'formSubmitted') {
+      const formId = String(trigger.formId ?? '');
+      if (!formId) throw new BadRequestException('表单提交触发缺少 formId');
+      const form = await this.prisma.form.findFirst({
+        where: { id: formId, baseId },
+      });
+      if (!form) throw new BadRequestException('表单不存在或不属于当前文档');
+      if (trigger.filters) this.validateFilters(trigger.filters);
+    } else if (triggerType === 'recordButton') {
+      await this.assertSheetInBase(baseId, String(trigger.sheetId ?? ''));
+      const buttonKey = String(trigger.buttonKey ?? '').trim();
+      const buttonLabel = String(trigger.buttonLabel ?? '').trim();
+      const sheetId = String(trigger.sheetId ?? '');
+      if (!buttonKey) {
+        throw new BadRequestException('按钮触发缺少 buttonKey');
+      }
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(buttonKey)) {
+        throw new BadRequestException(
+          'buttonKey 仅允许字母数字、下划线与短横线',
+        );
+      }
+      if (!buttonLabel) {
+        throw new BadRequestException('按钮触发缺少 buttonLabel');
+      }
+      if (trigger.filters) this.validateFilters(trigger.filters);
+      await this.assertButtonKeyUnique(
+        baseId,
+        sheetId,
+        buttonKey,
+        excludeAutomationId,
+      );
     } else {
       await this.assertSheetInBase(baseId, String(trigger.sheetId ?? ''));
       if (trigger.filters) this.validateFilters(trigger.filters);
@@ -379,6 +461,35 @@ export class AutomationsService {
         }
       }
 
+      if (type === 'condition') {
+        if (!raw.filters) {
+          throw new BadRequestException('条件步骤缺少 filters');
+        }
+        this.validateFilters(raw.filters);
+        const source = raw.source;
+        if (
+          source &&
+          source !== 'trigger' &&
+          (typeof source !== 'object' ||
+            !knownStepIds.has(String((source as { stepId?: string }).stepId)))
+        ) {
+          throw new BadRequestException('条件步骤对照了不存在的步骤');
+        }
+      }
+
+      if (type === 'delay') {
+        const delayMs = Number(raw.delayMs);
+        if (
+          !Number.isFinite(delayMs) ||
+          delayMs < MIN_DELAY_MS ||
+          delayMs > MAX_DELAY_MS
+        ) {
+          throw new BadRequestException(
+            `延迟需在 ${MIN_DELAY_MS / 1000} 秒～24 小时之间`,
+          );
+        }
+      }
+
       knownStepIds.add(stepId);
     }
   }
@@ -453,6 +564,32 @@ export class AutomationsService {
     });
     if (!sheet || sheet.baseId !== baseId) {
       throw new BadRequestException('工作表不属于该 Base');
+    }
+  }
+
+  /** 同表 buttonKey 全局唯一（启用/停用都算，避免列表碰撞）. */
+  private async assertButtonKeyUnique(
+    baseId: string,
+    sheetId: string,
+    buttonKey: string,
+    excludeAutomationId?: string,
+  ): Promise<void> {
+    const automations = await this.prisma.automation.findMany({
+      where: { baseId },
+      select: { id: true, trigger: true },
+    });
+    for (const item of automations) {
+      if (excludeAutomationId && item.id === excludeAutomationId) continue;
+      const trigger = item.trigger as Record<string, unknown> | null;
+      if (!trigger || trigger.type !== 'recordButton') continue;
+      if (
+        String(trigger.sheetId ?? '') === sheetId &&
+        String(trigger.buttonKey ?? '').trim() === buttonKey
+      ) {
+        throw new BadRequestException(
+          `按钮键「${buttonKey}」已在本表其他自动化中使用`,
+        );
+      }
     }
   }
 }

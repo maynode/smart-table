@@ -84,10 +84,14 @@ export interface ViewQuery {
   colorRules?: ColorRule[];
   /** Number of leading data columns kept fixed while scrolling horizontally. */
   freezeColumnCount?: number;
+  /** 全表关键字检索（服务端 cells JSON 文本匹配，非仅已加载行）. */
+  search?: string;
 }
 
-export const DEFAULT_RECORD_PAGE_LIMIT = 50;
-export const MAX_RECORD_PAGE_LIMIT = 200;
+/** 首屏批次；后续由前端静默续拉，不暴露分页 UI（对齐表格全量滚动模型）. */
+export const DEFAULT_RECORD_PAGE_LIMIT = 200;
+/** 单次 HTTP 批次上限（内部续拉用，不是「第 N 页」）. */
+export const MAX_RECORD_PAGE_LIMIT = 2000;
 
 export function resolveRecordPageLimit(limit?: number): number {
   if (limit === undefined || limit === null || !Number.isFinite(limit)) {

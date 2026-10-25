@@ -36,21 +36,23 @@ describe('Sheets, fields and records (e2e)', () => {
     const owner = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        account: `sheets${stamp}`,
-        password: 'Passw0rd!123',
-        name: '表格所有者',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
-        });
+        account: `sh${String(stamp).slice(-10)}`,
+        password: 'Ab12_cd34',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
+    expect(owner.status).toBeLessThan(400);
     token = owner.body.accessToken;
 
     const outsider = await request(app.getHttpServer())
       .post('/auth/register')
       .send({
-        account: `sheets_out${stamp}`,
-        password: 'Passw0rd!123',
-        name: '外部人',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
-        });
+        account: `so${String(stamp).slice(-10)}`,
+        password: 'Ab12_cd34',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
+    expect(outsider.status).toBeLessThan(400);
     outsiderToken = outsider.body.accessToken;
 
     const workspace = await request(app.getHttpServer())
@@ -196,5 +198,24 @@ describe('Sheets, fields and records (e2e)', () => {
     expect(patched.body.version).toBe(2);
     expect(patched.body.cells[phoneFieldId]).toBe('13800000000');
     expect(patched.body.cells[serialFieldId]).toBe('TEST-01');
+
+    const conflict = await request(app.getHttpServer())
+      .patch(`/records/${first.body.id}`)
+      .set(auth(token))
+      .send({
+        cells: { [phoneFieldId]: '13900000000' },
+        expectedVersion: 1,
+      });
+    expect(conflict.status).toBe(409);
+
+    const ok = await request(app.getHttpServer())
+      .patch(`/records/${first.body.id}`)
+      .set(auth(token))
+      .send({
+        cells: { [phoneFieldId]: '13900000000' },
+        expectedVersion: 2,
+      });
+    expect(ok.status).toBe(200);
+    expect(ok.body.version).toBe(3);
   });
 });

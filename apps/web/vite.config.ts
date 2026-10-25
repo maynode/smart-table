@@ -13,9 +13,11 @@ export default defineConfig({
     },
   },
   server: {
-    host: true,
+    // 局域网 IP 访问（手机/其他电脑）需要显式放开 host 校验
+    host: '0.0.0.0',
     port: 5173,
     strictPort: true,
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:3000',

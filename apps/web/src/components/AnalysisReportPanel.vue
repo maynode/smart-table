@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { confirmDialog, promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
 import type {
@@ -13,6 +14,8 @@ import type {
 const props = defineProps<{
   baseId: string;
   sheets: SheetDto[];
+  /** 从壳层新建时传入，直接打开该报告 */
+  reportId?: string;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -92,12 +95,11 @@ async function openReport(id: string): Promise<void> {
 }
 
 async function startNew(): Promise<void> {
+  const name = (await promptDialog('新分析报告名称', '分析报告'))?.trim();
+  if (!name) return;
   loading.value = true;
   try {
-    active.value = await endpoints.createAnalysisReport(
-      props.baseId,
-      '分析报告',
-    );
+    active.value = await endpoints.createAnalysisReport(props.baseId, name);
     await loadList();
     selectedOption.value = '';
     otherText.value = '';
@@ -140,25 +142,85 @@ async function submitAnswer(skip = false): Promise<void> {
   }
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopPoll(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startPollIfBusy(): void {
+  stopPoll();
+  if (!busy.value || !active.value) return;
+  const id = active.value.id;
+  pollTimer = setInterval(() => {
+    void (async () => {
+      if (!active.value || active.value.id !== id) {
+        stopPoll();
+        return;
+      }
+      try {
+        active.value = await endpoints.getAnalysisReport(id);
+        await loadList();
+        if (!busy.value) {
+          stopPoll();
+          if (active.value.status === 'ready') await scrollChat();
+          if (active.value.status === 'failed') {
+            toast(active.value.error || '分析失败');
+          }
+        }
+      } catch {
+        stopPoll();
+      }
+    })();
+  }, 1500);
+}
+
+async function removeActive(): Promise<void> {
+  if (!active.value) return;
+  const ok = await confirmDialog(`删除分析报告「${active.value.name}」？`);
+  if (!ok) return;
+  try {
+    const id = active.value.id;
+    await endpoints.deleteAnalysisReport(id);
+    stopPoll();
+    active.value = null;
+    await loadList();
+    if (list.value[0]) await openReport(list.value[0].id);
+    toast('已删除');
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 watch(
   () => active.value?.status,
   async (status) => {
     if (status === 'ready') await scrollChat();
+    startPollIfBusy();
   },
 );
 
 onMounted(async () => {
   try {
     await loadList();
+    if (props.reportId) {
+      await openReport(props.reportId);
+      startPollIfBusy();
+      return;
+    }
     if (list.value[0]) {
       await openReport(list.value[0].id);
-    } else {
-      await startNew();
+      startPollIfBusy();
     }
   } catch (error) {
     toast(messageOf(error));
   }
 });
+
+onUnmounted(() => stopPoll());
 </script>
 
 <template>
@@ -171,6 +233,15 @@ onMounted(async () => {
       <div class="analysis-top-actions">
         <button class="btn" type="button" data-testid="analysis-new" @click="startNew">
           新建分析
+        </button>
+        <button
+          v-if="active"
+          class="btn btn-ghost"
+          type="button"
+          data-testid="analysis-delete"
+          @click="removeActive"
+        >
+          删除
         </button>
         <button
           class="icon-btn"

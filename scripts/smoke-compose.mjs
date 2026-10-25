@@ -64,10 +64,15 @@ if (!web.ok) fail(`Web 不可达: ${web.status}`);
 ok('Web 可达');
 
 const stamp = Date.now();
-const email = `smoke-${stamp}@example.com`;
+const account = `sm${String(stamp).slice(-10)}`;
 const register = await http('/auth/register', {
   method: 'POST',
-  body: JSON.stringify({ email, password: 'Passw0rd!123', name: '冒烟测试' }),
+  body: JSON.stringify({
+    account,
+    password: 'Ab12_cd34',
+    securityQuestion: '你小学就读的学校名称是？',
+    securityAnswer: 'demo',
+  }),
 });
 if (register.status !== 201) fail(`注册失败: ${register.status} ${JSON.stringify(register.body)}`);
 const token = register.body.accessToken;

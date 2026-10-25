@@ -65,6 +65,10 @@ export class ViewsService {
     const where = query.filters
       ? buildFilterSql(query.filters)
       : Prisma.sql`TRUE`;
+    const searchRaw = (query.search ?? '').trim();
+    const searchSql = searchRaw
+      ? Prisma.sql`AND cells::text ILIKE ${`%${searchRaw.replace(/[%_\\]/g, '\\$&')}%`}`
+      : Prisma.sql``;
     const order =
       query.sorts && query.sorts.length > 0
         ? buildSortSql(
@@ -79,8 +83,9 @@ export class ViewsService {
           )
         : Prisma.sql`ORDER BY id ASC`;
 
+    // 无分页截断：按视图排序一次取齐；Canvas 侧虚拟滚动承载渲染性能
     const rows = await this.prisma.$queryRaw<QueryRow[]>(
-      Prisma.sql`SELECT id, cells FROM "records" WHERE "sheet_id" = ${sheetId}::uuid AND (${where}) ${order} LIMIT 1000`,
+      Prisma.sql`SELECT id, cells FROM "records" WHERE "sheet_id" = ${sheetId}::uuid AND (${where}) ${searchSql} ${order}`,
     );
 
     const formulaValues = evaluateFormulaRows(
@@ -280,6 +285,12 @@ export class ViewsService {
       if (value !== undefined && !Array.isArray(value)) {
         throw new BadRequestException(`视图 ${key} 格式不正确`);
       }
+    }
+    if (
+      query.search !== undefined &&
+      (typeof query.search !== 'string' || query.search.length > 200)
+    ) {
+      throw new BadRequestException('视图 search 格式不正确');
     }
   }
 

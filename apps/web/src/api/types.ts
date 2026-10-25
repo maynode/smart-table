@@ -434,10 +434,18 @@ export interface DashboardScheduleDto {
   }>;
 }
 
+export type TemplateKind =
+  | 'base'
+  | 'sheet'
+  | 'form'
+  | 'dashboard'
+  | 'report';
+
 export interface TemplateDto {
   key: string;
   name: string;
   category: string;
+  kind?: TemplateKind;
   icon: string;
   description: string;
   sheets: Array<{ name: string; fields: number }>;
@@ -446,7 +454,13 @@ export interface TemplateDto {
 export interface TemplateInstantiateResult {
   template: string;
   baseId: string;
-  sheets: Array<{ id: string; name: string }>;
+  kind?: TemplateKind;
+  name?: string;
+  sheetId?: string;
+  formId?: string;
+  dashboardId?: string;
+  reportId?: string;
+  sheets?: Array<{ id: string; name: string }>;
   codes?: number;
   shareUrl?: string;
 }

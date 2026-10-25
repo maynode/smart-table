@@ -1,6 +1,6 @@
 # 智能表格 — 剩余未完成清单（交接版）
 
-> 更新日期：2026-10-24  
+> 更新日期：2026-10-26  
 > 对照：`docs/智能表格-产品与技术方案.md`、`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
 > 原则：**不以文档勾选代替验证**。本文件只记录「代码状态 + 可复现证据 + 仍缺什么」。
 
@@ -9,10 +9,11 @@
 ## 0. 一句话现状
 
 W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.md`）已落地；相对企微网页版智能表格：**主能力已对齐**。  
-**当前主线（2026-10-24）：** 打磨现有功能至成熟稳定（体验 / 可靠性 / 验收）；**不排期**断网重连、离线编辑、实时协作、跨端同步。  
-**P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`。  
-**P0 仍缺：** Docker 镜像 rebuild + compose smoke；W6 最终报告；可选 `perf:window`（缺千万行 `.perf-env.json`）。  
-**待定（成熟后再议）：** 断网/离线；多人实时协同 OT/WS；跨端同步；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库。
+**当前主线（2026-10-26）：** 交付闭环收尾；像素级视觉对齐 mock **本轮不做**（产品指令）。  
+**P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
+**P0 仍缺：** 可选 `perf:window`（缺千万行 `.perf-env.json`）。  
+**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）。  
+**待定（成熟后再议）：** 多人实时协同 OT/WS；跨端同步；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库。
 
 ---
 
@@ -89,10 +90,10 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | 1 | **全量 API e2e** | **已完成（2026-10-23）** | 20/20 套件、47/47；需 Redis `:6380`；建表 `seed: false` |
 | 2 | **前端回归** | **已完成（2026-10-23）** | `vue-tsc`；vitest 9/9；Playwright 9/9（e2e 对齐收集表单 sheet / 列菜单 / 分享对话框 / 模板确认） |
 | 3 | **新鲜压测报告** | **基本完成（2026-10-23）** | `docs/PERFORMANCE.md` 已写本机领码 / grid / form；**仍缺** `perf:window`（无 `.perf-env.json` 千万行表） |
-| 4 | **Docker 镜像与源码一致** | **未做** | 待：`docker compose build api web claim-worker` → `up -d` → smoke（`/health`、`/metrics`、公开表单、自动化）；验收口 `:8080` |
-| 5 | **W6 最终报告** | **未做** | 待单独文档：变更摘要、验证命令与结果、客观限制、启动步骤，可被交接引用 |
+| 4 | **Docker 镜像与源码一致** | **已完成（2026-10-26）** | `docker compose build api web`；修 `entrypoint-api.sh` CRLF→LF；`up -d` 后 `pnpm smoke:compose` 绿（公开领取 + 自动化）；验收口 `:8080` |
+| 5 | **W6 最终报告** | **已完成（2026-10-26）** | `docs/FINAL-REPORT.md` |
 
-**下一 AI 从这里继续：** 只做 P0-4 Docker rebuild + smoke，再写 P0-5 W6 报告；**不要再扫造功能**。`perf:window` 可选（先准备 `.perf-env.json`）。
+**下一 AI 从这里继续：** P0 交付闭环已齐；仅剩可选 `perf:window`（先准备 `.perf-env.json`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 
@@ -123,8 +124,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 断网感知 / 恢复后自动重连或重试 | **待定** | 现状：纯 REST，无 `online`/`offline` 监听、无失败请求自动重试；网通后靠用户下一次操作即可，不做「自动连接」 |
-| 离线编辑 / 本地队列 / 回放提交 | **待定** | 企微有 MessageCenter 离线 persist + HTTP `commitchanges` 回退；本产品不做 |
+| 断网感知 / 恢复后自动重连或重试 | **已完成（2026-10-26）** | `NetworkError`、`online`/`offline`、壳层 `sync-banner`、恢复自动 `flush` |
+| 离线编辑 / 本地队列 / 回放提交 | **已完成（2026-10-26）** | MessageCenter + IndexedDB + `POST /sheets/:id/commitchanges`；幂等 `clientOpId`；公开表 `Idempotency-Key`；见 `docs/OFFLINE.md` |
 | 多人实时协同（OT / WS / `NEW_CHANGES`） | **待定** | 维持 REST + 行级 `version` 乐观锁；不做光标/OT/房间广播 |
 | 跨端 / 多会话数据同步 | **待定** | 与实时协同同类；不做后台推送对齐 |
 | 企微登录 | **待定** | 产品用本系统自有账号；不做企微 OAuth 强绑定登录 |
@@ -138,7 +139,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 **目标：** 功能上**完全复刻企业微信网页版智能表格**（工作表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等），登录用本系统自有账号；在此之上可做更强能力（例：提交后用户页可见消息通知）。
 
-**阶段：** 当前以 **UI/体验打磨 + 稳定性** 为主（见 `docs/UI-POLISH.md`）。断网、离线、实时协作、同步 **一律后置**，不穿插进打磨迭代。
+**阶段：** 当前以 **UI/体验打磨 + 稳定性** 为主（见 `docs/UI-POLISH.md`）。断网/离线已按 MessageCenter 对齐落地；**实时协作 / 跨端同步** 仍后置。
 
 **其它产品边界（亦待定，非本期）：** 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标。
 

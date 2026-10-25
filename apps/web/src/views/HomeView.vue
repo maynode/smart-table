@@ -14,6 +14,7 @@ import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import AvatarCropper from '../components/AvatarCropper.vue';
 import MembersPanel from '../components/MembersPanel.vue';
+import NotificationBell from '../components/NotificationBell.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import { auth } from '../stores/auth';
@@ -35,6 +36,7 @@ const workspaces = ref<WorkspaceDto[]>([]);
 const currentWorkspaceId = ref<string>('');
 const bases = ref<BaseDto[]>([]);
 const workspaceQuery = ref('');
+const baseQuery = ref('');
 const loading = ref(false);
 const basesLoading = ref(false);
 const templateOpen = ref(false);
@@ -44,8 +46,11 @@ const permissionsBaseId = ref('');
 const moveOpen = ref(false);
 const moveBaseId = ref('');
 const moveTargetId = ref('');
+const userMenuOpen = ref(false);
 const wsMenuId = ref<string | null>(null);
 const wsMenuPos = ref<{ top: number; left: number } | null>(null);
+const baseMenuId = ref<string | null>(null);
+const baseMenuPos = ref<{ top: number; left: number } | null>(null);
 type OnboardInviteRole = 'admin' | 'editor' | 'viewer';
 type OnboardInviteRow = {
   key: number;
@@ -61,13 +66,11 @@ const onboardInviteDefaultRole = ref<OnboardInviteRole>('editor');
 const onboardInviteRows = ref<OnboardInviteRow[]>([]);
 const creatingWorkspace = ref(false);
 const workspaceOnboardInput = ref<HTMLInputElement | null>(null);
-const newBaseName = ref('');
-const newBaseDescription = ref('');
-const creatingBase = ref(false);
-const baseOnboardInput = ref<HTMLInputElement | null>(null);
-
 const wsMenuTarget = computed(
   () => workspaces.value.find((item) => item.id === wsMenuId.value) ?? null,
+);
+const baseMenuTarget = computed(
+  () => bases.value.find((item) => item.id === baseMenuId.value) ?? null,
 );
 const baseFormOpen = ref(false);
 const baseFormMode = ref<'create' | 'edit'>('create');
@@ -109,6 +112,16 @@ const filteredWorkspaces = computed(() => {
   const q = workspaceQuery.value.trim().toLowerCase();
   if (!q) return workspaces.value;
   return workspaces.value.filter((item) => item.name.toLowerCase().includes(q));
+});
+
+const filteredBases = computed(() => {
+  const q = baseQuery.value.trim().toLowerCase();
+  if (!q) return bases.value;
+  return bases.value.filter((item) => {
+    const name = item.name.toLowerCase();
+    const desc = (item.description ?? '').toLowerCase();
+    return name.includes(q) || desc.includes(q);
+  });
 });
 
 const editableWorkspaces = computed(() =>
@@ -253,39 +266,71 @@ function persistWorkspaceId(id: string): void {
   }
 }
 
+function placeOverflowMenu(
+  btn: HTMLElement,
+  menuWidth: number,
+  estHeight: number,
+): { top: number; left: number } {
+  const rect = btn.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(8, rect.right - menuWidth),
+    window.innerWidth - menuWidth - 8,
+  );
+  const below = rect.bottom + 4;
+  const top =
+    below + estHeight > window.innerHeight - 8
+      ? Math.max(8, rect.top - estHeight - 4)
+      : below;
+  return { top, left };
+}
+
 function closeMenus(): void {
+  userMenuOpen.value = false;
   wsMenuId.value = null;
   wsMenuPos.value = null;
+  baseMenuId.value = null;
+  baseMenuPos.value = null;
+}
+
+function toggleUserMenu(event: Event): void {
+  event.stopPropagation();
+  const next = !userMenuOpen.value;
+  closeMenus();
+  userMenuOpen.value = next;
 }
 
 function toggleWsMenu(id: string, event: Event): void {
   event.stopPropagation();
   if (wsMenuId.value === id) {
-    wsMenuId.value = null;
-    wsMenuPos.value = null;
+    closeMenus();
     return;
   }
   const btn = event.currentTarget as HTMLElement | null;
-  const rect = btn?.getBoundingClientRect();
-  if (!rect) return;
-  const menuWidth = 168;
-  const left = Math.min(
-    Math.max(8, rect.right - menuWidth),
-    window.innerWidth - menuWidth - 8,
-  );
-  // 优先在按钮下方展开；靠近底部时翻到上方
-  const below = rect.bottom + 4;
-  const estHeight = 140;
-  const top =
-    below + estHeight > window.innerHeight - 8
-      ? Math.max(8, rect.top - estHeight - 4)
-      : below;
+  if (!btn) return;
+  closeMenus();
   wsMenuId.value = id;
-  wsMenuPos.value = { top, left };
+  wsMenuPos.value = placeOverflowMenu(btn, 168, 160);
+}
+
+function toggleBaseMenu(id: string, event: Event): void {
+  event.stopPropagation();
+  if (baseMenuId.value === id) {
+    closeMenus();
+    return;
+  }
+  const btn = event.currentTarget as HTMLElement | null;
+  if (!btn) return;
+  closeMenus();
+  baseMenuId.value = id;
+  baseMenuPos.value = placeOverflowMenu(btn, 176, 260);
 }
 
 function onDocumentClick(): void {
   closeMenus();
+}
+
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') closeMenus();
 }
 
 async function loadWorkspaces(): Promise<void> {
@@ -502,11 +547,6 @@ function focusWorkspaceOnboard(): void {
   workspaceOnboardInput.value?.select();
 }
 
-function focusBaseOnboard(): void {
-  baseOnboardInput.value?.focus();
-  baseOnboardInput.value?.select();
-}
-
 async function createWorkspace(): Promise<void> {
   if (needsWorkspaceOnboard.value) {
     focusWorkspaceOnboard();
@@ -606,6 +646,7 @@ async function selectWorkspace(id: string): Promise<void> {
   if (!id || id === currentWorkspaceId.value) return;
   closeMenus();
   membersSectionOpen.value = false;
+  baseQuery.value = '';
   persistWorkspaceId(id);
   await loadBases();
 }
@@ -621,47 +662,11 @@ async function openWorkspaceMembers(workspaceId: string): Promise<void> {
 function openCreateBaseForm(): void {
   if (!currentWorkspaceId.value || !canEditCurrent.value) return;
   closeMenus();
-  if (needsBaseOnboard.value) {
-    void nextTick(() => {
-      baseOnboardInput.value?.focus();
-      baseOnboardInput.value?.select();
-    });
-    return;
-  }
   baseFormMode.value = 'create';
   baseFormId.value = '';
   baseFormName.value = '';
   baseFormDescription.value = '';
   baseFormOpen.value = true;
-}
-
-async function submitOnboardBase(): Promise<void> {
-  if (!currentWorkspaceId.value || !canEditCurrent.value) return;
-  const name = newBaseName.value.trim();
-  if (!name) {
-    toast('请填写名称');
-    baseOnboardInput.value?.focus();
-    return;
-  }
-  if (creatingBase.value) return;
-  creatingBase.value = true;
-  try {
-    const description = newBaseDescription.value.trim() || null;
-    const base = await endpoints.createBase(
-      currentWorkspaceId.value,
-      name,
-      description,
-    );
-    newBaseName.value = '';
-    newBaseDescription.value = '';
-    toast('已创建');
-    await loadBases();
-    openBase(base.id);
-  } catch (error) {
-    toast(messageOf(error) || '创建表格失败');
-  } finally {
-    creatingBase.value = false;
-  }
 }
 
 function openEditBaseForm(base: BaseDto): void {
@@ -1033,12 +1038,6 @@ watch(needsWorkspaceOnboard, async (need) => {
   focusWorkspaceOnboard();
 });
 
-watch(needsBaseOnboard, async (need) => {
-  if (!need) return;
-  await nextTick();
-  focusBaseOnboard();
-});
-
 watch(
   bases,
   () => {
@@ -1054,12 +1053,14 @@ watch(
 
 onMounted(() => {
   document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', onDocumentKeydown);
   window.addEventListener('resize', scheduleMeasureBaseHeadlines);
   void loadWorkspaces();
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick);
+  document.removeEventListener('keydown', onDocumentKeydown);
   window.removeEventListener('resize', scheduleMeasureBaseHeadlines);
 });
 </script>
@@ -1077,53 +1078,74 @@ onUnmounted(() => {
       </div>
 
       <div class="topbar-actions">
-        <div class="user-chip">
+        <NotificationBell />
+        <div class="user-chip" @click.stop>
           <button
-            class="avatar-btn"
+            class="user-chip-trigger"
             type="button"
-            title="修改头像"
-            aria-label="修改头像"
+            title="账号"
+            aria-label="账号菜单"
+            aria-haspopup="menu"
+            :aria-expanded="userMenuOpen"
             data-testid="avatar-open"
-            @click="openAvatarPicker"
+            @click="toggleUserMenu"
           >
-            <img
-              class="avatar-img"
-              :src="currentAvatarUrl"
-              alt=""
-              width="28"
-              height="28"
-              draggable="false"
-            />
+            <span class="user-name-text">
+              {{ auth.state.user?.name || auth.state.user?.account }}
+            </span>
+            <span class="avatar-btn" aria-hidden="true">
+              <img
+                class="avatar-img"
+                :src="currentAvatarUrl"
+                alt=""
+                width="28"
+                height="28"
+                draggable="false"
+              />
+            </span>
           </button>
-          <button
-            class="user-name-btn"
-            type="button"
-            title="修改用户名"
-            aria-label="修改用户名"
-            data-testid="username-open"
-            @click="openUsernameEditor"
+          <div
+            v-if="userMenuOpen"
+            class="menu user-menu"
+            data-testid="user-menu"
+            role="menu"
           >
-            {{ auth.state.user?.name || auth.state.user?.account }}
-          </button>
-          <button
-            class="btn btn-ghost tiny"
-            type="button"
-            data-testid="change-password"
-            @click="openChangePassword"
-          >
-            修改密码
-          </button>
-          <button class="btn btn-ghost tiny" type="button" @click="signOut">
-            退出
-          </button>
-          <button
-            class="btn btn-ghost tiny danger-text"
-            type="button"
-            data-testid="delete-account"
-            @click="deleteAccount"
-          >
-            注销
-          </button>
+            <button
+              type="button"
+              role="menuitem"
+              @click="closeMenus(); openAvatarPicker()"
+            >
+              更新头像
+            </button>
+            <button
+              type="button"
+              data-testid="username-open"
+              role="menuitem"
+              @click="closeMenus(); openUsernameEditor()"
+            >
+              修改用户名
+            </button>
+            <button
+              type="button"
+              data-testid="change-password"
+              role="menuitem"
+              @click="closeMenus(); openChangePassword()"
+            >
+              修改密码
+            </button>
+            <button type="button" role="menuitem" @click="closeMenus(); signOut()">
+              退出
+            </button>
+            <button
+              type="button"
+              class="danger"
+              data-testid="delete-account"
+              role="menuitem"
+              @click="closeMenus(); deleteAccount()"
+            >
+              注销
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -1341,55 +1363,33 @@ onUnmounted(() => {
 
         <template v-else>
         <div v-if="currentWorkspace" class="main-head">
-          <div>
-            <h1>{{ currentWorkspace.name }}</h1>
-            <p class="sub">{{ bases.length }} 个智能表格</p>
-          </div>
-          <div class="main-head-actions" @click.stop>
-            <button
-              class="members-icon-btn"
-              type="button"
-              title="成员"
-              aria-label="成员"
-              data-testid="hub-members"
-              :aria-pressed="membersSectionOpen"
-              :class="{ active: membersSectionOpen }"
-              @click="membersSectionOpen = !membersSectionOpen"
-            >
-              <svg
-                class="members-icon"
-                viewBox="0 0 24 24"
-                width="18"
-                height="18"
-                aria-hidden="true"
-              >
-                <path
-                  fill="currentColor"
-                  d="M9.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5c-2.9 0-8.5 1.45-8.5 4.35V19a1 1 0 0 0 1 1h15a1 1 0 0 0 1-1v-2.15c0-2.9-5.6-4.35-8.5-4.35ZM16.75 7a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Zm1.6 6.55c2.15.55 4.65 1.7 4.65 3.55V18a1 1 0 0 1-1 1h-3.2a2.6 2.6 0 0 0 .3-1.15v-1.75c0-.95-.5-1.75-1.35-2.4.2-.05.4-.1.6-.15Z"
-                />
-              </svg>
-            </button>
-            <div
-              v-if="canEditCurrent && !needsBaseOnboard"
-              class="create-actions"
-            >
+          <div class="main-head-title">
+            <div class="main-title-row">
+              <h1>{{ currentWorkspace.name }}</h1>
               <button
-                class="btn btn-primary"
+                class="members-btn"
                 type="button"
-                data-testid="create-base"
-                @click="openCreateBaseForm"
+                data-testid="hub-members"
+                :aria-pressed="membersSectionOpen"
+                :class="{ active: membersSectionOpen }"
+                @click.stop="membersSectionOpen = !membersSectionOpen"
               >
-                新建表格
-              </button>
-              <button
-                class="btn btn-template"
-                type="button"
-                data-testid="hub-template"
-                @click="openTemplate"
-              >
-                从模板新建
+                <svg
+                  class="members-icon"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="currentColor"
+                    d="M9.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5c-2.9 0-8.5 1.45-8.5 4.35V19a1 1 0 0 0 1 1h15a1 1 0 0 0 1-1v-2.15c0-2.9-5.6-4.35-8.5-4.35ZM16.75 7a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Zm1.6 6.55c2.15.55 4.65 1.7 4.65 3.55V18a1 1 0 0 1-1 1h-3.2a2.6 2.6 0 0 0 .3-1.15v-1.75c0-.95-.5-1.75-1.35-2.4.2-.05.4-.1.6-.15Z"
+                  />
+                </svg>
+                <span>成员</span>
               </button>
             </div>
+            <p class="sub">{{ bases.length }} 个智能表格</p>
           </div>
         </div>
 
@@ -1401,71 +1401,71 @@ onUnmounted(() => {
           embedded-title="工作区成员"
         />
 
+        <div
+          v-if="!basesLoading && !needsBaseOnboard"
+          class="main-toolbar"
+        >
+          <div class="base-search">
+            <input
+              v-model="baseQuery"
+              data-testid="hub-base-search"
+              placeholder="搜索智能表"
+              aria-label="搜索智能表"
+            />
+          </div>
+          <div v-if="canEditCurrent" class="create-actions">
+            <button
+              class="btn btn-primary"
+              type="button"
+              data-testid="create-base"
+              @click="openCreateBaseForm"
+            >
+              新建表格
+            </button>
+            <button
+              class="btn btn-template"
+              type="button"
+              data-testid="hub-template"
+              @click="openTemplate"
+            >
+              从模板新建
+            </button>
+          </div>
+        </div>
+
         <p v-if="basesLoading" class="hint main-hint">加载表格…</p>
 
         <div
           v-else-if="needsBaseOnboard"
-          class="base-setup"
+          class="empty-panel empty-panel-center"
           data-testid="base-onboard"
         >
-          <div class="base-setup-sheet">
-            <section class="base-setup-create">
-              <h2>创建第一张智能表格</h2>
-              <form class="base-create-form" @submit.prevent="submitOnboardBase">
-                <label class="base-create-field">
-                  <span class="base-create-label">
-                    表格名称<em class="required-star">*</em>
-                  </span>
-                  <input
-                    ref="baseOnboardInput"
-                    v-model="newBaseName"
-                    class="base-create-input"
-                    data-testid="base-onboard-name"
-                    maxlength="100"
-                    placeholder="例如：客户跟进"
-                    autocomplete="off"
-                    :disabled="creatingBase"
-                  />
-                </label>
-                <label class="base-create-field">
-                  <span class="base-create-label">描述</span>
-                  <textarea
-                    v-model="newBaseDescription"
-                    class="base-create-textarea"
-                    data-testid="base-onboard-description"
-                    maxlength="500"
-                    rows="2"
-                    placeholder="一句话说明用途，方便同事辨认"
-                    :disabled="creatingBase"
-                  />
-                </label>
-                <div class="base-create-actions">
-                  <button
-                    class="btn btn-primary base-create-submit"
-                    type="submit"
-                    data-testid="base-onboard-submit"
-                    :disabled="creatingBase"
-                  >
-                    {{ creatingBase ? '创建中…' : '创建并打开' }}
-                  </button>
-                  <button
-                    class="base-template-link"
-                    type="button"
-                    data-testid="base-onboard-template"
-                    :disabled="creatingBase"
-                    @click="openTemplate"
-                  >
-                    或从模板新建
-                  </button>
-                </div>
-              </form>
-            </section>
+          <div class="empty-icon">▦</div>
+          <h2>创建第一张智能表格</h2>
+          <p>从空白开始，或用模板快速搭好结构。</p>
+          <div class="empty-actions">
+            <button
+              class="btn btn-primary"
+              type="button"
+              data-testid="create-base"
+              @click="openCreateBaseForm"
+            >
+              新建表格
+            </button>
+            <button
+              class="btn btn-template"
+              type="button"
+              data-testid="base-onboard-template"
+              @click="openTemplate"
+            >
+              从模板新建
+            </button>
           </div>
         </div>
 
         <div
           v-else-if="bases.length === 0"
-          class="empty-panel"
+          class="empty-panel empty-panel-center"
           data-testid="base-list"
         >
           <div class="empty-icon">▦</div>
@@ -1473,9 +1473,17 @@ onUnmounted(() => {
           <p>当前角色无法新建，可联系工作区管理员。</p>
         </div>
 
+        <div
+          v-else-if="filteredBases.length === 0"
+          class="empty-panel"
+          data-testid="base-list"
+        >
+          <p>无匹配结果</p>
+        </div>
+
         <div v-else class="base-list" data-testid="base-list">
           <article
-            v-for="base in bases"
+            v-for="base in filteredBases"
             :key="base.id"
             class="base-item"
             data-testid="base-card"
@@ -1510,73 +1518,93 @@ onUnmounted(() => {
                   {{ isDescExpanded(base.id) ? '收起' : '展开' }}
                 </button>
               </div>
-              <div class="base-sub">
-                更新于 {{ formatTime(base.updatedAt) }}
-                <span v-if="!isOwnedBase(base)" class="badge">共享</span>
-              </div>
             </div>
-            <div
-              class="base-actions"
-              data-testid="base-row-actions"
-              @click.stop
-            >
-              <button
-                v-if="canEditCurrent && isOwnedBase(base)"
-                type="button"
-                class="base-action"
-                @click="openEditBaseForm(base)"
-              >
-                编辑
-              </button>
-              <button
-                v-if="canEditCurrent && isOwnedBase(base)"
-                type="button"
-                class="base-action"
-                data-testid="base-move-up"
-                :disabled="ownedIndex(base) <= 0"
-                @click="moveOrder(base, -1)"
-              >
-                上移
-              </button>
-              <button
-                v-if="canEditCurrent && isOwnedBase(base)"
-                type="button"
-                class="base-action"
-                data-testid="base-move-down"
-                :disabled="ownedIndex(base) >= ownedBases.length - 1"
-                @click="moveOrder(base, 1)"
-              >
-                下移
-              </button>
-              <button
-                v-if="canEditCurrent && isOwnedBase(base)"
-                type="button"
-                class="base-action"
-                data-testid="base-move"
-                @click="openMove(base)"
-              >
-                移动到工作区
-              </button>
-              <button
-                type="button"
-                class="base-action"
-                data-testid="base-permissions"
-                @click="openPermissions(base)"
-              >
-                内容权限
-              </button>
-              <button
-                v-if="canEditCurrent && isOwnedBase(base)"
-                type="button"
-                class="base-action danger"
-                data-testid="base-delete"
-                @click="deleteBase(base)"
-              >
-                删除
-              </button>
+            <div class="base-aside">
+              <span class="base-time">
+                {{ formatTime(base.updatedAt) }}
+                <span v-if="!isOwnedBase(base)" class="badge">共享</span>
+              </span>
+              <div class="base-more" @click.stop>
+                <button
+                  type="button"
+                  class="more-btn"
+                  data-testid="base-row-actions"
+                  :aria-expanded="baseMenuId === base.id"
+                  :aria-label="`${base.name} 的操作`"
+                  @click="toggleBaseMenu(base.id, $event)"
+                >
+                  ⋯
+                </button>
+              </div>
             </div>
           </article>
         </div>
+
+        <Teleport to="body">
+          <div
+            v-if="baseMenuTarget && baseMenuPos"
+            class="menu row-menu base-menu-fixed"
+            data-testid="base-row-menu"
+            :style="{ top: `${baseMenuPos.top}px`, left: `${baseMenuPos.left}px` }"
+            @click.stop
+          >
+            <button
+              v-if="canEditCurrent && isOwnedBase(baseMenuTarget)"
+              type="button"
+              @click="openEditBaseForm(baseMenuTarget)"
+            >
+              编辑
+            </button>
+            <button
+              v-if="canEditCurrent && isOwnedBase(baseMenuTarget)"
+              type="button"
+              data-testid="base-move-up"
+              :disabled="ownedIndex(baseMenuTarget) <= 0"
+              @click="moveOrder(baseMenuTarget, -1)"
+            >
+              上移
+            </button>
+            <button
+              v-if="canEditCurrent && isOwnedBase(baseMenuTarget)"
+              type="button"
+              data-testid="base-move-down"
+              :disabled="ownedIndex(baseMenuTarget) >= ownedBases.length - 1"
+              @click="moveOrder(baseMenuTarget, 1)"
+            >
+              下移
+            </button>
+            <button
+              v-if="canEditCurrent && isOwnedBase(baseMenuTarget)"
+              type="button"
+              data-testid="base-move"
+              :disabled="editableWorkspaces.length === 0"
+              :title="
+                editableWorkspaces.length === 0
+                  ? '没有可移入的其他工作区'
+                  : undefined
+              "
+              @click="openMove(baseMenuTarget)"
+            >
+              移动到工作区
+            </button>
+            <button
+              type="button"
+              data-testid="base-permissions"
+              @click="openPermissions(baseMenuTarget)"
+            >
+              内容权限
+            </button>
+            <button
+              v-if="canEditCurrent && isOwnedBase(baseMenuTarget)"
+              type="button"
+              class="danger"
+              data-testid="base-delete"
+              @click="deleteBase(baseMenuTarget)"
+            >
+              删除
+            </button>
+          </div>
+        </Teleport>
         </template>
       </main>
     </div>
@@ -1982,7 +2010,7 @@ onUnmounted(() => {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin-left: auto;
 }
 
@@ -2005,12 +2033,45 @@ onUnmounted(() => {
 }
 
 .user-chip {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-left: 4px;
   padding-left: 10px;
   border-left: 1px solid var(--border);
+}
+
+.user-chip-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  height: 36px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.user-chip-trigger:hover,
+.user-chip-trigger[aria-expanded='true'] {
+  background: var(--bg-hover);
+}
+
+.user-name-text {
+  min-width: 0;
+  max-width: 140px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-chip-trigger:hover .user-name-text,
+.user-chip-trigger[aria-expanded='true'] .user-name-text {
+  color: var(--text);
 }
 
 .avatar-btn {
@@ -2020,15 +2081,18 @@ onUnmounted(() => {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  cursor: pointer;
   flex: none;
   overflow: hidden;
   box-shadow: inset 0 -1px 0 rgba(31, 35, 41, 0.06);
+  pointer-events: none;
 }
 
-.avatar-btn:hover {
-  outline: 2px solid rgba(45, 140, 240, 0.35);
-  outline-offset: 1px;
+.user-menu {
+  top: calc(100% + 8px);
+  right: 0;
+  left: auto;
+  min-width: 168px;
+  z-index: 40;
 }
 
 .avatar-img {
@@ -2126,38 +2190,10 @@ onUnmounted(() => {
   display: none;
 }
 
-.user-name-btn {
-  max-width: 120px;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  font-size: 13px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.user-name-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
 .tiny {
   height: 28px;
   padding: 0 8px;
   font-size: 12px;
-}
-
-.danger-text {
-  color: #d4380d;
-}
-
-.danger-text:hover:not(:disabled) {
-  color: #a8071a;
-  background: #fff1f0;
 }
 
 .body {
@@ -2480,36 +2516,41 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-.main-head-actions {
+.main-head-title {
+  min-width: 0;
+}
+
+.main-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.members-btn {
+  height: 30px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(45, 140, 240, 0.28);
+  border-radius: 8px;
+  background: #f3f8ff;
+  color: var(--brand-strong);
+  font-size: 13px;
+  cursor: pointer;
   flex: none;
 }
 
-.members-icon-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.members-icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.members-icon-btn.active {
+.members-btn:hover {
   background: #e8f3ff;
-  border-color: rgba(45, 140, 240, 0.28);
-  color: var(--brand-strong);
+  border-color: rgba(45, 140, 240, 0.45);
+}
+
+.members-btn.active {
+  background: #e8f3ff;
+  border-color: rgba(45, 140, 240, 0.55);
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.12);
 }
 
 .members-icon {
@@ -2518,6 +2559,41 @@ onUnmounted(() => {
 
 .members-inline {
   margin: 16px 0 8px;
+}
+
+.main-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.main-toolbar .create-actions {
+  margin-left: auto;
+}
+
+.base-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 360px;
+}
+
+.base-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.base-search input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.12);
 }
 
 .workspace-setup {
@@ -2652,40 +2728,46 @@ onUnmounted(() => {
 }
 
 .base-list {
-  margin-top: 20px;
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .base-item {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   padding: 14px 16px;
   background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 0;
+  border-bottom: 1px solid #eef0f3;
+  border-radius: 0;
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: background 0.12s ease;
+}
+
+.base-item:last-child {
+  border-bottom: 0;
 }
 
 .base-item:hover {
-  border-color: #c7d7f5;
-  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.06);
-  transform: translateY(-1px);
+  background: #f7f8fa;
 }
 
 .base-tile {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, #e8f3ff, #f0f7ff);
+  background: #e8f3ff;
   color: var(--brand);
-  font-size: 18px;
+  font-size: 16px;
   flex: none;
 }
 
@@ -2746,13 +2828,21 @@ onUnmounted(() => {
   text-decoration: underline;
 }
 
-.base-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-tertiary);
+.base-aside {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  flex: none;
+  margin-left: auto;
+}
+
+.base-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .badge {
@@ -2764,45 +2854,15 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.base-actions {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 2px;
-  max-width: min(420px, 48%);
+.base-more {
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 
-.base-action {
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.base-action:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.base-action:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.base-action.danger {
-  color: var(--danger);
-}
-
-.base-action.danger:hover:not(:disabled) {
-  background: #fff1f0;
-  color: var(--danger);
+.base-item:hover .base-more,
+.base-item:focus-within .base-more,
+.base-more:has(.more-btn[aria-expanded='true']) {
+  opacity: 1;
 }
 
 .menu {
@@ -2819,11 +2879,17 @@ onUnmounted(() => {
   animation: hub-menu-in 0.14s ease;
 }
 
-.menu.ws-menu-fixed {
+.menu.ws-menu-fixed,
+.menu.base-menu-fixed {
   position: fixed;
   top: 0;
   right: auto;
   z-index: 2500;
+}
+
+.menu button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 @keyframes hub-menu-in {
@@ -2871,6 +2937,12 @@ onUnmounted(() => {
   text-align: left;
 }
 
+.empty-panel-center {
+  margin: 56px auto 0;
+  align-items: center;
+  text-align: center;
+}
+
 .empty-icon {
   width: 52px;
   height: 52px;
@@ -2896,8 +2968,21 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
+.empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .empty-panel > .btn {
   align-self: flex-start;
+}
+
+.empty-panel-center > .btn,
+.empty-panel-center .empty-actions {
+  align-self: center;
 }
 
 .dialog {
@@ -3020,9 +3105,37 @@ onUnmounted(() => {
     padding: 20px 16px 32px;
   }
 
-  .crumb,
-  .user-name-btn {
+  .crumb {
     display: none;
+  }
+
+  .user-name-text {
+    max-width: 88px;
+  }
+
+  .base-more {
+    opacity: 1;
+  }
+
+  .main-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .main-toolbar .create-actions {
+    margin-left: 0;
+  }
+
+  .base-search {
+    max-width: none;
+  }
+
+  .create-actions {
+    justify-content: stretch;
+  }
+
+  .create-actions .btn {
+    flex: 1;
   }
 }
 </style>

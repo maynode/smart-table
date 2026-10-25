@@ -159,7 +159,8 @@ test.describe('Canvas grid + enterprise shell', () => {
       })
       .toBe('SN-002');
 
-    // Comments are sheet-scoped and visible in the drawer.
+    // Comments / permissions / public view live under 更多.
+    await page.locator('[data-testid="more-open"]').click();
     await page.locator('[data-testid="comments-toggle"]').click();
     await page.locator('[data-testid="comment-input"]').fill('第一条评论');
     await page.locator('[data-testid="comment-send"]').click();
@@ -169,6 +170,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     await page.locator('.comments-drawer .icon-btn').click();
 
     // Content permissions: home lists objects; drill into detail for ACL level.
+    await page.locator('[data-testid="more-open"]').click();
     await page.locator('[data-testid="permissions-open"]').click();
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeVisible();
     await page
@@ -180,31 +182,29 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
 
     // Dashboard canvas creates an object and exposes chart + schedule builders.
-    await page.locator('[data-testid="create-menu-toggle"]').click();
     await page.locator('[data-testid="dashboard-open"]').click();
+    await page.getByTestId('app-dialog-confirm').click();
     await expect(page.locator('[data-testid="dashboard-panel"]')).toBeVisible();
-    await page.locator('[data-testid="dashboard-create"]').click();
     await expect(page.locator('[data-testid="dashboard-row"]').first()).toContainText(
       '仪表盘',
     );
     await expect(
       page.locator('[data-testid="dashboard-widget-sheet"]'),
     ).toBeVisible();
-    await page.locator('[data-testid="dashboard-close"]').click();
 
-    // Template library creates a new base and navigates into it.
-    await page.locator('[data-testid="create-menu-toggle"]').click();
+    // Object templates add a sheet/dashboard/form/report into the current base.
     await page.locator('[data-testid="template-open"]').click();
-    await expect(page.locator('[data-testid="template-card"]')).toHaveCount(3);
+    await expect(page.locator('[data-testid="template-card"]').first()).toBeVisible();
     await page
-      .locator('[data-testid="template-card"][data-key="project-tasks"]')
+      .locator('[data-testid="template-card"][data-key="obj-sheet-tasks"]')
       .locator('[data-testid="template-use"]')
       .click();
     await page.getByTestId('app-dialog-confirm').click();
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
-    await expect(page).toHaveURL(/\/bases\/[0-9a-f-]+/);
+    await expect(page.getByText('项目任务').first()).toBeVisible();
 
     // Public read-only link renders a table and offers no editing surface.
+    await page.locator('[data-testid="more-open"]').click();
     await page.locator('[data-testid="public-view-open"]').click();
     await expect(page.locator('[data-testid="public-view-panel"]')).toBeVisible();
     await page.locator('[data-testid="public-view-close"]').click();

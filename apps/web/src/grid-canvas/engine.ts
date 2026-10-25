@@ -199,7 +199,7 @@ const COLORS = {
   cellText: '#1f2329',
   selectionFill: 'rgba(45, 140, 240, 0.08)',
   selectionBorder: '#2d8cf0',
-  emptyText: '#8f959e',
+  emptyText: '#c0c4cc',
 };
 
 const HEADER_HEIGHT = 40;
@@ -1181,8 +1181,9 @@ export class CanvasGridEngine {
         target.fillText(label, x + size + 12, y + rowHeight / 2);
       }
     } else if (cell.pill) {
+      target.font = `600 12px ${FONT_STACK}`;
       const textWidth = target.measureText(cell.text).width;
-      const pillWidth = Math.min(columnWidth - 16, textWidth + 20);
+      const pillWidth = Math.min(columnWidth - 16, textWidth + 22);
       const pillHeight = 22;
       const pillX = x + 10;
       const pillY = y + (rowHeight - pillHeight) / 2;
@@ -1196,7 +1197,8 @@ export class CanvasGridEngine {
         cell.text,
         Math.max(0, pillWidth - 16),
       );
-      target.fillText(label, pillX + 10, y + rowHeight / 2);
+      target.fillText(label, pillX + 11, y + rowHeight / 2);
+      target.font = `13px ${FONT_STACK}`;
     } else {
       if (cell.bold) {
         target.font = `600 13px ${FONT_STACK}`;

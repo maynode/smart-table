@@ -33,6 +33,14 @@ export function clearSession(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+/** 网络层失败（断网 / DNS / 中止），非 HTTP 业务错误 */
+export class NetworkError extends Error {
+  constructor(message = '网络不可用') {
+    super(message);
+    this.name = 'NetworkError';
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -69,6 +77,7 @@ export interface ApiOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   token?: string | null;
+  headers?: Record<string, string>;
 }
 
 export async function api<T>(
@@ -76,16 +85,24 @@ export async function api<T>(
   options: ApiOptions = {},
 ): Promise<T> {
   const token = options.token === undefined ? getToken() : options.token;
-  const headers: Record<string, string> = {};
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  const headers: Record<string, string> = { ...(options.headers ?? {}) };
+  if (options.body !== undefined && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${BASE}${path}`, {
-    method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
-    headers,
-    body:
-      options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
+      headers,
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch {
+    window.dispatchEvent(new CustomEvent('st:network-error'));
+    throw new NetworkError('网络不可用，请检查连接');
+  }
 
   if (response.status === 204) {
     return undefined as T;
