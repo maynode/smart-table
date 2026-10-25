@@ -2,6 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  ACCOUNT_HINT,
+  ACCOUNT_MAX_LENGTH,
+  ACCOUNT_MIN_LENGTH,
   PASSWORD_HINT,
   createAvatarSeed,
   validateAccount,
@@ -41,8 +44,6 @@ const permissionsBaseId = ref('');
 const moveOpen = ref(false);
 const moveBaseId = ref('');
 const moveTargetId = ref('');
-const createMenuOpen = ref(false);
-const rowMenuId = ref<string | null>(null);
 const wsMenuId = ref<string | null>(null);
 const wsMenuPos = ref<{ top: number; left: number } | null>(null);
 type OnboardInviteRole = 'admin' | 'editor' | 'viewer';
@@ -79,6 +80,9 @@ const changePasswordBusy = ref(false);
 const currentPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
+const usernameOpen = ref(false);
+const usernameBusy = ref(false);
+const usernameDraft = ref('');
 const avatarPickerOpen = ref(false);
 const avatarPickerBusy = ref(false);
 const avatarCandidates = ref<string[]>([]);
@@ -163,6 +167,51 @@ function ownedIndex(base: BaseDto): number {
   return ownedBases.value.findIndex((item) => item.id === base.id);
 }
 
+const expandedDescIds = ref(new Set<string>());
+const truncatedDescIds = ref(new Set<string>());
+const headlineEls = new Map<string, HTMLElement>();
+
+function setHeadlineRef(id: string, el: unknown): void {
+  if (el instanceof HTMLElement) {
+    headlineEls.set(id, el);
+  } else {
+    headlineEls.delete(id);
+  }
+}
+
+function isDescExpanded(id: string): boolean {
+  return expandedDescIds.value.has(id);
+}
+
+function isDescTruncated(id: string): boolean {
+  return truncatedDescIds.value.has(id);
+}
+
+function measureBaseHeadlines(): void {
+  const next = new Set<string>();
+  for (const [id, el] of headlineEls) {
+    if (expandedDescIds.value.has(id)) continue;
+    if (el.scrollWidth > el.clientWidth + 1) {
+      next.add(id);
+    }
+  }
+  truncatedDescIds.value = next;
+}
+
+function scheduleMeasureBaseHeadlines(): void {
+  void nextTick(() => {
+    measureBaseHeadlines();
+  });
+}
+
+function toggleDescExpand(id: string): void {
+  const next = new Set(expandedDescIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedDescIds.value = next;
+  scheduleMeasureBaseHeadlines();
+}
+
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : String(error);
 }
@@ -205,16 +254,12 @@ function persistWorkspaceId(id: string): void {
 }
 
 function closeMenus(): void {
-  createMenuOpen.value = false;
-  rowMenuId.value = null;
   wsMenuId.value = null;
   wsMenuPos.value = null;
 }
 
 function toggleWsMenu(id: string, event: Event): void {
   event.stopPropagation();
-  rowMenuId.value = null;
-  createMenuOpen.value = false;
   if (wsMenuId.value === id) {
     wsMenuId.value = null;
     wsMenuPos.value = null;
@@ -323,10 +368,10 @@ function collectOnboardInvites():
     if (!account) continue;
     const invalid = validateAccount(account);
     if (invalid) {
-      return { ok: false, message: `账号格式有误：${account}` };
+      return { ok: false, message: `用户名格式有误：${account}` };
     }
     if (seen.has(account)) {
-      return { ok: false, message: `账号重复：${account}` };
+      return { ok: false, message: `用户名重复：${account}` };
     }
     seen.add(account);
     invites.push({ account, role: row.role });
@@ -339,14 +384,14 @@ function applyPasteToOnboardRows(
   toastOnEmpty: boolean,
 ): { ok: true } | { ok: false; message: string } {
   if (accounts.length === 0) {
-    if (toastOnEmpty) toast('请先粘贴账号');
+    if (toastOnEmpty) toast('请先粘贴用户名');
     return { ok: true };
   }
   const invalid = accounts.filter((item) => validateAccount(item));
   if (invalid.length > 0) {
     return {
       ok: false,
-      message: `账号格式有误：${invalid.slice(0, 3).join('、')}${
+      message: `用户名格式有误：${invalid.slice(0, 3).join('、')}${
         invalid.length > 3 ? '…' : ''
       }`,
     };
@@ -369,7 +414,7 @@ function applyPasteToOnboardRows(
   onboardInviteRows.value = next;
   onboardInvitePaste.value = '';
   if (toastOnEmpty && added === 0) {
-    toast('账号已在列表中');
+    toast('用户名已在列表中');
   }
   return { ok: true };
 }
@@ -423,7 +468,7 @@ async function inviteOnboardMembers(
           }`,
     );
   } else if (added > 0) {
-    toast(`已邀请 ${added} 人`);
+    toast(`成员${added}人`);
   }
 }
 
@@ -747,21 +792,19 @@ function openBase(baseId: string): void {
   );
 }
 
-function toggleRowMenu(baseId: string, event: MouseEvent): void {
-  event.stopPropagation();
-  rowMenuId.value = rowMenuId.value === baseId ? null : baseId;
-  wsMenuId.value = null;
-  createMenuOpen.value = false;
-}
-
 function onTemplateCreated(result: TemplateInstantiateResult): void {
   templateOpen.value = false;
   void loadBases().then(() => openBase(result.baseId));
 }
 
-function signOut(): void {
+async function signOut(): Promise<void> {
+  const ok = await confirmDialog('确定退出当前账号？', {
+    title: '退出登录',
+    confirmLabel: '退出',
+  });
+  if (!ok) return;
   auth.signOut();
-  void router.push('/login');
+  await router.push('/login');
 }
 
 function refreshAvatarCandidates(): void {
@@ -823,7 +866,8 @@ function onAvatarFileChange(event: Event): void {
 }
 
 function cancelAvatarCrop(): void {
-  avatarCropFile.value = null;
+  // 重选：直接打开文件选择器；选中后替换当前裁剪图，取消则留在裁剪页
+  pickAvatarUpload();
 }
 
 async function submitAvatarPick(): Promise<void> {
@@ -859,6 +903,44 @@ async function submitAvatarCrop(blob: Blob): Promise<void> {
     toast(messageOf(error) || '上传头像失败');
   } finally {
     avatarPickerBusy.value = false;
+  }
+}
+
+function openUsernameEditor(): void {
+  usernameDraft.value = auth.state.user?.account ?? auth.state.user?.name ?? '';
+  usernameBusy.value = false;
+  usernameOpen.value = true;
+}
+
+function closeUsernameEditor(): void {
+  if (usernameBusy.value) return;
+  usernameOpen.value = false;
+}
+
+async function submitUsername(): Promise<void> {
+  const next = usernameDraft.value.trim();
+  const invalid = validateAccount(next);
+  if (invalid) {
+    toast(invalid);
+    return;
+  }
+  if (usernameBusy.value) return;
+  usernameBusy.value = true;
+  try {
+    const user = await endpoints.updateUsername(next);
+    auth.updateUser({
+      id: user.id,
+      account: user.account,
+      name: user.name,
+      avatarSeed: user.avatarSeed,
+      avatarUrl: user.avatarUrl ?? null,
+    });
+    toast('用户名已更新');
+    usernameOpen.value = false;
+  } catch (error) {
+    toast(messageOf(error) || '修改用户名失败');
+  } finally {
+    usernameBusy.value = false;
   }
 }
 
@@ -957,13 +1039,28 @@ watch(needsBaseOnboard, async (need) => {
   focusBaseOnboard();
 });
 
+watch(
+  bases,
+  () => {
+    const alive = new Set(bases.value.map((item) => item.id));
+    const nextExpanded = new Set(
+      [...expandedDescIds.value].filter((id) => alive.has(id)),
+    );
+    expandedDescIds.value = nextExpanded;
+    scheduleMeasureBaseHeadlines();
+  },
+  { flush: 'post' },
+);
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick);
+  window.addEventListener('resize', scheduleMeasureBaseHeadlines);
   void loadWorkspaces();
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick);
+  window.removeEventListener('resize', scheduleMeasureBaseHeadlines);
 });
 </script>
 
@@ -998,7 +1095,16 @@ onUnmounted(() => {
               draggable="false"
             />
           </button>
-          <span class="user-name">{{ auth.state.user?.name }}</span>
+          <button
+            class="user-name-btn"
+            type="button"
+            title="修改用户名"
+            aria-label="修改用户名"
+            data-testid="username-open"
+            @click="openUsernameEditor"
+          >
+            {{ auth.state.user?.name || auth.state.user?.account }}
+          </button>
           <button
             class="btn btn-ghost tiny"
             type="button"
@@ -1159,7 +1265,7 @@ onUnmounted(() => {
                     data-testid="workspace-onboard-invite"
                     maxlength="2000"
                     rows="3"
-                    placeholder="可选，每行一个账号，也可用逗号分隔"
+                    placeholder="可选，每行一个用户名，也可用逗号分隔"
                     :disabled="creatingWorkspace"
                   />
                   <div class="workspace-invite-tools">
@@ -1241,43 +1347,48 @@ onUnmounted(() => {
           </div>
           <div class="main-head-actions" @click.stop>
             <button
-              class="btn btn-ghost"
+              class="members-icon-btn"
               type="button"
+              title="成员"
+              aria-label="成员"
               data-testid="hub-members"
               :aria-pressed="membersSectionOpen"
+              :class="{ active: membersSectionOpen }"
               @click="membersSectionOpen = !membersSectionOpen"
             >
-              成员
+              <svg
+                class="members-icon"
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M9.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5c-2.9 0-8.5 1.45-8.5 4.35V19a1 1 0 0 0 1 1h15a1 1 0 0 0 1-1v-2.15c0-2.9-5.6-4.35-8.5-4.35ZM16.75 7a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Zm1.6 6.55c2.15.55 4.65 1.7 4.65 3.55V18a1 1 0 0 1-1 1h-3.2a2.6 2.6 0 0 0 .3-1.15v-1.75c0-.95-.5-1.75-1.35-2.4.2-.05.4-.1.6-.15Z"
+                />
+              </svg>
             </button>
             <div
               v-if="canEditCurrent && !needsBaseOnboard"
-              class="create-wrap"
+              class="create-actions"
             >
               <button
-                class="btn btn-primary create-btn"
+                class="btn btn-primary"
                 type="button"
                 data-testid="create-base"
-                @click="createMenuOpen = !createMenuOpen"
+                @click="openCreateBaseForm"
               >
-                新建
-                <span class="caret">{{ createMenuOpen ? '▴' : '▾' }}</span>
+                新建表格
               </button>
-              <Transition name="menu-fade">
-                <div
-                  v-if="createMenuOpen"
-                  class="menu create-menu"
-                  data-testid="hub-create-menu"
-                >
-                  <button type="button" @click="openCreateBaseForm">空白表格</button>
-                  <button
-                    type="button"
-                    data-testid="hub-template"
-                    @click="openTemplate"
-                  >
-                    从模板新建
-                  </button>
-                </div>
-              </Transition>
+              <button
+                class="btn btn-template"
+                type="button"
+                data-testid="hub-template"
+                @click="openTemplate"
+              >
+                从模板新建
+              </button>
             </div>
           </div>
         </div>
@@ -1372,79 +1483,97 @@ onUnmounted(() => {
           >
             <div class="base-tile" aria-hidden="true">▦</div>
             <div class="base-meta">
-              <div class="base-title">{{ base.name }}</div>
-              <p v-if="base.description" class="base-desc">{{ base.description }}</p>
+              <div class="base-headline-row">
+                <div
+                  class="base-headline"
+                  :class="{ 'is-expanded': isDescExpanded(base.id) }"
+                  :ref="(el) => setHeadlineRef(base.id, el)"
+                  data-testid="base-headline"
+                >
+                  <span class="base-title">{{ base.name }}</span>
+                  <span
+                    v-if="base.description"
+                    class="base-desc"
+                    data-testid="base-desc"
+                  >{{ base.description }}</span>
+                </div>
+                <button
+                  v-if="
+                    base.description &&
+                    (isDescExpanded(base.id) || isDescTruncated(base.id))
+                  "
+                  type="button"
+                  class="base-desc-toggle"
+                  data-testid="base-desc-toggle"
+                  @click.stop="toggleDescExpand(base.id)"
+                >
+                  {{ isDescExpanded(base.id) ? '收起' : '展开' }}
+                </button>
+              </div>
               <div class="base-sub">
                 更新于 {{ formatTime(base.updatedAt) }}
                 <span v-if="!isOwnedBase(base)" class="badge">共享</span>
               </div>
             </div>
-            <div class="base-more" @click.stop>
+            <div
+              class="base-actions"
+              data-testid="base-row-actions"
+              @click.stop
+            >
+              <button
+                v-if="canEditCurrent && isOwnedBase(base)"
+                type="button"
+                class="base-action"
+                @click="openEditBaseForm(base)"
+              >
+                编辑
+              </button>
+              <button
+                v-if="canEditCurrent && isOwnedBase(base)"
+                type="button"
+                class="base-action"
+                data-testid="base-move-up"
+                :disabled="ownedIndex(base) <= 0"
+                @click="moveOrder(base, -1)"
+              >
+                上移
+              </button>
+              <button
+                v-if="canEditCurrent && isOwnedBase(base)"
+                type="button"
+                class="base-action"
+                data-testid="base-move-down"
+                :disabled="ownedIndex(base) >= ownedBases.length - 1"
+                @click="moveOrder(base, 1)"
+              >
+                下移
+              </button>
+              <button
+                v-if="canEditCurrent && isOwnedBase(base)"
+                type="button"
+                class="base-action"
+                data-testid="base-move"
+                @click="openMove(base)"
+              >
+                移动到工作区
+              </button>
               <button
                 type="button"
-                class="more-btn"
-                :aria-expanded="rowMenuId === base.id"
-                :data-testid="`base-menu-${base.id}`"
-                @click="toggleRowMenu(base.id, $event)"
+                class="base-action"
+                data-testid="base-permissions"
+                @click="openPermissions(base)"
               >
-                ⋯
+                内容权限
               </button>
-              <div
-                v-if="rowMenuId === base.id"
-                class="menu row-menu"
-                data-testid="base-row-menu"
+              <button
+                v-if="canEditCurrent && isOwnedBase(base)"
+                type="button"
+                class="base-action danger"
+                data-testid="base-delete"
+                @click="deleteBase(base)"
               >
-                <button type="button" @click="openBase(base.id)">打开</button>
-                <button
-                  v-if="canEditCurrent && isOwnedBase(base)"
-                  type="button"
-                  @click="openEditBaseForm(base)"
-                >
-                  编辑
-                </button>
-                <button
-                  v-if="canEditCurrent && isOwnedBase(base)"
-                  type="button"
-                  data-testid="base-move-up"
-                  :disabled="ownedIndex(base) <= 0"
-                  @click="moveOrder(base, -1)"
-                >
-                  上移
-                </button>
-                <button
-                  v-if="canEditCurrent && isOwnedBase(base)"
-                  type="button"
-                  data-testid="base-move-down"
-                  :disabled="ownedIndex(base) >= ownedBases.length - 1"
-                  @click="moveOrder(base, 1)"
-                >
-                  下移
-                </button>
-                <button
-                  v-if="canEditCurrent && isOwnedBase(base)"
-                  type="button"
-                  data-testid="base-move"
-                  @click="openMove(base)"
-                >
-                  移动到工作区…
-                </button>
-                <button
-                  type="button"
-                  data-testid="base-permissions"
-                  @click="openPermissions(base)"
-                >
-                  内容权限
-                </button>
-                <button
-                  v-if="canEditCurrent && isOwnedBase(base)"
-                  type="button"
-                  class="danger"
-                  data-testid="base-delete"
-                  @click="deleteBase(base)"
-                >
-                  删除
-                </button>
-              </div>
+                删除
+              </button>
             </div>
           </article>
         </div>
@@ -1488,9 +1617,29 @@ onUnmounted(() => {
         />
 
         <template v-else>
-          <p class="dialog-desc">
-            本地卡通头像（DiceBear Adventurer / CC BY 4.0），或上传图片自由裁剪后保存为方图。
+          <p class="dialog-desc avatar-desc">
+            选一个卡通头像，或上传自己的照片。
           </p>
+          <div class="avatar-toolbar">
+            <button
+              class="btn btn-ghost"
+              type="button"
+              :disabled="avatarPickerBusy"
+              data-testid="avatar-refresh"
+              @click="refreshAvatarCandidates"
+            >
+              换一批
+            </button>
+            <button
+              class="btn btn-ghost avatar-upload-btn"
+              type="button"
+              :disabled="avatarPickerBusy"
+              data-testid="avatar-upload"
+              @click="pickAvatarUpload"
+            >
+              上传图片
+            </button>
+          </div>
           <div class="avatar-grid" data-testid="avatar-grid">
             <button
               v-for="seed in avatarCandidates"
@@ -1512,47 +1661,78 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="dialog-actions avatar-actions">
-            <div class="avatar-actions-left">
-              <button
-                class="btn btn-ghost"
-                type="button"
-                :disabled="avatarPickerBusy"
-                data-testid="avatar-refresh"
-                @click="refreshAvatarCandidates"
-              >
-                换一批
-              </button>
-              <button
-                class="btn btn-ghost"
-                type="button"
-                :disabled="avatarPickerBusy"
-                data-testid="avatar-upload"
-                @click="pickAvatarUpload"
-              >
-                上传图片
-              </button>
-            </div>
-            <div class="avatar-actions-right">
-              <button
-                class="btn btn-ghost"
-                type="button"
-                :disabled="avatarPickerBusy"
-                @click="closeAvatarPicker"
-              >
-                取消
-              </button>
-              <button
-                class="btn btn-primary"
-                type="button"
-                data-testid="avatar-submit"
-                :disabled="avatarPickerBusy"
-                @click="submitAvatarPick"
-              >
-                {{ avatarPickerBusy ? '保存中…' : '使用此头像' }}
-              </button>
-            </div>
+            <button
+              class="btn btn-ghost"
+              type="button"
+              :disabled="avatarPickerBusy"
+              @click="closeAvatarPicker"
+            >
+              取消
+            </button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              data-testid="avatar-submit"
+              :disabled="avatarPickerBusy"
+              @click="submitAvatarPick"
+            >
+              {{ avatarPickerBusy ? '保存中…' : '使用此头像' }}
+            </button>
           </div>
         </template>
+      </section>
+    </div>
+
+    <div
+      v-if="usernameOpen"
+      class="modal-mask"
+      @click.self="closeUsernameEditor"
+    >
+      <section class="dialog" data-testid="username-dialog">
+        <header class="dialog-head">
+          <h3>修改用户名</h3>
+          <button
+            class="icon-btn"
+            type="button"
+            :disabled="usernameBusy"
+            @click="closeUsernameEditor"
+          >
+            ×
+          </button>
+        </header>
+        <form class="password-form" @submit.prevent="submitUsername">
+          <label class="field">
+            <span>用户名</span>
+            <input
+              v-model="usernameDraft"
+              type="text"
+              autocomplete="username"
+              data-testid="username-input"
+              :minlength="ACCOUNT_MIN_LENGTH"
+              :maxlength="ACCOUNT_MAX_LENGTH"
+              :disabled="usernameBusy"
+            />
+          </label>
+          <p class="password-hint">{{ ACCOUNT_HINT }}</p>
+          <div class="dialog-actions">
+            <button
+              class="btn btn-ghost"
+              type="button"
+              :disabled="usernameBusy"
+              @click="closeUsernameEditor"
+            >
+              取消
+            </button>
+            <button
+              class="btn btn-primary"
+              type="submit"
+              data-testid="username-submit"
+              :disabled="usernameBusy"
+            >
+              {{ usernameBusy ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
       </section>
     </div>
 
@@ -1806,14 +1986,22 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-.create-wrap {
-  position: relative;
+.create-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.create-btn .caret {
-  margin-left: 2px;
-  font-size: 10px;
-  opacity: 0.85;
+.btn-template {
+  color: var(--brand-strong);
+  border-color: rgba(45, 140, 240, 0.45);
+  background: #f3f8ff;
+}
+
+.btn-template:hover:not(:disabled) {
+  color: var(--brand-strong);
+  border-color: var(--brand);
+  background: #e8f3ff;
 }
 
 .user-chip {
@@ -1853,24 +2041,52 @@ onUnmounted(() => {
 }
 
 .avatar-dialog {
-  width: min(440px, 92vw);
+  width: min(420px, 92vw);
+}
+
+.avatar-desc {
+  margin-bottom: 12px;
+}
+
+.avatar-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.avatar-upload-btn {
+  color: var(--brand-strong);
+  border-color: rgba(45, 140, 240, 0.35);
+  background: #f3f8ff;
+}
+
+.avatar-upload-btn:hover:not(:disabled) {
+  background: #e8f3ff;
+  border-color: rgba(45, 140, 240, 0.55);
 }
 
 .avatar-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-top: 14px;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-muted);
 }
 
 .avatar-option {
   aspect-ratio: 1;
-  padding: 4px;
+  padding: 0;
   border: 2px solid transparent;
-  border-radius: 14px;
-  background: #f5f6f7;
+  border-radius: 50%;
+  background: transparent;
   cursor: pointer;
   overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.12s ease;
 }
 
 .avatar-option img {
@@ -1878,49 +2094,55 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 10px;
+  border-radius: 50%;
   background: #fff;
+  box-shadow: 0 1px 3px rgba(31, 35, 41, 0.08);
 }
 
 .avatar-option:hover:not(:disabled) {
-  border-color: rgba(45, 140, 240, 0.35);
+  border-color: rgba(45, 140, 240, 0.4);
+  transform: translateY(-1px);
 }
 
 .avatar-option.selected {
   border-color: var(--brand);
-  background: #e8f3ff;
-  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.16);
+  box-shadow: 0 0 0 3px rgba(45, 140, 240, 0.18);
 }
 
 .avatar-option:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
 .avatar-actions {
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
-}
-
-.avatar-actions-left,
-.avatar-actions-right {
-  display: flex;
-  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .hidden-file {
   display: none;
 }
 
-.user-name {
+.user-name-btn {
+  max-width: 120px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   font-size: 13px;
   color: var(--text-secondary);
-  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.user-name-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .tiny {
@@ -2067,6 +2289,22 @@ onUnmounted(() => {
 .ws-row:focus-within .ws-more,
 .ws-more:has(.menu) {
   opacity: 1;
+}
+
+.more-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.more-btn:hover {
+  background: var(--bg-hover);
 }
 
 .ws-more-btn {
@@ -2249,6 +2487,35 @@ onUnmounted(() => {
   flex: none;
 }
 
+.members-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.members-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.members-icon-btn.active {
+  background: #e8f3ff;
+  border-color: rgba(45, 140, 240, 0.28);
+  color: var(--brand-strong);
+}
+
+.members-icon {
+  display: block;
+}
+
 .members-inline {
   margin: 16px 0 8px;
 }
@@ -2427,23 +2694,56 @@ onUnmounted(() => {
   flex: 1;
 }
 
-.base-title {
-  font-size: 15px;
-  font-weight: 600;
+.base-headline-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.base-headline {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.base-headline.is-expanded {
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+}
+
+.base-title {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .base-desc {
-  margin: 4px 0 0;
+  margin-left: 8px;
   font-size: 13px;
+  font-weight: 400;
   color: var(--text-secondary);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+}
+
+.base-desc-toggle {
+  flex: none;
+  height: 21px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font-size: 12px;
+  line-height: 21px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.base-desc-toggle:hover {
+  text-decoration: underline;
 }
 
 .base-sub {
@@ -2464,26 +2764,45 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.base-more {
-  position: relative;
+.base-actions {
   flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  max-width: min(420px, 48%);
 }
 
-.more-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 8px;
+.base-action {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
+  font-size: 12px;
   cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
+  white-space: nowrap;
 }
 
-.more-btn:hover,
-.base-item:hover .more-btn {
+.base-action:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: var(--text);
+}
+
+.base-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.base-action.danger {
+  color: var(--danger);
+}
+
+.base-action.danger:hover:not(:disabled) {
+  background: #fff1f0;
+  color: var(--danger);
 }
 
 .menu {
@@ -2541,11 +2860,6 @@ onUnmounted(() => {
 
 .menu button.danger {
   color: var(--danger);
-}
-
-.create-menu {
-  left: 0;
-  right: auto;
 }
 
 .empty-panel {
@@ -2707,7 +3021,7 @@ onUnmounted(() => {
   }
 
   .crumb,
-  .user-name {
+  .user-name-btn {
     display: none;
   }
 }

@@ -111,6 +111,12 @@ export const endpoints = {
       token: null,
     }),
 
+  updateUsername: (account: string) =>
+    api<UserDto>('/auth/username', {
+      method: 'POST',
+      body: { account },
+    }),
+
   updateAvatar: (avatarSeed: string) =>
     api<UserDto>('/auth/avatar', {
       method: 'POST',

@@ -1,38 +1,50 @@
-import { PASSWORD_SPECIAL_CHARS } from './password-policy';
+/**
+ * 登录用户名：2–20 个字符；不可含空白 / 控制符 / 零宽字符；全局唯一。
+ * 字母不区分大小写（规范化为小写存储）；支持中文等可见字符。
+ */
 
-/** 登录账号：字母 / 数字 / 与密码相同的特殊字符，4–12 位，不区分大小写（存小写）。 */
+export const ACCOUNT_MIN_LENGTH = 2;
+export const ACCOUNT_MAX_LENGTH = 20;
 
-export const ACCOUNT_MIN_LENGTH = 4;
-export const ACCOUNT_MAX_LENGTH = 12;
-export const ACCOUNT_SPECIAL_CHARS = PASSWORD_SPECIAL_CHARS;
+/** @deprecated 用户名已不再限制为密码特殊字符集；保留导出以免旧引用报错。 */
+export const ACCOUNT_SPECIAL_CHARS = '' as const;
 
-export const ACCOUNT_HINT = `${ACCOUNT_MIN_LENGTH}–${ACCOUNT_MAX_LENGTH} 位；字母、数字、特殊字符（${ACCOUNT_SPECIAL_CHARS}）；不区分大小写`;
+export const ACCOUNT_HINT = `${ACCOUNT_MIN_LENGTH}–${ACCOUNT_MAX_LENGTH} 个字符；不可含空格；支持中文；不可与他人重复；字母不区分大小写`;
 
-/** 字符类内需转义的符号。 */
-function escapeCharClass(chars: string): string {
-  return chars.replace(/[\\^\]]/g, '\\$&').replace(/-/g, '\\-');
+export const ACCOUNT_TAKEN_MESSAGE = '该用户名已被注册';
+
+/** 按 Unicode 码点计数（中文/emoji 更接近「看见的字数」）。 */
+export function accountLength(value: string): number {
+  return Array.from(value).length;
 }
 
-const ACCOUNT_RE = new RegExp(
-  `^[a-zA-Z0-9${escapeCharClass(ACCOUNT_SPECIAL_CHARS)}]{${ACCOUNT_MIN_LENGTH},${ACCOUNT_MAX_LENGTH}}$`,
-);
+function hasForbiddenChar(value: string): boolean {
+  for (const ch of value) {
+    if (/\s/u.test(ch)) return true;
+    if (/\p{Cc}/u.test(ch)) return true;
+    if (/\p{Cf}/u.test(ch)) return true;
+  }
+  return false;
+}
 
+/** 规范化：去首尾空白、NFC、小写（用于存储与唯一匹配）。 */
 export function normalizeAccount(raw: string): string {
-  return raw.trim().toLowerCase();
+  return raw.trim().normalize('NFC').toLowerCase();
 }
 
 /** 通过返回 null，失败返回中文原因。 */
 export function validateAccount(raw: string): string | null {
-  if (typeof raw !== 'string') return '账号无效';
-  const account = raw.trim();
-  if (account.length < ACCOUNT_MIN_LENGTH) {
-    return `账号至少 ${ACCOUNT_MIN_LENGTH} 位`;
+  if (typeof raw !== 'string') return '用户名无效';
+  const account = raw.trim().normalize('NFC');
+  const len = accountLength(account);
+  if (len < ACCOUNT_MIN_LENGTH) {
+    return `用户名至少 ${ACCOUNT_MIN_LENGTH} 个字符`;
   }
-  if (account.length > ACCOUNT_MAX_LENGTH) {
-    return `账号最多 ${ACCOUNT_MAX_LENGTH} 位`;
+  if (len > ACCOUNT_MAX_LENGTH) {
+    return `用户名最多 ${ACCOUNT_MAX_LENGTH} 个字符`;
   }
-  if (!ACCOUNT_RE.test(account)) {
-    return `账号仅允许字母、数字和特殊字符（${ACCOUNT_SPECIAL_CHARS}）`;
+  if (hasForbiddenChar(account)) {
+    return '用户名不能包含空格或不可见字符';
   }
   return null;
 }

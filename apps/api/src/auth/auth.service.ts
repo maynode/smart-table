@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
 import {
+  ACCOUNT_TAKEN_MESSAGE,
   createAvatarSeed,
   normalizeAccount,
   normalizeSecurityAnswer,
@@ -20,7 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { hashPassword, verifyPassword } from './password';
 
-/** 自定义头像上传上限（前端裁剪压缩后约几十 KB） */
+/** 自定义头像上传上限（前端裁剪后约几十 KB） */
 const AVATAR_MAX_BYTES = 64 * 1024;
 const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -75,7 +76,7 @@ export class AuthService {
         data: {
           account,
           passwordHash,
-          // 展示名直接用账号，不再单独收集姓名
+          // 展示名直接用用户名，不再单独收集姓名
           name: account,
           avatarSeed,
           securityQuestion,
@@ -87,7 +88,7 @@ export class AuthService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('该账号已注册');
+        throw new ConflictException(ACCOUNT_TAKEN_MESSAGE);
       }
       throw error;
     }
@@ -134,14 +135,14 @@ export class AuthService {
   async login(accountRaw: string, password: string): Promise<AuthResult> {
     const account = normalizeAccount(accountRaw);
     if (!account) {
-      throw new BadRequestException('请输入账号');
+      throw new BadRequestException('请输入用户名');
     }
     const user = await this.prisma.user.findUnique({
       where: { account },
     });
 
     if (!user) {
-      throw new NotFoundException('该账号尚未注册');
+      throw new NotFoundException('该用户名尚未注册');
     }
 
     const valid = await verifyPassword(user.passwordHash, password);
@@ -155,14 +156,14 @@ export class AuthService {
   async getRecoveryQuestion(accountRaw: string): Promise<{ question: string }> {
     const account = normalizeAccount(accountRaw);
     if (!account) {
-      throw new BadRequestException('请输入账号');
+      throw new BadRequestException('请输入用户名');
     }
     const user = await this.prisma.user.findUnique({
       where: { account },
       select: { securityQuestion: true },
     });
     if (!user) {
-      throw new NotFoundException('该账号尚未注册');
+      throw new NotFoundException('该用户名尚未注册');
     }
     return { question: user.securityQuestion };
   }
@@ -174,7 +175,7 @@ export class AuthService {
   ): Promise<{ ok: true }> {
     const account = normalizeAccount(accountRaw);
     if (!account) {
-      throw new BadRequestException('请输入账号');
+      throw new BadRequestException('请输入用户名');
     }
     const answerError = validateSecurityAnswer(securityAnswerRaw);
     if (answerError) throw new BadRequestException(answerError);
@@ -183,7 +184,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { account } });
     if (!user) {
-      throw new NotFoundException('该账号尚未注册');
+      throw new NotFoundException('该用户名尚未注册');
     }
 
     const answerOk = await verifyPassword(
@@ -192,6 +193,11 @@ export class AuthService {
     );
     if (!answerOk) {
       throw new UnauthorizedException('密保答案错误');
+    }
+
+    const sameAsOld = await verifyPassword(user.passwordHash, password);
+    if (sameAsOld) {
+      throw new BadRequestException('新密码不能与当前密码相同');
     }
 
     const passwordHash = await hashPassword(password);
@@ -210,13 +216,59 @@ export class AuthService {
     return toPublicUser(user);
   }
 
+  /** 登录态修改用户名（全局唯一；同步展示名） */
+  async updateUsername(
+    userId: string,
+    accountRaw: string,
+  ): Promise<PublicUser> {
+    const accountError = validateAccount(accountRaw);
+    if (accountError) throw new BadRequestException(accountError);
+    const account = normalizeAccount(accountRaw);
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+    if (user.account === account) {
+      return toPublicUser(user);
+    }
+
+    const taken = await this.prisma.user.findUnique({ where: { account } });
+    if (taken) {
+      throw new ConflictException(ACCOUNT_TAKEN_MESSAGE);
+    }
+
+    let updated: User;
+    try {
+      updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { account, name: account },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(ACCOUNT_TAKEN_MESSAGE);
+      }
+      throw error;
+    }
+
+    await this.claimWorkspaceInvites(updated.id, account);
+    return toPublicUser(updated);
+  }
+
   /** 登录态更换卡通头像种子（清除自定义上传） */
   async updateAvatar(
     userId: string,
     avatarSeedRaw: string,
   ): Promise<PublicUser> {
     const avatarSeed = avatarSeedRaw.trim();
-    if (!avatarSeed || avatarSeed.length > 64 || !/^[a-zA-Z0-9_-]+$/.test(avatarSeed)) {
+    if (
+      !avatarSeed ||
+      avatarSeed.length > 64 ||
+      !/^[a-zA-Z0-9_-]+$/.test(avatarSeed)
+    ) {
       throw new BadRequestException('头像种子无效');
     }
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -230,7 +282,7 @@ export class AuthService {
     return toPublicUser(updated);
   }
 
-  /** 登录态上传自定义方图头像（裁剪压缩后） */
+  /** 登录态上传自定义方图头像（裁剪后） */
   async uploadAvatar(
     userId: string,
     buffer: Buffer,

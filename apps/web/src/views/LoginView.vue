@@ -253,13 +253,13 @@ function openRecover(): void {
           class="field"
         >
           <span class="field-title">
-            账号
+            用户名
             <span
               v-if="mode === 'register'"
               class="field-help"
               tabindex="0"
               :data-tip="ACCOUNT_HINT"
-              aria-label="账号说明"
+              aria-label="用户名说明"
             >?</span>
           </span>
           <input
@@ -269,7 +269,7 @@ function openRecover(): void {
             :minlength="ACCOUNT_MIN_LENGTH"
             :maxlength="ACCOUNT_MAX_LENGTH"
             autocomplete="username"
-            placeholder="请输入账号"
+            placeholder="请输入用户名"
             :disabled="mode === 'recover' && recoverStep === 'reset'"
           />
         </label>
@@ -409,7 +409,7 @@ function openRecover(): void {
 
         <template v-if="mode === 'recover' && recoverStep === 'reset'">
           <label class="field">
-            <span class="field-title">账号</span>
+            <span class="field-title">用户名</span>
             <input :value="account" disabled />
           </label>
           <label class="field">

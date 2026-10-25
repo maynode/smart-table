@@ -18,6 +18,7 @@ import { LoginDto } from './dto/login.dto';
 import { RecoveryQuestionDto, RecoveryResetDto } from './dto/recovery.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UpdateAvatarDto } from './dto/update-avatar.dto';
+import { UpdateUsernameDto } from './dto/update-username.dto';
 import { CurrentUser } from './current-user.decorator';
 import { JwtAuthGuard, JwtPayload } from './jwt-auth.guard';
 
@@ -67,6 +68,16 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: JwtPayload): Promise<PublicUser> {
     return this.authService.getUser(user.sub);
+  }
+
+  @Post('username')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  updateUsername(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateUsernameDto,
+  ): Promise<PublicUser> {
+    return this.authService.updateUsername(user.sub, dto.account);
   }
 
   @Post('avatar')

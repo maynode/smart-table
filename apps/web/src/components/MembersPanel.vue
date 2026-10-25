@@ -47,13 +47,14 @@ const loading = ref(false);
 const inviting = ref(false);
 const error = ref('');
 const inviteSummary = ref('');
-const openMenu = ref<'invite' | string | null>(null);
+const openMenu = ref<string | null>(null);
 const menuPos = ref<{ top: number; left: number } | null>(null);
 
-const menuMember = computed(() =>
-  openMenu.value && openMenu.value !== 'invite'
-    ? members.value.find((item) => memberKey(item) === openMenu.value) ?? null
-    : null,
+const menuMember = computed(
+  () =>
+    (openMenu.value
+      ? members.value.find((item) => memberKey(item) === openMenu.value)
+      : null) ?? null,
 );
 
 function memberKey(member: MemberDto): string {
@@ -98,7 +99,7 @@ function placeMenu(anchor: HTMLElement): void {
   menuPos.value = { top, left };
 }
 
-function toggleMenu(id: 'invite' | string, event: Event): void {
+function toggleMenu(id: string, event: Event): void {
   event.stopPropagation();
   if (openMenu.value === id) {
     closeMenu();
@@ -106,11 +107,6 @@ function toggleMenu(id: 'invite' | string, event: Event): void {
   }
   openMenu.value = id;
   placeMenu(event.currentTarget as HTMLElement);
-}
-
-function pickInviteRole(next: AssignableRole): void {
-  role.value = next;
-  closeMenu();
 }
 
 async function pickMemberRole(
@@ -162,7 +158,7 @@ function parseInviteAccounts(raw: string): string[] {
 async function invite(): Promise<void> {
   const targets = parseInviteAccounts(batchAccounts.value);
   if (targets.length === 0) {
-    error.value = '请输入成员账号';
+    error.value = '请输入成员用户名';
     inviteSummary.value = '';
     return;
   }
@@ -171,7 +167,7 @@ async function invite(): Promise<void> {
     .map((item) => ({ item, message: validateAccount(item) }))
     .filter((row) => row.message);
   if (invalid.length > 0) {
-    error.value = `账号格式有误：${invalid
+    error.value = `用户名格式有误：${invalid
       .slice(0, 3)
       .map((row) => row.item)
       .join('、')}${invalid.length > 3 ? '…' : ''}`;
@@ -217,7 +213,7 @@ async function invite(): Promise<void> {
             }`;
     }
     if (added.length > 0) {
-      inviteSummary.value = `已邀请 ${added.length} 人`;
+      inviteSummary.value = `成员${added.length}人`;
     }
   } finally {
     inviting.value = false;
@@ -320,21 +316,29 @@ onUnmounted(() => {
         class="invite-batch-input"
         data-testid="invite-account"
         rows="4"
-        placeholder="每行一个账号，也可用逗号分隔"
+        placeholder="每行一个用户名，也可用逗号分隔"
         :disabled="inviting"
       />
       <div class="invite-form-tools">
-        <div class="role-select" @click.stop>
+        <div
+          class="role-tiles"
+          data-testid="invite-role"
+          role="radiogroup"
+          aria-label="邀请角色"
+        >
           <button
+            v-for="opt in ROLE_OPTIONS"
+            :key="opt.value"
             type="button"
-            class="role-trigger"
-            data-testid="invite-role"
-            :aria-expanded="openMenu === 'invite'"
+            class="role-tile"
+            role="radio"
+            :class="{ active: role === opt.value }"
+            :aria-checked="role === opt.value"
+            :title="opt.hint"
             :disabled="inviting"
-            @click="toggleMenu('invite', $event)"
+            @click="role = opt.value"
           >
-            <span>{{ roleLabel(role) }}</span>
-            <span class="role-caret" :class="{ open: openMenu === 'invite' }" />
+            {{ opt.label }}
           </button>
         </div>
         <button
@@ -344,7 +348,7 @@ onUnmounted(() => {
           data-testid="invite-submit"
           :disabled="inviting"
         >
-          {{ inviting ? '邀请中…' : '邀请' }}
+          {{ inviting ? '确认中…' : '确认' }}
         </button>
       </div>
     </form>
@@ -429,7 +433,7 @@ onUnmounted(() => {
 
     <Teleport to="body">
       <ul
-        v-if="openMenu && menuPos"
+        v-if="openMenu && menuPos && menuMember"
         class="role-menu-fixed"
         data-testid="invite-role-menu"
         :style="{ top: `${menuPos.top}px`, left: `${menuPos.left}px` }"
@@ -439,17 +443,8 @@ onUnmounted(() => {
           <button
             type="button"
             class="role-option"
-            :class="{
-              active:
-                openMenu === 'invite'
-                  ? opt.value === role
-                  : opt.value === menuMember?.role,
-            }"
-            @click="
-              openMenu === 'invite'
-                ? pickInviteRole(opt.value)
-                : menuMember && pickMemberRole(menuMember, opt.value)
-            "
+            :class="{ active: opt.value === menuMember.role }"
+            @click="pickMemberRole(menuMember, opt.value)"
           >
             <strong>{{ opt.label }}</strong>
             <small>{{ opt.hint }}</small>
@@ -572,6 +567,44 @@ onUnmounted(() => {
   flex: none;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.role-tiles {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+  background: #fff;
+}
+.role-tile {
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #646a73);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.role-tile:hover:not(:disabled):not(.active) {
+  background: #f5f6f8;
+  color: var(--text, #1f2329);
+}
+.role-tile.active {
+  background: #e8f3ff;
+  color: #1a6dcc;
+  font-weight: 600;
+}
+.role-tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .invite-error {
   margin: 8px 0 0;

@@ -278,7 +278,7 @@ export class WorkspacesService {
       where: { workspaceId_account: { workspaceId, account } },
     });
     if (existingInvite) {
-      throw new ConflictException('该账号已在待加入列表中');
+      throw new ConflictException('该用户名已在待加入列表中');
     }
 
     try {
@@ -304,7 +304,7 @@ export class WorkspacesService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('该账号已在待加入列表中');
+        throw new ConflictException('该用户名已在待加入列表中');
       }
       throw error;
     }

@@ -40,9 +40,9 @@ class LoginAccountConstraint implements ValidatorConstraintInterface {
   defaultMessage(args?: ValidationArguments): string {
     const value = args?.value;
     if (typeof value === 'string') {
-      return validateAccount(value) ?? '账号不符合要求';
+      return validateAccount(value) ?? '用户名不符合要求';
     }
-    return '账号不符合要求';
+    return '用户名不符合要求';
   }
 }
 

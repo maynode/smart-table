@@ -19,14 +19,45 @@ const previewUrl = ref('');
 const ready = ref(false);
 const error = ref('');
 const scale = ref(1);
-const minScale = ref(1);
+/** 「完整放入」圆框时的缩放，作为 1× 基准 */
+const fitScale = ref(1);
 const offsetX = ref(0);
 const offsetY = ref(0);
 const dragging = ref(false);
 const lastX = ref(0);
 const lastY = ref(0);
 
-const maxScale = computed(() => Math.max(minScale.value * 6, 4));
+/** 相对完整放入：最小可缩到 0.1×，最大 10× */
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
+const minScale = computed(() => fitScale.value * MIN_ZOOM);
+const maxScale = computed(() => fitScale.value * MAX_ZOOM);
+
+const zoomFactorLabel = computed(() => {
+  if (!ready.value || fitScale.value <= 0) return '1×';
+  const factor = scale.value / fitScale.value;
+  if (factor >= 10) return `${Math.round(factor)}×`;
+  if (factor >= 1) return `${Math.round(factor * 10) / 10}×`;
+  return `${Math.round(factor * 100) / 100}×`;
+});
+
+/** 滑杆用对数映射，缩小/放大全段都好拖 */
+const zoomSlider = computed({
+  get() {
+    if (fitScale.value <= 0) return 0;
+    const factor = Math.min(
+      MAX_ZOOM,
+      Math.max(MIN_ZOOM, scale.value / fitScale.value),
+    );
+    return Math.log(factor / MIN_ZOOM) / Math.log(MAX_ZOOM / MIN_ZOOM);
+  },
+  set(t: number) {
+    if (fitScale.value <= 0) return;
+    const clamped = Math.min(1, Math.max(0, t));
+    const factor = MIN_ZOOM * (MAX_ZOOM / MIN_ZOOM) ** clamped;
+    setScaleAroundCenter(fitScale.value * factor);
+  },
+});
 
 watch(
   () => props.file,
@@ -63,13 +94,11 @@ async function loadFile(file: File): Promise<void> {
   ready.value = false;
   cleanup();
   try {
-    // from-image：按 EXIF 纠正方向，避免预览与导出比例不一致/看起来被压扁
     const bmp = await createImageBitmap(file, {
       imageOrientation: 'from-image',
     } as ImageBitmapOptions);
     bitmap.value = bmp;
 
-    // 预览用 canvas 导出，保证与裁剪同源、同比例（不走 <img> 的另一套方向处理）
     const preview = document.createElement('canvas');
     preview.width = bmp.width;
     preview.height = bmp.height;
@@ -78,9 +107,8 @@ async function loadFile(file: File): Promise<void> {
     pctx.drawImage(bmp, 0, 0);
     previewUrl.value = preview.toDataURL('image/png');
 
-    // 默认 contain：整图完整放入方框，等比缩放，不拉伸、不裁切
     const fit = Math.min(viewport / bmp.width, viewport / bmp.height);
-    minScale.value = fit;
+    fitScale.value = fit;
     scale.value = fit;
     offsetX.value = (viewport - bmp.width * fit) / 2;
     offsetY.value = (viewport - bmp.height * fit) / 2;
@@ -95,7 +123,6 @@ function clampOffsets(): void {
   if (!bmp) return;
   const w = bmp.width * scale.value;
   const h = bmp.height * scale.value;
-  // 自由拖动：只要还和裁剪框有一点重叠即可，不强制居中
   const minVisible = 32;
   offsetX.value = Math.min(
     viewport - minVisible,
@@ -107,20 +134,36 @@ function clampOffsets(): void {
   );
 }
 
-function onWheel(event: WheelEvent): void {
-  event.preventDefault();
-  const delta = event.deltaY > 0 ? -0.08 : 0.08;
-  const next = Math.min(
-    maxScale.value,
-    Math.max(minScale.value, scale.value + delta),
-  );
+function setScaleAroundCenter(next: number): void {
+  const clamped = Math.min(maxScale.value, Math.max(minScale.value, next));
   const cx = viewport / 2;
   const cy = viewport / 2;
-  const ratio = next / scale.value;
+  const ratio = clamped / scale.value;
   offsetX.value = cx - (cx - offsetX.value) * ratio;
   offsetY.value = cy - (cy - offsetY.value) * ratio;
-  scale.value = next;
+  scale.value = clamped;
   clampOffsets();
+}
+
+function onWheel(event: WheelEvent): void {
+  event.preventDefault();
+  if (fitScale.value <= 0) return;
+  const factor = Math.max(MIN_ZOOM, scale.value / fitScale.value);
+  const nextFactor = Math.min(
+    MAX_ZOOM,
+    Math.max(MIN_ZOOM, factor * (event.deltaY > 0 ? 1 / 1.1 : 1.1)),
+  );
+  setScaleAroundCenter(fitScale.value * nextFactor);
+}
+
+function nudgeZoom(dir: -1 | 1): void {
+  if (!ready.value || props.busy || fitScale.value <= 0) return;
+  const factor = Math.max(MIN_ZOOM, scale.value / fitScale.value);
+  const nextFactor = Math.min(
+    MAX_ZOOM,
+    Math.max(MIN_ZOOM, factor * (dir > 0 ? 1.12 : 1 / 1.12)),
+  );
+  setScaleAroundCenter(fitScale.value * nextFactor);
 }
 
 function startDrag(event: PointerEvent): void {
@@ -144,9 +187,6 @@ function endDrag(): void {
   dragging.value = false;
 }
 
-function onScaleInput(): void {
-  clampOffsets();
-}
 
 async function confirm(): Promise<void> {
   const bmp = bitmap.value;
@@ -161,7 +201,6 @@ async function confirm(): Promise<void> {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, AVATAR_OUTPUT_SIZE, AVATAR_OUTPUT_SIZE);
     const ratio = AVATAR_OUTPUT_SIZE / viewport;
-    // 宽高用同一 scale，保证等比，绝不拉伸
     ctx.drawImage(
       bmp,
       offsetX.value * ratio,
@@ -189,37 +228,59 @@ const previewStyle = computed(() => {
 
 <template>
   <div class="cropper" data-testid="avatar-cropper">
-    <p class="hint">
-      等比缩放不变形；可自由拖动位置，滚轮或滑杆缩放后取方形区域保存。
-    </p>
-    <div
-      class="stage"
-      @wheel="onWheel"
-      @pointerdown="startDrag"
-    >
-      <img
-        v-if="previewUrl"
-        class="source"
-        :src="previewUrl"
-        alt=""
-        draggable="false"
-        :style="previewStyle"
-      />
-      <div class="mask" aria-hidden="true" />
+    <div class="stage-wrap">
+      <div
+        class="stage"
+        :class="{ dragging, ready }"
+        @wheel="onWheel"
+        @pointerdown="startDrag"
+      >
+        <img
+          v-if="previewUrl"
+          class="source"
+          :src="previewUrl"
+          alt=""
+          draggable="false"
+          :style="previewStyle"
+        />
+        <div class="ring" aria-hidden="true" />
+        <div v-if="!ready && !error" class="stage-loading">加载中…</div>
+      </div>
     </div>
-    <label class="zoom">
-      <span>缩放</span>
+
+    <div class="zoom-bar">
+      <button
+        class="zoom-btn"
+        type="button"
+        aria-label="缩小"
+        :disabled="!ready || busy || scale <= minScale"
+        @click="nudgeZoom(-1)"
+      >
+        −
+      </button>
       <input
-        v-model.number="scale"
+        v-model.number="zoomSlider"
+        class="zoom-range"
         type="range"
-        :min="minScale"
-        :max="maxScale"
-        :step="0.01"
+        min="0"
+        max="1"
+        step="0.001"
         :disabled="!ready || busy"
-        @input="onScaleInput"
       />
-    </label>
+      <button
+        class="zoom-btn"
+        type="button"
+        aria-label="放大"
+        :disabled="!ready || busy || scale >= maxScale"
+        @click="nudgeZoom(1)"
+      >
+        +
+      </button>
+      <span class="zoom-pct">{{ zoomFactorLabel }}</span>
+    </div>
+
     <p v-if="error" class="error">{{ error }}</p>
+
     <div class="actions">
       <button
         class="btn btn-ghost"
@@ -236,7 +297,7 @@ const previewStyle = computed(() => {
         :disabled="!ready || busy"
         @click="confirm"
       >
-        {{ busy ? '上传中…' : '裁剪并保存' }}
+        {{ busy ? '上传中…' : '保存头像' }}
       </button>
     </div>
   </div>
@@ -246,31 +307,41 @@ const previewStyle = computed(() => {
 .cropper {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  margin-top: 4px;
 }
 
-.hint {
-  margin: 0;
-  font-size: 13px;
-  color: #646a73;
-  line-height: 1.5;
+.stage-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
 }
 
 .stage {
   position: relative;
   width: 280px;
   height: 280px;
-  margin: 0 auto;
   overflow: hidden;
-  border-radius: 12px;
-  background: #1f2329;
+  border-radius: 50%;
+  background: #dfe3e8;
   cursor: grab;
   touch-action: none;
   user-select: none;
+  box-shadow:
+    0 0 0 1px rgba(31, 35, 41, 0.06),
+    0 10px 28px rgba(31, 35, 41, 0.12);
+  transition: box-shadow 0.15s ease;
 }
 
-.stage:active {
+.stage.ready {
+  background: #cfd5dc;
+}
+
+.stage.dragging {
   cursor: grabbing;
+  box-shadow:
+    0 0 0 2px rgba(45, 140, 240, 0.35),
+    0 12px 32px rgba(31, 35, 41, 0.16);
 }
 
 .source {
@@ -278,41 +349,92 @@ const previewStyle = computed(() => {
   left: 0;
   top: 0;
   max-width: none;
-  /* 宽高由脚本按原图比例写入，禁止被样式拉伸 */
   object-fit: fill;
   pointer-events: none;
 }
 
-.mask {
+.ring {
   position: absolute;
   inset: 0;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-radius: 12px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 1px rgba(31, 35, 41, 0.12),
+    0 0 0 6px rgba(255, 255, 255, 0.35);
   pointer-events: none;
 }
 
-.zoom {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.stage-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
   font-size: 13px;
-  color: #646a73;
+  background: rgba(247, 248, 250, 0.72);
 }
 
-.zoom input {
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.zoom-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.zoom-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.zoom-range {
   flex: 1;
+  min-width: 0;
+  height: 4px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+.zoom-pct {
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .error {
   margin: 0;
-  color: #d4380d;
-  font-size: 13px;
+  color: var(--danger);
+  font-size: 12px;
+  text-align: center;
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 </style>
