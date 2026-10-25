@@ -105,6 +105,10 @@ async function submit(): Promise<void> {
       error.value = passwordError;
       return;
     }
+    if (password.value !== passwordConfirm.value) {
+      error.value = '两次输入的密码不一致';
+      return;
+    }
     const qError = validateSecurityQuestion(resolvedQuestion());
     if (qError) {
       error.value = qError;
@@ -291,8 +295,25 @@ function openRecover(): void {
             required
             :minlength="PASSWORD_MIN_LENGTH"
             :maxlength="PASSWORD_MAX_LENGTH"
-            autocomplete="current-password"
+            :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
             :placeholder="mode === 'register' ? '设置登录密码' : '请输入密码'"
+          />
+        </label>
+
+        <label
+          v-if="mode === 'register'"
+          class="field"
+        >
+          <span class="field-title">确认密码</span>
+          <input
+            v-model="passwordConfirm"
+            type="password"
+            data-testid="password-confirm-input"
+            required
+            :minlength="PASSWORD_MIN_LENGTH"
+            :maxlength="PASSWORD_MAX_LENGTH"
+            autocomplete="new-password"
+            placeholder="再次输入密码"
           />
         </label>
 

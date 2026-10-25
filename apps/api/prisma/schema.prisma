@@ -17,6 +17,10 @@ model User {
   account             String   @unique
   passwordHash        String   @map("password_hash")
   name                String
+  /// 3D 卡通头像种子（DiceBear adventurer）
+  avatarSeed          String   @default("") @map("avatar_seed")
+  /// 自定义上传头像 URL（方图；有值时优先于种子）
+  avatarUrl           String?  @map("avatar_url")
   /// 密保问题（明文）
   securityQuestion    String   @map("security_question")
   /// 密保答案哈希（答案规范化后 argon2）

@@ -41,4 +41,19 @@ export class FilesController {
     reply.type(resolved.contentType ?? 'application/octet-stream');
     return new StreamableFile(createReadStream(resolved.path!));
   }
+
+  @Get('avatars/:name')
+  avatar(
+    @Param('name') name: string,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): StreamableFile | void {
+    const resolved = this.storage.resolveAvatar(name);
+    if (resolved.redirectUrl) {
+      reply.redirect(resolved.redirectUrl);
+      return;
+    }
+
+    reply.type(resolved.contentType ?? 'image/jpeg');
+    return new StreamableFile(createReadStream(resolved.path!));
+  }
 }

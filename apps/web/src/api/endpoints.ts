@@ -28,6 +28,7 @@ import type {
   PublicViewDto,
   PublicViewData,
   SavedViewDto,
+  UserDto,
   NotificationDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
@@ -108,6 +109,34 @@ export const endpoints = {
     api<{ ok: true }>('/auth/recovery/reset', {
       body: payload,
       token: null,
+    }),
+
+  updateAvatar: (avatarSeed: string) =>
+    api<UserDto>('/auth/avatar', {
+      method: 'POST',
+      body: { avatarSeed },
+    }),
+
+  uploadAvatar: async (file: Blob, filename = 'avatar.jpg') => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api';
+    const body = new FormData();
+    body.append('file', file, filename);
+    const token = getToken();
+    const response = await fetch(`${base}/auth/avatar/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body,
+    });
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as UserDto;
+  },
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api<{ ok: true }>('/auth/change-password', {
+      method: 'POST',
+      body: { currentPassword, newPassword },
     }),
 
   deleteAccount: (password: string) =>

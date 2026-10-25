@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
 import {
+  createAvatarSeed,
   normalizeAccount,
   normalizeSecurityAnswer,
   validateAccount,
@@ -16,12 +17,19 @@ import {
   validateSecurityQuestion,
 } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { hashPassword, verifyPassword } from './password';
+
+/** 自定义头像上传上限（前端裁剪压缩后约几十 KB） */
+const AVATAR_MAX_BYTES = 64 * 1024;
+const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 export interface PublicUser {
   id: string;
   account: string;
   name: string;
+  avatarSeed: string;
+  avatarUrl: string | null;
   createdAt: Date;
 }
 
@@ -35,6 +43,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly storage: StorageService,
   ) {}
 
   async register(
@@ -59,6 +68,7 @@ export class AuthService {
       normalizeSecurityAnswer(securityAnswerRaw),
     );
 
+    const avatarSeed = createAvatarSeed(account);
     let user: User;
     try {
       user = await this.prisma.user.create({
@@ -67,6 +77,7 @@ export class AuthService {
           passwordHash,
           // 展示名直接用账号，不再单独收集姓名
           name: account,
+          avatarSeed,
           securityQuestion,
           securityAnswerHash,
         },
@@ -199,6 +210,85 @@ export class AuthService {
     return toPublicUser(user);
   }
 
+  /** 登录态更换卡通头像种子（清除自定义上传） */
+  async updateAvatar(
+    userId: string,
+    avatarSeedRaw: string,
+  ): Promise<PublicUser> {
+    const avatarSeed = avatarSeedRaw.trim();
+    if (!avatarSeed || avatarSeed.length > 64 || !/^[a-zA-Z0-9_-]+$/.test(avatarSeed)) {
+      throw new BadRequestException('头像种子无效');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarSeed, avatarUrl: null },
+    });
+    return toPublicUser(updated);
+  }
+
+  /** 登录态上传自定义方图头像（裁剪压缩后） */
+  async uploadAvatar(
+    userId: string,
+    buffer: Buffer,
+    mimetype: string,
+  ): Promise<PublicUser> {
+    if (!AVATAR_MIME.has(mimetype)) {
+      throw new BadRequestException('仅支持 JPG / PNG / WebP');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('未上传文件');
+    }
+    if (buffer.byteLength > AVATAR_MAX_BYTES) {
+      throw new BadRequestException('头像过大，请压缩后再传（不超过 64KB）');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+    const avatarUrl = await this.storage.saveAvatar(buffer, mimetype);
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl },
+    });
+    return toPublicUser(updated);
+  }
+
+  /** 登录态修改密码：校验当前密码后写入新密码。 */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ ok: true }> {
+    if (typeof currentPassword !== 'string' || !currentPassword) {
+      throw new BadRequestException('请输入当前密码');
+    }
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) throw new BadRequestException(passwordError);
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('新密码不能与当前密码相同');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+    const valid = await verifyPassword(user.passwordHash, currentPassword);
+    if (!valid) {
+      throw new BadRequestException('当前密码错误');
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+    return { ok: true };
+  }
+
   /** 校验密码后注销账号；其作为所有者的工作区一并删除。 */
   async deleteAccount(
     userId: string,
@@ -251,6 +341,8 @@ export function toPublicUser(user: User): PublicUser {
     id: user.id,
     account: user.account,
     name: user.name,
+    avatarSeed: user.avatarSeed || user.account,
+    avatarUrl: user.avatarUrl ?? null,
     createdAt: user.createdAt,
   };
 }

@@ -11,6 +11,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@dicebear/adventurer": "9.2.4",
+    "@dicebear/core": "9.2.4",
     "echarts": "^6.0.0",
     "qrcode": "^1.5.4",
     "shared": "workspace:*",

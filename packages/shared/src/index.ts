@@ -9,3 +9,4 @@ export * from './cron';
 export * from './password-policy';
 export * from './account-policy';
 export * from './security-question';
+export * from './avatar';

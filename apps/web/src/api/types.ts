@@ -2,6 +2,8 @@ export interface UserDto {
   id: string;
   account: string;
   name: string;
+  avatarSeed: string;
+  avatarUrl?: string | null;
 }
 
 export interface WorkspaceDto {
@@ -99,6 +101,8 @@ export interface MemberDto {
   inviteId?: string;
   account: string;
   name: string;
+  avatarSeed?: string;
+  avatarUrl?: string | null;
   role: string;
   createdAt: string;
   /** false = 已邀请但对方尚未注册 */

@@ -1,15 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { validateAccount } from 'shared';
+import {
+  PASSWORD_HINT,
+  createAvatarSeed,
+  validateAccount,
+  validatePassword,
+} from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import AvatarCropper from '../components/AvatarCropper.vue';
 import MembersPanel from '../components/MembersPanel.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import { auth } from '../stores/auth';
 import { confirmDialog, promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
+import { buildAvatarUrl, resolveAvatarSrc } from '../utils/avatar';
 import type {
   BaseDto,
   TemplateInstantiateResult,
@@ -67,6 +74,26 @@ const baseFormId = ref('');
 const baseFormName = ref('');
 const baseFormDescription = ref('');
 const baseFormBusy = ref(false);
+const changePasswordOpen = ref(false);
+const changePasswordBusy = ref(false);
+const currentPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
+const avatarPickerOpen = ref(false);
+const avatarPickerBusy = ref(false);
+const avatarCandidates = ref<string[]>([]);
+const avatarPick = ref('');
+const avatarUploadInput = ref<HTMLInputElement | null>(null);
+const avatarCropFile = ref<File | null>(null);
+
+const currentAvatarUrl = computed(() =>
+  resolveAvatarSrc({
+    avatarUrl: auth.state.user?.avatarUrl,
+    avatarSeed: auth.state.user?.avatarSeed,
+    account: auth.state.user?.account,
+    size: 96,
+  }),
+);
 
 const currentWorkspace = computed(
   () =>
@@ -737,6 +764,151 @@ function signOut(): void {
   void router.push('/login');
 }
 
+function refreshAvatarCandidates(): void {
+  const entropy = auth.state.user?.account ?? '';
+  avatarCandidates.value = Array.from({ length: 12 }, () =>
+    createAvatarSeed(entropy),
+  );
+  avatarPick.value = avatarCandidates.value[0] ?? '';
+}
+
+function applyAvatarUser(user: {
+  id: string;
+  account: string;
+  name: string;
+  avatarSeed: string;
+  avatarUrl?: string | null;
+}): void {
+  auth.updateUser({
+    id: user.id,
+    account: user.account,
+    name: user.name,
+    avatarSeed: user.avatarSeed,
+    avatarUrl: user.avatarUrl ?? null,
+  });
+}
+
+function openAvatarPicker(): void {
+  refreshAvatarCandidates();
+  avatarCropFile.value = null;
+  avatarPickerBusy.value = false;
+  avatarPickerOpen.value = true;
+}
+
+function closeAvatarPicker(): void {
+  if (avatarPickerBusy.value) return;
+  avatarCropFile.value = null;
+  avatarPickerOpen.value = false;
+}
+
+function pickAvatarUpload(): void {
+  avatarUploadInput.value?.click();
+}
+
+function onAvatarFileChange(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0] ?? null;
+  input.value = '';
+  if (!file) return;
+  if (!/^image\/(jpeg|png|webp|gif)$/i.test(file.type)) {
+    toast('请选择 JPG / PNG / WebP 图片');
+    return;
+  }
+  // 原图可稍大，裁剪后再压到几十 KB
+  if (file.size > 8 * 1024 * 1024) {
+    toast('图片过大，请选择 8MB 以内的文件');
+    return;
+  }
+  avatarCropFile.value = file;
+}
+
+function cancelAvatarCrop(): void {
+  avatarCropFile.value = null;
+}
+
+async function submitAvatarPick(): Promise<void> {
+  const seed = avatarPick.value.trim();
+  if (!seed) {
+    toast('请选择头像');
+    return;
+  }
+  if (avatarPickerBusy.value) return;
+  avatarPickerBusy.value = true;
+  try {
+    const user = await endpoints.updateAvatar(seed);
+    applyAvatarUser(user);
+    toast('头像已更新');
+    avatarPickerOpen.value = false;
+  } catch (error) {
+    toast(messageOf(error) || '更新头像失败');
+  } finally {
+    avatarPickerBusy.value = false;
+  }
+}
+
+async function submitAvatarCrop(blob: Blob): Promise<void> {
+  if (avatarPickerBusy.value) return;
+  avatarPickerBusy.value = true;
+  try {
+    const user = await endpoints.uploadAvatar(blob, 'avatar.jpg');
+    applyAvatarUser(user);
+    toast('自定义头像已保存');
+    avatarCropFile.value = null;
+    avatarPickerOpen.value = false;
+  } catch (error) {
+    toast(messageOf(error) || '上传头像失败');
+  } finally {
+    avatarPickerBusy.value = false;
+  }
+}
+
+function openChangePassword(): void {
+  currentPassword.value = '';
+  newPassword.value = '';
+  confirmPassword.value = '';
+  changePasswordBusy.value = false;
+  changePasswordOpen.value = true;
+}
+
+function closeChangePassword(): void {
+  if (changePasswordBusy.value) return;
+  changePasswordOpen.value = false;
+}
+
+async function submitChangePassword(): Promise<void> {
+  const current = currentPassword.value;
+  const next = newPassword.value;
+  const confirm = confirmPassword.value;
+  if (!current) {
+    toast('请输入当前密码');
+    return;
+  }
+  const passwordError = validatePassword(next);
+  if (passwordError) {
+    toast(passwordError);
+    return;
+  }
+  if (next !== confirm) {
+    toast('两次输入的新密码不一致');
+    return;
+  }
+  if (current === next) {
+    toast('新密码不能与当前密码相同');
+    return;
+  }
+  if (changePasswordBusy.value) return;
+  changePasswordBusy.value = true;
+  try {
+    await endpoints.changePassword(current, next);
+    toast('密码已修改');
+    changePasswordOpen.value = false;
+  } catch (error) {
+    toast(messageOf(error) || '修改密码失败');
+  } finally {
+    changePasswordBusy.value = false;
+  }
+}
+
 async function deleteAccount(): Promise<void> {
   await promptDialog('注销账号', '', {
     message: '注销后账号及其拥有的工作区将永久删除，且无法恢复。请输入登录密码确认。',
@@ -809,11 +981,38 @@ onUnmounted(() => {
 
       <div class="topbar-actions">
         <div class="user-chip">
-          <span class="avatar">{{ (auth.state.user?.name ?? '?').slice(0, 1) }}</span>
+          <button
+            class="avatar-btn"
+            type="button"
+            title="修改头像"
+            aria-label="修改头像"
+            data-testid="avatar-open"
+            @click="openAvatarPicker"
+          >
+            <img
+              class="avatar-img"
+              :src="currentAvatarUrl"
+              alt=""
+              width="28"
+              height="28"
+              draggable="false"
+            />
+          </button>
           <span class="user-name">{{ auth.state.user?.name }}</span>
-          <button class="btn btn-ghost tiny" @click="signOut">退出</button>
+          <button
+            class="btn btn-ghost tiny"
+            type="button"
+            data-testid="change-password"
+            @click="openChangePassword"
+          >
+            修改密码
+          </button>
+          <button class="btn btn-ghost tiny" type="button" @click="signOut">
+            退出
+          </button>
           <button
             class="btn btn-ghost tiny danger-text"
+            type="button"
             data-testid="delete-account"
             @click="deleteAccount"
           >
@@ -1253,6 +1452,181 @@ onUnmounted(() => {
       </main>
     </div>
 
+    <input
+      ref="avatarUploadInput"
+      type="file"
+      accept="image/jpeg,image/png,image/webp"
+      class="hidden-file"
+      data-testid="avatar-upload-input"
+      @change="onAvatarFileChange"
+    />
+
+    <div
+      v-if="avatarPickerOpen"
+      class="modal-mask"
+      @click.self="closeAvatarPicker"
+    >
+      <section class="dialog avatar-dialog" data-testid="avatar-picker-dialog">
+        <header class="dialog-head">
+          <h3>{{ avatarCropFile ? '裁剪头像' : '选择头像' }}</h3>
+          <button
+            class="icon-btn"
+            type="button"
+            :disabled="avatarPickerBusy"
+            @click="closeAvatarPicker"
+          >
+            ×
+          </button>
+        </header>
+
+        <AvatarCropper
+          v-if="avatarCropFile"
+          :file="avatarCropFile"
+          :busy="avatarPickerBusy"
+          @cancel="cancelAvatarCrop"
+          @confirm="submitAvatarCrop"
+        />
+
+        <template v-else>
+          <p class="dialog-desc">
+            本地卡通头像（DiceBear Adventurer / CC BY 4.0），或上传图片自由裁剪后保存为方图。
+          </p>
+          <div class="avatar-grid" data-testid="avatar-grid">
+            <button
+              v-for="seed in avatarCandidates"
+              :key="seed"
+              type="button"
+              class="avatar-option"
+              :class="{ selected: seed === avatarPick }"
+              :disabled="avatarPickerBusy"
+              :data-testid="`avatar-option-${seed}`"
+              @click="avatarPick = seed"
+            >
+              <img
+                :src="buildAvatarUrl(seed, seed, 96)"
+                alt=""
+                width="64"
+                height="64"
+                draggable="false"
+              />
+            </button>
+          </div>
+          <div class="dialog-actions avatar-actions">
+            <div class="avatar-actions-left">
+              <button
+                class="btn btn-ghost"
+                type="button"
+                :disabled="avatarPickerBusy"
+                data-testid="avatar-refresh"
+                @click="refreshAvatarCandidates"
+              >
+                换一批
+              </button>
+              <button
+                class="btn btn-ghost"
+                type="button"
+                :disabled="avatarPickerBusy"
+                data-testid="avatar-upload"
+                @click="pickAvatarUpload"
+              >
+                上传图片
+              </button>
+            </div>
+            <div class="avatar-actions-right">
+              <button
+                class="btn btn-ghost"
+                type="button"
+                :disabled="avatarPickerBusy"
+                @click="closeAvatarPicker"
+              >
+                取消
+              </button>
+              <button
+                class="btn btn-primary"
+                type="button"
+                data-testid="avatar-submit"
+                :disabled="avatarPickerBusy"
+                @click="submitAvatarPick"
+              >
+                {{ avatarPickerBusy ? '保存中…' : '使用此头像' }}
+              </button>
+            </div>
+          </div>
+        </template>
+      </section>
+    </div>
+
+    <div
+      v-if="changePasswordOpen"
+      class="modal-mask"
+      @click.self="closeChangePassword"
+    >
+      <section class="dialog" data-testid="change-password-dialog">
+        <header class="dialog-head">
+          <h3>修改密码</h3>
+          <button
+            class="icon-btn"
+            type="button"
+            :disabled="changePasswordBusy"
+            @click="closeChangePassword"
+          >
+            ×
+          </button>
+        </header>
+        <form class="password-form" @submit.prevent="submitChangePassword">
+          <label class="field">
+            <span>当前密码</span>
+            <input
+              v-model="currentPassword"
+              type="password"
+              autocomplete="current-password"
+              data-testid="change-password-current"
+              :disabled="changePasswordBusy"
+            />
+          </label>
+          <label class="field">
+            <span>新密码</span>
+            <input
+              v-model="newPassword"
+              type="password"
+              autocomplete="new-password"
+              data-testid="change-password-new"
+              :disabled="changePasswordBusy"
+            />
+          </label>
+          <label class="field">
+            <span>确认新密码</span>
+            <input
+              v-model="confirmPassword"
+              type="password"
+              autocomplete="new-password"
+              data-testid="change-password-confirm"
+              :disabled="changePasswordBusy"
+            />
+          </label>
+          <p class="password-hint">{{ PASSWORD_HINT }}</p>
+          <div class="dialog-actions">
+            <button
+              class="btn btn-ghost"
+              type="button"
+              :disabled="changePasswordBusy"
+              @click="closeChangePassword"
+            >
+              取消
+            </button>
+            <button
+              class="btn btn-primary"
+              type="submit"
+              data-testid="change-password-submit"
+              :disabled="changePasswordBusy"
+            >
+              {{ changePasswordBusy ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <div
       v-if="templateOpen && currentWorkspaceId"
       class="modal-mask"
@@ -1451,17 +1825,93 @@ onUnmounted(() => {
   border-left: 1px solid var(--border);
 }
 
-.avatar {
+.avatar-btn {
   width: 28px;
   height: 28px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  background: transparent;
+  cursor: pointer;
+  flex: none;
+  overflow: hidden;
+  box-shadow: inset 0 -1px 0 rgba(31, 35, 41, 0.06);
+}
+
+.avatar-btn:hover {
+  outline: 2px solid rgba(45, 140, 240, 0.35);
+  outline-offset: 1px;
+}
+
+.avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
   background: #e8f3ff;
-  color: var(--brand-strong);
-  font-size: 13px;
-  font-weight: 600;
+}
+
+.avatar-dialog {
+  width: min(440px, 92vw);
+}
+
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.avatar-option {
+  aspect-ratio: 1;
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  background: #f5f6f7;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.avatar-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.avatar-option:hover:not(:disabled) {
+  border-color: rgba(45, 140, 240, 0.35);
+}
+
+.avatar-option.selected {
+  border-color: var(--brand);
+  background: #e8f3ff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.16);
+}
+
+.avatar-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.avatar-actions {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.avatar-actions-left,
+.avatar-actions-right {
+  display: flex;
+  gap: 8px;
+}
+
+.hidden-file {
+  display: none;
 }
 
 .user-name {
@@ -2215,6 +2665,22 @@ onUnmounted(() => {
   color: #f54a45;
   font-style: normal;
   font-weight: 600;
+}
+
+.password-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.password-form .field:first-child {
+  margin-top: 12px;
+}
+
+.password-hint {
+  margin: 10px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .dialog-actions {

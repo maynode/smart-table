@@ -5,6 +5,7 @@ import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { MemberDto } from '../api/types';
 import { confirmDialog } from '../ui/dialog';
+import { resolveAvatarSrc } from '../utils/avatar';
 
 type AssignableRole = 'admin' | 'editor' | 'viewer';
 
@@ -360,7 +361,25 @@ onUnmounted(() => {
         :data-registered="member.registered ? '1' : '0'"
       >
         <span class="avatar" :class="{ pending: !member.registered }">
-          {{ (member.name || member.account).slice(0, 1) }}
+          <img
+            v-if="member.registered"
+            class="avatar-img"
+            :src="
+              resolveAvatarSrc({
+                avatarUrl: member.avatarUrl,
+                avatarSeed: member.avatarSeed,
+                account: member.account,
+                size: 64,
+              })
+            "
+            alt=""
+            width="32"
+            height="32"
+            draggable="false"
+          />
+          <template v-else>
+            {{ (member.name || member.account).slice(0, 1) }}
+          </template>
         </span>
         <span class="member-main">
           <strong>
@@ -681,6 +700,13 @@ onUnmounted(() => {
   font-weight: 600;
   font-size: 13px;
   flex: none;
+  overflow: hidden;
+}
+.avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .avatar.pending {
   background: #fff7e8;

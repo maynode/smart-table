@@ -2,6 +2,8 @@ export interface StoredUser {
   id: string;
   account: string;
   name: string;
+  avatarSeed?: string;
+  avatarUrl?: string | null;
 }
 
 const TOKEN_KEY = 'st.token';

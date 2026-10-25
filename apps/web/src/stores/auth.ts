@@ -20,6 +20,11 @@ export const auth = {
     state.token = token;
     state.user = user;
   },
+  updateUser(user: StoredUser): void {
+    if (!state.token) return;
+    setSession(state.token, user);
+    state.user = user;
+  },
   signOut(): void {
     clearSession();
     state.token = null;

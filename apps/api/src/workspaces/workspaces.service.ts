@@ -26,6 +26,8 @@ export interface MemberView {
   inviteId?: string;
   account: string;
   name: string;
+  avatarSeed?: string;
+  avatarUrl?: string | null;
   role: WorkspaceRole;
   createdAt: Date;
   /** false = 已邀请但对方尚未注册 */
@@ -201,6 +203,8 @@ export class WorkspacesService {
       userId: member.userId,
       account: member.user.account,
       name: member.user.name,
+      avatarSeed: member.user.avatarSeed || member.user.account,
+      avatarUrl: member.user.avatarUrl ?? null,
       role: member.role,
       createdAt: member.createdAt,
       registered: true,
@@ -253,6 +257,8 @@ export class WorkspacesService {
           userId: user.id,
           account: user.account,
           name: user.name,
+          avatarSeed: user.avatarSeed || user.account,
+          avatarUrl: user.avatarUrl ?? null,
           role: member.role,
           createdAt: member.createdAt,
           registered: true,
@@ -339,6 +345,8 @@ export class WorkspacesService {
         userId: updated.userId,
         account: user?.account ?? '',
         name: user?.name ?? '',
+        avatarSeed: user?.avatarSeed || user?.account || '',
+        avatarUrl: user?.avatarUrl ?? null,
         role: updated.role,
         createdAt: updated.createdAt,
         registered: true,

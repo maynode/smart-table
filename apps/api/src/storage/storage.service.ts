@@ -99,6 +99,55 @@ export class StorageService {
     return `/files/${key}`;
   }
 
+  /** 用户自定义头像（方图 JPEG/WebP/PNG） */
+  async saveAvatar(buffer: Buffer, mimetype: string): Promise<string> {
+    const extension =
+      Object.entries(MIME_BY_EXT).find(
+        ([, value]) => value === mimetype,
+      )?.[0] ?? '.jpg';
+    const name = `${randomUUID()}${extension}`;
+    const key = `avatars/${name}`;
+
+    if (this.driver === 'minio' && this.s3) {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: mimetype,
+        }),
+      );
+    } else {
+      mkdirSync(join(this.localDir, 'avatars'), { recursive: true });
+      writeFileSync(join(this.localDir, key), buffer);
+    }
+
+    return `/files/${key}`;
+  }
+
+  resolveAvatar(name: string): {
+    path?: string;
+    contentType?: string;
+    redirectUrl?: string;
+  } {
+    if (!/^[A-Za-z0-9-]+\.(png|jpg|jpeg|webp)$/.test(name)) {
+      throw new NotFoundException('头像不存在');
+    }
+
+    const key = `avatars/${name}`;
+    if (this.driver === 'minio' && this.s3) {
+      return { redirectUrl: `${this.publicBase}/${key}` };
+    }
+
+    const path = join(this.localDir, 'avatars', name);
+    if (!existsSync(path)) {
+      throw new NotFoundException('头像不存在');
+    }
+    const contentType =
+      MIME_BY_EXT[extname(name).toLowerCase()] ?? 'image/jpeg';
+    return { path, contentType };
+  }
+
   async saveUpload(
     buffer: Buffer,
     mimetype: string,
