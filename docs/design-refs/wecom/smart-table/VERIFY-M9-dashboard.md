@@ -12,13 +12,13 @@
 |------|------|------|
 | CHART | bar/line/pie/horizontalBar/combo | **对齐** |
 | NUMBER/TABLE/WORD_CLOUD/TEXT | metric/table/wordcloud/text 白名单 | **类型齐；NUMBER 已加深（对比/趋势/条件色）** |
-| AI BI | 不做 | **刻意** |
+| AI BI | 仪表盘 Agent 完整共编 | **已落地**（非 `smartsheet-bi` 孪生；`DASHBOARD.md` §5） |
 | 栅格拖拽 | 12 列 bento | **对齐** |
-| 聚合 | PG GROUP BY；CH adapter 无 ETL | **中小表对齐；大表债** |
+| 聚合 | PG GROUP BY；可选 CH + ETL | **中小表对齐；大表走 CH profile** |
 
 ## 3. 偏差
 
-CH ETL 缺失（REMAINING-GAPS P0）；AI BI 不做。
+大表性能仍依赖是否启用 ClickHouse；企微 `smartsheet-bi` 路径不做字节兼容。
 
 ## 4. 性能
 

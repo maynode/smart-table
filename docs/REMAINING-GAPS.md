@@ -135,7 +135,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | 企微登录 | **待定** | 产品用本系统自有账号；不做企微 OAuth 强绑定登录 |
 | 企微通讯录 / 联系人 | **待定** | 用本系统工作区成员表达同类语义 |
 | 真企微群聊 | **待定** | 自动化群聊走 Local fallback / `wecomChatId`；真企微群 API 不强制 |
-| AI BI（仪表盘 Agent / 智能分析） | **部分完成** | 侧栏「分析报告」已做对话 + digest/LLM Markdown（见 `docs/ANALYSIS-REPORT.md`）；仪表盘内 Agent/智能图表仍待定（VERIFY-M9 / M12） |
+| AI BI（仪表盘 Agent / 智能分析） | **已完成（2026-10-26）** | 分析报告：对话 + digest/LLM Markdown（`docs/ANALYSIS-REPORT.md`）；仪表盘内 Agent：对话 + 增删改图表/布局，事务落库 + Live（`docs/DASHBOARD.md` §5）。不做企微 `smartsheet-bi` 协议孪生 |
 | `USER_C` 字段 | **待定** | 材料语义不清；主类人员用 `person`（USER） |
 | 大表 chunk 本地库 | **待定** | 客户端分块本地库；性价比低，ROI 不足暂不做 |
 

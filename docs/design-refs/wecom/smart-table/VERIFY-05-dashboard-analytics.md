@@ -20,7 +20,7 @@
 | CHART | bar / line / pie / horizontalBar / combo | **对齐主类** |
 | NUMBER | API `metric` | **类型对齐**（UI 深度弱于企微） |
 | TABLE / WORD_CLOUD / TEXT | API `table` / `wordcloud` / `text` | **白名单有**；渲染完整度弱于企微 |
-| AI BI Agent | 不做（产品边界） | **刻意不做** |
+| AI BI Agent | 本仓对话 Agent + 落图（非 `smartsheet-bi` 孪生） | **已落地（2026-10-26）**；见 `docs/DASHBOARD.md` §5 |
 | 拖拽布局 | 12 列 bento，w/h 持久化 | **对齐交互** |
 | 聚合查询 | PG：`GROUP BY cells->>dim` + count/sum/avg/min/max；可选 CH 同构 SQL | **语义对齐** |
 | 定时推送 | dashboard schedule + 立即执行 | **有**（本地通知通道） |
@@ -35,4 +35,4 @@
 
 ## 4. 结论
 
-图表主路径与栅格编辑相对企微 CHART 语义对齐；WORD_CLOUD/TABLE/NUMBER 卡与 AI BI 不在当前范围。聚合性能在 PG 上对中小表达标，大规模依赖尚未落地的 CH ETL。本轮源码校验五连完成。
+图表主路径与栅格编辑相对企微 CHART 语义对齐；WORD_CLOUD/TABLE/NUMBER 卡完整度仍弱于企微；AI Agent 已按本仓协议落地（非企微路径孪生）。聚合性能在 PG 上对中小表达标；大规模可用 ClickHouse（ETL 见 REMAINING-GAPS / DEPLOYMENT）。本轮源码校验五连完成。
