@@ -21,7 +21,8 @@ export type SyncStatus = 'online' | 'offline' | 'syncing' | 'conflict';
 
 const CHANNEL = 'st-message-center';
 const LOCK_NAME = 'st-message-center-flush';
-const WS_ACCEPT_TIMEOUT_MS = 20_000;
+/** 半死 WS 时尽快降级 HTTP，避免每次改格空等数十秒 */
+const WS_ACCEPT_TIMEOUT_MS = 4_000;
 
 class MessageCenter {
   readonly status: Ref<SyncStatus> = ref(
@@ -46,6 +47,8 @@ class MessageCenter {
   private activeSheetId: string | null = null;
   /** 本端刚提交成功的 batch，用于忽略 HTTP 回退后广播回来的 new_changes（防重复行） */
   private recentBatchIds = new Set<string>();
+  /** WS accept 超时后一段时间内跳过 WS，避免连续改格每次空等 */
+  private preferHttpUntil = 0;
 
   async bootstrap(): Promise<void> {
     if (this.bootstrapped || typeof window === 'undefined') return;
@@ -268,6 +271,7 @@ class MessageCenter {
     clientBatchId: string,
     mutations: SheetMutation[],
   ): Promise<CommitChangesResponse | null> {
+    if (Date.now() < this.preferHttpUntil) return null;
     if (!collabSocket.connected.value) return null;
     if (this.activeSheetId !== sheetId) return null;
     const sent = collabSocket.sendUserChanges(
@@ -316,6 +320,12 @@ class MessageCenter {
     try {
       response = await this.flushViaWs(sheetId, clientBatchId, mutations);
     } catch {
+      // accept 超时/拒收：短期内只走 HTTP，并重连半死 WS
+      this.preferHttpUntil = Date.now() + 60_000;
+      if (this.activeSheetId === sheetId) {
+        collabSocket.disconnect();
+        collabSocket.connect(sheetId);
+      }
       response = null;
     }
     if (!response) {

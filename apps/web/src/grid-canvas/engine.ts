@@ -438,16 +438,17 @@ export class CanvasGridEngine {
     const headerHeight = this.headerHeight;
     const top = this.rowAxis.offset(row);
     const bottom = top + this.rowAxis.size(row);
-    const scrollTop = this.scroller.scrollTop;
+    const scrollTop = this.scrollY;
     const viewportHeight = Math.max(
       0,
       this.footerTop(this.host.clientHeight) - headerHeight,
     );
+    const scaleY = this.scrollScaleY();
 
     if (top < scrollTop) {
-      this.scroller.scrollTop = top;
+      this.scroller.scrollTop = top * scaleY;
     } else if (bottom > scrollTop + viewportHeight) {
-      this.scroller.scrollTop = bottom - viewportHeight;
+      this.scroller.scrollTop = (bottom - viewportHeight) * scaleY;
     }
 
     if (col >= this.frozenColumnCount) {
@@ -530,7 +531,7 @@ export class CanvasGridEngine {
 
   scrollTo(x: number, y: number): void {
     this.scroller.scrollLeft = x;
-    this.scroller.scrollTop = y;
+    this.scroller.scrollTop = y * this.scrollScaleY();
     this.syncScrollPosition();
     this.invalidate();
   }
@@ -613,7 +614,11 @@ export class CanvasGridEngine {
 
   private syncScrollPosition(): void {
     this.scrollX = this.scroller.scrollLeft;
-    this.scrollY = this.scroller.scrollTop;
+    const scaleY = this.scrollScaleY();
+    this.scrollY =
+      scaleY === 1
+        ? this.scroller.scrollTop
+        : this.scroller.scrollTop / scaleY;
   }
 
   private readonly onContextMenu = (event: MouseEvent): void => {
@@ -863,9 +868,23 @@ export class CanvasGridEngine {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
+  /**
+   * Chromium clamps element height near 2^24 CSS px; 10M×36 overflows.
+   * Scale the spacer and remap scrollTop ↔ content scrollY.
+   */
+  private static readonly MAX_SPACER_PX = 16_777_216;
+
+  private scrollScaleY(): number {
+    const total = Math.max(1, this.rowAxis.totalSize);
+    return total > CanvasGridEngine.MAX_SPACER_PX
+      ? CanvasGridEngine.MAX_SPACER_PX / total
+      : 1;
+  }
+
   private updateSpacer(): void {
+    const scaleY = this.scrollScaleY();
     this.spacer.style.width = `${Math.max(1, this.columnAxis.totalSize)}px`;
-    this.spacer.style.height = `${Math.max(1, this.rowAxis.totalSize)}px`;
+    this.spacer.style.height = `${Math.max(1, this.rowAxis.totalSize * scaleY)}px`;
   }
 
   private resizeCanvases(): void {

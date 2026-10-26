@@ -11,7 +11,7 @@
 W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.md`）已落地；相对企微网页版智能表格：**主能力已对齐**。  
 **当前主线（2026-10-26）：** 交付闭环收尾；像素级视觉对齐 mock **本轮不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
-**P0 仍缺：** 可选 `perf:window`（缺千万行 `.perf-env.json`）。  
+**P0 仍缺：** 无（`perf:window` 已于 2026-10-26 造千万行表跑通，见 `PERFORMANCE.md` §5.2）。  
 **进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）。  
 **待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
 
@@ -91,11 +91,11 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 |---|----|------|------|
 | 1 | **全量 API e2e** | **已完成（2026-10-23）** | 20/20 套件、47/47；需 Redis `:6380`；建表 `seed: false` |
 | 2 | **前端回归** | **已完成（2026-10-23）** | `vue-tsc`；vitest 9/9；Playwright 9/9（e2e 对齐收集表单 sheet / 列菜单 / 分享对话框 / 模板确认） |
-| 3 | **新鲜压测报告** | **基本完成（2026-10-23）** | `docs/PERFORMANCE.md` 已写本机领码 / grid / form；**仍缺** `perf:window`（无 `.perf-env.json` 千万行表） |
+| 3 | **新鲜压测报告** | **已完成（2026-10-26）** | 领码 / grid / form（10-23）+ `perf:window` 千万行窗口拉取 p95≈78ms（10-26）；造数 `pnpm perf:seed-10m` |
 | 4 | **Docker 镜像与源码一致** | **已完成（2026-10-26）** | `docker compose build api web`；修 `entrypoint-api.sh` CRLF→LF；`up -d` 后 `pnpm smoke:compose` 绿（公开领取 + 自动化）；验收口 `:8080` |
 | 5 | **W6 最终报告** | **已完成（2026-10-26）** | `docs/FINAL-REPORT.md` |
 
-**下一 AI 从这里继续：** P0 交付闭环已齐；仅剩可选 `perf:window`（先准备 `.perf-env.json`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。
+**下一 AI 从这里继续：** P0 交付闭环已齐（含 `perf:window`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。主线改为稳定性 / 体验（如 Dev 局域网同步路径）。
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 
@@ -171,7 +171,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | `pnpm --filter web exec vitest run` | **9/9 passed（2026-10-23）** |
 | `pnpm --filter api test:e2e --runInBand` | **20/20 suites、47/47 passed（2026-10-23）**；前置：`docker start smart-table-redis`（`:6380`）；修复：e2e 建表补 `seed: false`；`forms-public` 断言改为公开接口返回全部配置字段 |
 | 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-23）**：W1–W4、serial-claim、grid-canvas、grid-perf；e2e 对齐嵌入分享对话框、列头菜单编辑、模板 `app-dialog` 确认、文本字段 textarea |
-| `claim-load.smoke` / `perf:grid` / `perf:form` | **通过（2026-10-23）** — 见 `docs/PERFORMANCE.md`；`perf:window` 缺 `.perf-env.json` |
+| `claim-load.smoke` / `perf:grid` / `perf:form` | **通过（2026-10-23）** — 见 `docs/PERFORMANCE.md` |
+| `pnpm perf:window` | **通过（2026-10-26）** — p95≈78ms / 门禁 250ms；见 `PERFORMANCE.md` §5.2 |
 | `pnpm --filter shared test` | 18/18 passed（cron parser；历史） |
 | `pnpm --filter api build` | passed (`nest build`；历史) |
 | `charts.e2e-spec.ts`（含 NUMBER） | 含于全量 API e2e |

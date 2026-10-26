@@ -3,6 +3,7 @@ import type { LiveClientMsg, LiveEvent, LiveServerMsg } from 'shared';
 import { api, getToken } from '../api/client';
 import { liveBus } from './live-bus';
 import { liveScopeKey, liveTabBridge } from './live-tab-bridge';
+import { resolveApiWsBase } from './ws-base';
 
 export type LiveConnectOpts = {
   workspaceId?: string;
@@ -143,14 +144,8 @@ export class LiveSocket {
   private open(): void {
     if (typeof window === 'undefined') return;
     if (this.role !== 'leader') return;
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const envWs = import.meta.env.VITE_API_WS as string | undefined;
-    const apiBase =
-      envWs ??
-      (import.meta.env.DEV
-        ? `${proto}://${window.location.host}`
-        : `${proto}://${window.location.hostname}:3000`);
-    const root = apiBase.replace(/\/$/, '');
+    const root = resolveApiWsBase();
+    if (!root) return;
     const params = new URLSearchParams();
 
     if (this.opts.publicToken) {

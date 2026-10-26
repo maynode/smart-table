@@ -18,12 +18,23 @@ import { peerColorFromUserId } from 'shared';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
+import { toast } from '../ui/toast';
+import type {
+  CellLockAcquireResult,
+  CollabCellLock,
+} from '../sync/collab-socket';
 
 const props = withDefaults(
   defineProps<{
     fields: FieldDto[];
     records?: RecordDto[];
     rowCount?: number;
+    /** Absolute row index of records[0] (windowed large sheets). */
+    recordOffset?: number;
+    /** Absolute-row lookup (tiled cache); preferred over dense window. */
+    recordLookup?: ((row: number) => RecordDto | undefined) | null;
+    /** Bumped when cache pages arrive so canvas repaints without swapping arrays. */
+    recordCacheEpoch?: number;
     provider?: ((row: number, col: number) => CellRender | null) | null;
     editable?: boolean;
     showAddColumn?: boolean;
@@ -53,10 +64,19 @@ const props = withDefaults(
         colIndex?: number;
       };
     }>;
+    acquireCellLock?: (
+      recordId: string,
+      fieldId: string,
+    ) => Promise<CellLockAcquireResult>;
+    releaseCellLock?: (recordId: string, fieldId: string) => void;
+    peerCellLocks?: CollabCellLock[];
   }>(),
   {
     records: () => [],
     rowCount: undefined,
+    recordOffset: 0,
+    recordLookup: null,
+    recordCacheEpoch: 0,
     provider: null,
     editable: true,
     showAddColumn: true,
@@ -69,6 +89,9 @@ const props = withDefaults(
     sheets: () => [],
     uploadAttachment: undefined,
     peerCursors: () => [],
+    acquireCellLock: undefined,
+    releaseCellLock: undefined,
+    peerCellLocks: () => [],
   },
 );
 
@@ -156,6 +179,17 @@ function closeCellMenu(): void {
   cellMenu.value = null;
 }
 
+/** Absolute row -> record in current window (large-sheet offset window). */
+function recordAt(row: number): RecordDto | undefined {
+  const fromLookup = props.recordLookup?.(row);
+  if (fromLookup) return fromLookup;
+  return props.records[row - (props.recordOffset ?? 0)];
+}
+
+function absoluteRowCount(): number {
+  return props.rowCount ?? props.records.length;
+}
+
 function confirmInsert(direction: 'above' | 'below'): void {
   if (!insertMenu.value) return;
   const raw =
@@ -173,7 +207,7 @@ function openCellMenu(
   anchor: { top: number; left: number },
 ): void {
   if (!props.editable) return;
-  const record = props.records[selection.row];
+  const record = recordAt(selection.row);
   const field = visibleFields.value[selection.col];
   if (!record || !field) return;
   insertMenu.value = null;
@@ -247,7 +281,7 @@ const editing = ref<{
 } | null>(null);
 let engine: CanvasGridEngine | null = null;
 const resizedWidths = new Map<string, number>();
-let lastViewportEnd = -1;
+let lastViewportKey = '';
 /** 滚动时刷新协同光标叠层位置 */
 const layoutEpoch = ref(0);
 /** Same-tab clipboard for raw cell values (system clipboard carries display text / TSV). */
@@ -521,7 +555,7 @@ function renderCell(row: number, col: number): CellRender | null {
   if (props.provider) return props.provider(row, col);
   const field = visibleFields.value[col];
   if (!field) return null;
-  const record = props.records[row];
+  const record = recordAt(row);
   if (!record) return null;
   const cell = formatCell(field, record.cells[field.id]);
   if (!cell) return null;
@@ -539,7 +573,7 @@ function renderCell(row: number, col: number): CellRender | null {
 }
 
 function emitPeerCursorAt(row: number, col: number): void {
-  const record = props.records[row];
+  const record = recordAt(row);
   const field = visibleFields.value[col];
   emit('peerCursor', {
     recordId: record?.id,
@@ -549,13 +583,31 @@ function emitPeerCursorAt(row: number, col: number): void {
   });
 }
 
-function beginEdit(row: number, col: number): void {
+async function beginEdit(row: number, col: number): Promise<void> {
   if (!props.editable || !engine) return;
   if (columns.value[col]?.id === ADD_FIELD_COLUMN_ID) return;
-  const record = props.records[row];
+  const record = recordAt(row);
   const field = visibleFields.value[col];
   if (!record || !field) return;
   emitPeerCursorAt(row, col);
+
+  if (props.acquireCellLock) {
+    if (
+      editing.value &&
+      (editing.value.recordId !== record.id ||
+        editing.value.field.id !== field.id)
+    ) {
+      props.releaseCellLock?.(
+        editing.value.recordId,
+        editing.value.field.id,
+      );
+    }
+    const lock = await props.acquireCellLock(record.id, field.id);
+    if (!lock.ok) {
+      toast(`${lock.holderName} 正在编辑此单元格`);
+      return;
+    }
+  }
 
   // System / computed fields are display-only in the grid.
   if (
@@ -693,11 +745,18 @@ function beginEdit(row: number, col: number): void {
   });
 }
 
-function toggleCheckbox(row: number, col: number): void {
+async function toggleCheckbox(row: number, col: number): Promise<void> {
   if (!props.editable) return;
-  const record = props.records[row];
+  const record = recordAt(row);
   const field = visibleFields.value[col];
   if (!record || !field || field.type !== 'checkbox') return;
+  if (props.acquireCellLock) {
+    const lock = await props.acquireCellLock(record.id, field.id);
+    if (!lock.ok) {
+      toast(`${lock.holderName} 正在编辑此单元格`);
+      return;
+    }
+  }
   const previous = record.cells[field.id];
   const next = !(previous === true || previous === 'true');
   emit('commit', {
@@ -706,6 +765,7 @@ function toggleCheckbox(row: number, col: number): void {
     value: next ? 'true' : 'false',
     previous,
   });
+  props.releaseCellLock?.(record.id, field.id);
 }
 
 /** WeCom: first click selects; second click on same cell enters edit. */
@@ -735,7 +795,7 @@ function moveSelection(dRow: number, dCol: number): void {
   if (!engine || editing.value) return;
   const current = selectedCell.value ?? engine.getSelection();
   if (!current) return;
-  const maxRow = (props.rowCount ?? props.records.length) - 1;
+  const maxRow = absoluteRowCount() - 1;
   const maxCol = visibleFields.value.length - 1;
   if (maxRow < 0 || maxCol < 0) return;
   const next = {
@@ -749,6 +809,9 @@ function moveSelection(dRow: number, dCol: number): void {
 
 function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): void {
   const current = editing.value;
+  if (current) {
+    props.releaseCellLock?.(current.recordId, current.field.id);
+  }
   editing.value = null;
   if (!save || !current) {
     if (navigate) {
@@ -905,7 +968,7 @@ function parseTsv(text: string): string[][] {
 function copySelection(): void {
   const sel = selectedCell.value ?? engine?.getSelection() ?? null;
   if (!sel) return;
-  const record = props.records[sel.row];
+  const record = recordAt(sel.row);
   const field = visibleFields.value[sel.col];
   if (!record || !field) return;
   const raw = record.cells[field.id] ?? null;
@@ -917,12 +980,12 @@ function copySelection(): void {
 function applyPasteGrid(grid: string[][], rawValues?: unknown[][]): void {
   const sel = selectedCell.value ?? engine?.getSelection() ?? null;
   if (!sel || !props.editable || grid.length === 0) return;
-  const maxRows = props.records.length;
+  const maxRows = absoluteRowCount();
   const maxCols = visibleFields.value.length;
   for (let r = 0; r < grid.length; r += 1) {
     const rowIndex = sel.row + r;
     if (rowIndex >= maxRows) break;
-    const record = props.records[rowIndex];
+    const record = recordAt(rowIndex);
     if (!record) continue;
     const rowTexts = grid[r] ?? [];
     const rowRaws = rawValues?.[r];
@@ -986,14 +1049,14 @@ function fillDownFromAbove(): void {
 function fillColumnRange(col: number, fromRow: number, toRow: number): void {
   if (!props.editable) return;
   const field = visibleFields.value[col];
-  const source = props.records[fromRow];
+  const source = recordAt(fromRow);
   if (!field || !source || isReadonlyField(field)) return;
   const nextValue = source.cells[field.id] ?? null;
   const start = Math.min(fromRow, toRow);
   const end = Math.max(fromRow, toRow);
   for (let row = start; row <= end; row += 1) {
     if (row === fromRow) continue;
-    const record = props.records[row];
+    const record = recordAt(row);
     if (!record) continue;
     const previous = record.cells[field.id];
     if (JSON.stringify(previous ?? null) === JSON.stringify(nextValue ?? null)) {
@@ -1090,7 +1153,7 @@ function onHostKeydown(event: KeyboardEvent): void {
   }
   if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault();
-    const record = props.records[sel.row];
+    const record = recordAt(sel.row);
     const field = visibleFields.value[sel.col];
     if (!record || !field || isReadonlyField(field)) return;
     const previous = record.cells[field.id];
@@ -1119,7 +1182,12 @@ async function onUploadFile(event: Event): Promise<void> {
   input.value = '';
   const target = pendingUpload.value;
   pendingUpload.value = null;
-  if (!file || !target || !props.uploadAttachment || uploading.value) return;
+  if (!file || !target || !props.uploadAttachment || uploading.value) {
+    if (target) {
+      props.releaseCellLock?.(target.record.id, target.field.id);
+    }
+    return;
+  }
   uploading.value = true;
   try {
     const uploaded = await props.uploadAttachment(file);
@@ -1131,6 +1199,7 @@ async function onUploadFile(event: Event): Promise<void> {
     });
   } finally {
     uploading.value = false;
+    props.releaseCellLock?.(target.record.id, target.field.id);
   }
 }
 
@@ -1155,7 +1224,7 @@ function selectRow(row: number, modifiers: { shift: boolean; meta: boolean }): v
   emit(
     'rowsSelected',
     selectedRows.value
-      .map((index) => props.records[index]?.id)
+      .map((index) => recordAt(index)?.id)
       .filter((id): id is string => Boolean(id)),
   );
 }
@@ -1180,8 +1249,9 @@ function toggleMultiChoice(choiceId: string): void {
 
 function handleViewport(stats: GridStats): void {
   layoutEpoch.value += 1;
-  if (stats.rows.end === lastViewportEnd) return;
-  lastViewportEnd = stats.rows.end;
+  const key = `${stats.rows.start}:${stats.rows.end}`;
+  if (key === lastViewportKey) return;
+  lastViewportKey = key;
   emit('viewport', stats);
 }
 
@@ -1190,7 +1260,7 @@ function columnFooter(col: number): string | null {
   if (!field) return null;
   // 企微：首列「记录数」，数字/货币列「求和」
   if (col === 0) {
-    return `记录数 ${props.records.length}`;
+    return `记录数 ${absoluteRowCount()}`;
   }
   if (field.type === 'number' || field.type === 'currency') {
     let sum = 0;
@@ -1211,13 +1281,13 @@ function createEngine(): void {
   if (!host.value) return;
   engine = new CanvasGridEngine(host.value, {
     columns: columns.value,
-    rowCount: props.rowCount ?? props.records.length,
+    rowCount: absoluteRowCount(),
     rowHeight: props.rowHeight,
     freezeColumnCount: props.freezeColumnCount,
     getCell: renderCell,
     getColumnFooter: columnFooter,
     getRowColor: (row) => {
-      const record = props.records[row];
+      const record = recordAt(row);
       return record ? (props.rowColors[record.id] ?? null) : null;
     },
     onCellClick: onCellClick,
@@ -1255,11 +1325,11 @@ function createEngine(): void {
 onMounted(createEngine);
 
 watch(
-  [() => props.fields, () => props.records, () => props.rowCount],
+  [() => props.fields, () => props.records, () => props.rowCount, () => props.recordOffset, () => props.recordCacheEpoch],
   () => {
     if (!engine) return;
     engine.setColumns(columns.value);
-    engine.setRowCount(props.rowCount ?? props.records.length);
+    engine.setRowCount(absoluteRowCount());
     engine.setCellProvider(renderCell);
     engine.setColumnFooterProvider(columnFooter);
     engine.invalidate();
@@ -1352,6 +1422,44 @@ const peerCursorOverlays = computed(() => {
   }>;
 });
 
+const peerCellLockOverlays = computed(() => {
+  void layoutEpoch.value;
+  if (!engine || !props.peerCellLocks?.length) return [];
+  const fields = visibleFields.value;
+  const hostH = host.value?.clientHeight ?? 0;
+  const hostW = host.value?.clientWidth ?? 0;
+  const out: Array<{ key: string; label: string; style: Record<string, string> }> =
+    [];
+  for (const lock of props.peerCellLocks) {
+    const local = props.records.findIndex((r) => r.id === lock.recordId);
+    if (local < 0) continue;
+    const absRow = local + (props.recordOffset ?? 0);
+    const col = fields.findIndex((f) => f.id === lock.fieldId);
+    if (col < 0) continue;
+    const rect = engine.cellRect(absRow, col);
+    if (
+      rect.y + rect.height < 0 ||
+      rect.y > hostH ||
+      rect.x + rect.width < 0 ||
+      rect.x > hostW
+    ) {
+      continue;
+    }
+    out.push({
+      key: `${lock.userId}:${lock.recordId}:${lock.fieldId}`,
+      label: `${(lock.name || lock.account || '?').trim()} 编辑中`,
+      style: {
+        left: `${rect.x}px`,
+        top: `${rect.y}px`,
+        width: `${Math.max(rect.width, 72)}px`,
+        height: `${rect.height}px`,
+        '--peer-color': lock.color || '#5b8ff9',
+      },
+    });
+  }
+  return out;
+});
+
 defineExpose({
   getEngine: () => engine,
   clearRowSelection,
@@ -1377,6 +1485,15 @@ defineExpose({
     >
       <span class="peer-cursor-caret" aria-hidden="true" />
       <span class="peer-cursor-label">{{ cursor.label }}</span>
+    </div>
+    <div
+      v-for="lock in peerCellLockOverlays"
+      :key="lock.key"
+      class="peer-cell-lock"
+      data-testid="peer-cell-lock"
+      :style="lock.style"
+    >
+      <span class="peer-cell-lock-label">{{ lock.label }}</span>
     </div>
     <div
       v-if="insertMenu"
@@ -1884,5 +2001,29 @@ defineExpose({
 }
 .cell-context-menu {
   min-width: 240px;
+}
+
+.peer-cell-lock {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--peer-color, #5b8ff9);
+  background: color-mix(in srgb, var(--peer-color, #5b8ff9) 12%, transparent);
+  z-index: 3;
+}
+.peer-cell-lock-label {
+  position: absolute;
+  left: 0;
+  top: -18px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: #fff;
+  background: var(--peer-color, #5b8ff9);
 }
 </style>

@@ -126,7 +126,26 @@ PERF_CONCURRENCY=30 PERF_DURATION_SECONDS=20 node scripts/perf/form-load.mjs
 
 ## 5.2 千万行窗口拉取（`perf:window`）
 
-依赖仓库根目录 `.perf-env.json`（含 `token` / `sheetId` 指向千万行表）。**本轮未准备该数据文件，未跑。** 命令：`pnpm perf:window`。
+造数（一次性，约 25–30 分钟 / 本机 Docker Postgres）：
+
+```bash
+pnpm perf:seed-10m   # 写根目录 .perf-env.json（已 gitignore）
+pnpm perf:window
+```
+
+结果（**2026-10-26 新鲜**，10_000_000 行，`records(sheet_id,id)` 游标深翻，200 次随机 UUID cursor，产物 `artifacts/perf/window-fetch.json`）：
+
+```json
+{
+  "sheetId": "c7832a8a-0f0d-45e9-92a1-2cae46563dd2",
+  "requests": 200,
+  "rowsPerPage": 100,
+  "pageSizes": { "min": 100, "max": 100 },
+  "latencyMs": { "p50": 52.74, "p95": 77.66, "p99": 180.05, "max": 288.07 }
+}
+```
+
+判定：每页恒为 100 行；p95 **77.66ms** ≪ 门禁 250ms。**通过。**
 
 ## 6. 扩展到百万级表单提交的路径
 
@@ -158,5 +177,5 @@ K8s API Deployment 已带抓取注解；无 Prometheus 时可用 `curl`.
 | 索引 | `perf-foundation.e2e-spec.ts` | `pg_indexes` 含 claim_status | 含于全量 API e2e |
 | 网格滚动 | `pnpm perf:grid` | 视口绑定 + Offscreen | **通过**（p95≈18ms） |
 | 表单持续提交 | `pnpm perf:form` | 成功率≥0.99，p95≤1000ms | **通过**（30 并发） |
-| 窗口拉取 | `pnpm perf:window` | 见 thresholds.json | 未跑（缺 `.perf-env.json`） |
+| 窗口拉取 | `pnpm perf:window` | p95≤250ms（thresholds） | **通过（2026-10-26，p95≈78ms）** |
 | 领取闭环 | `serial-claim.e2e-spec.ts` | 单次与并发行为符合预期 | Playwright 9/9 |

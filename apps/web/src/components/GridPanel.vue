@@ -7,6 +7,10 @@ import { useFloatDrag } from '../composables/useFloatDrag';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
+import type {
+  CellLockAcquireResult,
+  CollabCellLock,
+} from '../sync/collab-socket';
 import type { GridStats } from '../grid-canvas/engine';
 import type {
   ColorRule,
@@ -34,6 +38,12 @@ const props = withDefaults(
     sheetName: string;
     fields: FieldDto[];
     records: RecordDto[];
+    /** Absolute total rows (virtual scrollbar); omit = records.length */
+    totalRecordCount?: number | null;
+    /** Absolute row index of records[0] */
+    recordOffset?: number;
+    recordLookup?: ((row: number) => RecordDto | undefined) | null;
+    recordCacheEpoch?: number;
     nextCursor: string | null;
     loading: boolean;
     /** false = 只读（工作区 viewer / 内容权限 view），禁止改格与结构变更 */
@@ -62,8 +72,14 @@ const props = withDefaults(
         colIndex?: number;
       };
     }>;
+    acquireCellLock?: (
+      recordId: string,
+      fieldId: string,
+    ) => Promise<CellLockAcquireResult>;
+    releaseCellLock?: (recordId: string, fieldId: string) => void;
+    peerCellLocks?: CollabCellLock[];
   }>(),
-  { editable: true },
+  { editable: true, totalRecordCount: null, recordOffset: 0, recordLookup: null, recordCacheEpoch: 0, acquireCellLock: undefined, releaseCellLock: undefined, peerCellLocks: () => [] },
 );
 
 const emit = defineEmits<{
@@ -79,6 +95,7 @@ const emit = defineEmits<{
     },
   ];
   loadMore: [];
+  ensureWindow: [stats: GridStats];
   refresh: [];
   undo: [];
   redo: [];
@@ -839,6 +856,10 @@ function confirmDeleteField(): void {
 }
 
 function handleViewport(stats: GridStats): void {
+  if (props.totalRecordCount != null && props.totalRecordCount > props.records.length) {
+    emit('ensureWindow', stats);
+    return;
+  }
   if (!props.nextCursor || props.loading) return;
   if (stats.rows.end >= props.records.length - 5) {
     emit('loadMore');
@@ -1642,6 +1663,10 @@ defineExpose({
         ref="gridRef"
         :fields="fields"
         :records="displayRecords"
+        :row-count="totalRecordCount ?? undefined"
+        :record-offset="recordOffset ?? 0"
+        :record-lookup="recordLookup"
+        :record-cache-epoch="recordCacheEpoch ?? 0"
         :editable="editable"
         :show-add-column="editable"
         :row-height="rowHeight ?? 36"
@@ -1653,6 +1678,9 @@ defineExpose({
         :sheets="sheets"
         :upload-attachment="editable ? uploadAttachment : undefined"
         :peer-cursors="peerCursors"
+        :acquire-cell-lock="acquireCellLock"
+        :release-cell-lock="releaseCellLock"
+        :peer-cell-locks="peerCellLocks"
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
         @add-column="openFieldPicker"
@@ -1670,7 +1698,7 @@ defineExpose({
 
     <!-- 底栏已画在 Canvas 内；保留测试钩子 -->
     <span class="sr-only" data-testid="record-count">
-      记录数 {{ displayRecords.length }}
+      记录数 {{ totalRecordCount ?? displayRecords.length }}
     </span>
 
     <div

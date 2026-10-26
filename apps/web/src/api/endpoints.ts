@@ -328,10 +328,18 @@ export const endpoints = {
       method: 'DELETE',
     }),
 
-  listRecords: (sheetId: string, cursor?: string | null, limit = 100) => {
+  listRecords: (
+    sheetId: string,
+    cursor?: string | null,
+    limit = 100,
+    offset?: number,
+  ) => {
     const params = new URLSearchParams();
     params.set('limit', String(limit));
     if (cursor) params.set('cursor', cursor);
+    if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) {
+      params.set('offset', String(Math.floor(offset)));
+    }
     return api<RecordPage>(`/sheets/${sheetId}/records?${params.toString()}`);
   },
 

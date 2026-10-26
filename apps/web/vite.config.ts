@@ -28,13 +28,15 @@ export default defineConfig({
         target: 'http://127.0.0.1:3000',
         changeOrigin: true,
       },
+      // 客户端已直连 :3000；此处保留给手工探测。target 用 http（勿用 ws://），
+      // 否则 Vite 代理会出现握手成功但后续帧丢失（user_changes 无 accept）。
       '/collab': {
-        target: 'ws://127.0.0.1:3000',
+        target: 'http://127.0.0.1:3000',
         ws: true,
         changeOrigin: true,
       },
       '/live': {
-        target: 'ws://127.0.0.1:3000',
+        target: 'http://127.0.0.1:3000',
         ws: true,
         changeOrigin: true,
       },

@@ -85,6 +85,10 @@ export interface RecordDto {
 export interface RecordPage {
   records: RecordDto[];
   nextCursor: string | null;
+  /** 表内总行数（用于虚拟滚动条高度） */
+  total?: number;
+  /** 本次按 offset 拉取时的起始下标 */
+  offset?: number;
 }
 
 export interface CommentDto {

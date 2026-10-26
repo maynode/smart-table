@@ -644,17 +644,29 @@ export class SheetsService {
     );
 
     const take = resolveRecordPageLimit(query.limit);
+    const useOffset =
+      typeof query.offset === 'number' &&
+      Number.isFinite(query.offset) &&
+      query.offset >= 0 &&
+      !query.cursor;
+
     const rows = await this.prisma.recordRow.findMany({
       where: {
         sheetId,
         ...(query.cursor ? { id: { gt: query.cursor } } : {}),
       },
       orderBy: { id: 'asc' },
+      ...(useOffset ? { skip: query.offset } : {}),
       take: take + 1,
     });
 
     const hasMore = rows.length > take;
     const records = hasMore ? rows.slice(0, take) : rows;
+    // 仅首页带 total，避免大表每次窗口拉取都 COUNT
+    const total =
+      !query.cursor && (query.offset ?? 0) === 0
+        ? await this.prisma.recordRow.count({ where: { sheetId } })
+        : undefined;
 
     return {
       records: this.permissions.applyReadScope(decision, records, userId),
@@ -662,6 +674,8 @@ export class SheetsService {
         hasMore && records.length > 0
           ? records[records.length - 1].id
           : null,
+      ...(total !== undefined ? { total } : {}),
+      offset: useOffset ? query.offset : undefined,
     };
   }
 

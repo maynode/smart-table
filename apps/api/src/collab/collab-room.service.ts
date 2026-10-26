@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SheetsService } from '../sheets/sheets.service';
 import { CommitChangesService } from '../sheets/commit-changes.service';
 import type { CollabClientMsg, CollabServerMsg } from './collab.types';
+import { CellLockRegistry } from './cell-lock.registry';
 
 interface RoomClient {
   socket: WebSocket;
@@ -25,6 +26,7 @@ interface RoomClient {
 export class CollabRoomService {
   private readonly logger = new Logger(CollabRoomService.name);
   private readonly rooms = new Map<string, Set<RoomClient>>();
+  private readonly cellLocks = new CellLockRegistry();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -97,6 +99,7 @@ export class CollabRoomService {
       sheetRev: sheet?.sheetRev ?? 0,
     });
     this.broadcastPresence(sheetId);
+    this.sendCellLocksSnapshot(client);
   }
 
   /** 用户改头像/用户名后刷新各表 presence，无需重连 */
@@ -130,6 +133,25 @@ export class CollabRoomService {
     if (!room) return;
     room.delete(client);
     const stillPresent = [...room].some((c) => c.userId === client.userId);
+    if (!stillPresent) {
+      const freed = this.cellLocks.releaseAllForUser(
+        client.sheetId,
+        client.userId,
+      );
+      for (const lock of freed) {
+        this.broadcast(
+          client.sheetId,
+          {
+            type: 'cell_lock_update',
+            action: 'released',
+            recordId: lock.recordId,
+            fieldId: lock.fieldId,
+            holder: null,
+          },
+          client,
+        );
+      }
+    }
     if (room.size === 0) this.rooms.delete(client.sheetId);
     else {
       // 仅当该用户已无任何连接时才广播离开（同账号其他页签仍在则不算离线）
@@ -201,9 +223,11 @@ export class CollabRoomService {
           sheetRev: sheet?.sheetRev ?? 0,
         });
         this.broadcastPresence(client.sheetId);
+        this.sendCellLocksSnapshot(client);
         return;
       }
       case 'heart_beat':
+        this.cellLocks.renewForUser(client.sheetId, client.userId);
         this.send(client.socket, { type: 'heart_beat', ok: true });
         return;
       case 'cursor_message':
@@ -219,6 +243,12 @@ export class CollabRoomService {
           },
           client,
         );
+        return;
+      case 'cell_lock_acquire':
+        this.handleCellLockAcquire(client, msg.recordId, msg.fieldId);
+        return;
+      case 'cell_lock_release':
+        this.handleCellLockRelease(client, msg.recordId, msg.fieldId);
         return;
       case 'get_changes':
         await this.sendChanges(client, msg.fromRev);
@@ -413,6 +443,106 @@ export class CollabRoomService {
       type: 'comm_notice',
       noticeType: 'DIRTY_AREA_CHANGE',
       sheetRev: newRev,
+    });
+  }
+
+  private sendCellLocksSnapshot(client: RoomClient): void {
+    this.send(client.socket, {
+      type: 'cell_locks_snapshot',
+      locks: this.cellLocks.listForSheet(client.sheetId).map((lock) => ({
+        recordId: lock.recordId,
+        fieldId: lock.fieldId,
+        userId: lock.userId,
+        account: lock.account,
+        name: lock.name,
+        color: lock.color,
+        expiresAt: lock.expiresAt,
+      })),
+    });
+  }
+
+  private handleCellLockAcquire(
+    client: RoomClient,
+    recordId: string,
+    fieldId: string,
+  ): void {
+    if (!recordId || !fieldId) {
+      this.send(client.socket, {
+        type: 'error',
+        code: 'INVALID',
+        message: 'cell_lock_acquire 缺少 recordId/fieldId',
+      });
+      return;
+    }
+    const result = this.cellLocks.tryAcquire({
+      sheetId: client.sheetId,
+      recordId,
+      fieldId,
+      userId: client.userId,
+      account: client.account,
+      name: client.name,
+      color: client.color,
+    });
+    const holder = {
+      userId: result.lock.userId,
+      account: result.lock.account,
+      name: result.lock.name,
+      color: result.lock.color,
+      expiresAt: result.lock.expiresAt,
+    };
+    this.send(client.socket, {
+      type: 'cell_lock_result',
+      ok: result.ok,
+      recordId,
+      fieldId,
+      holder,
+    });
+    if (result.ok) {
+      for (const prev of result.released) {
+        this.broadcast(client.sheetId, {
+          type: 'cell_lock_update',
+          action: 'released',
+          recordId: prev.recordId,
+          fieldId: prev.fieldId,
+          holder: null,
+        });
+      }
+      this.broadcast(client.sheetId, {
+        type: 'cell_lock_update',
+        action: 'acquired',
+        recordId,
+        fieldId,
+        holder,
+      });
+    }
+  }
+
+  private handleCellLockRelease(
+    client: RoomClient,
+    recordId: string,
+    fieldId: string,
+  ): void {
+    if (!recordId || !fieldId) return;
+    const freed = this.cellLocks.release(
+      client.sheetId,
+      recordId,
+      fieldId,
+      client.userId,
+    );
+    if (!freed) return;
+    this.send(client.socket, {
+      type: 'cell_lock_result',
+      ok: true,
+      recordId,
+      fieldId,
+      holder: undefined,
+    });
+    this.broadcast(client.sheetId, {
+      type: 'cell_lock_update',
+      action: 'released',
+      recordId,
+      fieldId,
+      holder: null,
     });
   }
 

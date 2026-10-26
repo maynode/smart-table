@@ -2,6 +2,7 @@ import { ref, type Ref } from 'vue';
 import type { SheetMutation } from 'shared';
 import { peerColorFromUserId, transformAgainstPeers } from 'shared';
 import { getToken } from '../api/client';
+import { resolveApiWsBase } from './ws-base';
 
 export interface CollabPeer {
   userId: string;
@@ -25,6 +26,20 @@ export interface CollabCursor {
   };
 }
 
+export interface CollabCellLock {
+  recordId: string;
+  fieldId: string;
+  userId: string;
+  account: string;
+  name: string;
+  color: string;
+  expiresAt: number;
+}
+
+export type CellLockAcquireResult =
+  | { ok: true }
+  | { ok: false; holderName: string; holderUserId?: string };
+
 type ServerMsg = {
   type: string;
   sheetRev?: number;
@@ -43,6 +58,12 @@ type ServerMsg = {
   cursor?: CollabCursor['cursor'];
   code?: string;
   message?: string;
+  ok?: boolean;
+  recordId?: string;
+  fieldId?: string;
+  action?: string;
+  holder?: CollabCellLock | null;
+  locks?: CollabCellLock[];
   changesets?: Array<{
     rev: number;
     mutations: SheetMutation[];
@@ -56,6 +77,7 @@ export class CollabSocket {
   readonly sheetRev: Ref<number> = ref(0);
   readonly peers: Ref<CollabPeer[]> = ref([]);
   readonly cursors: Ref<CollabCursor[]> = ref([]);
+  readonly cellLocks: Ref<CollabCellLock[]> = ref([]);
   readonly lastError: Ref<string | null> = ref(null);
 
   private ws: WebSocket | null = null;
@@ -63,6 +85,14 @@ export class CollabSocket {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private cursorTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCursor: CollabCursor['cursor'] | null = null;
+  private heldLock: { recordId: string; fieldId: string } | null = null;
+  private lockWaiters = new Map<
+    string,
+    {
+      resolve: (result: CellLockAcquireResult) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   private onAccept:
     | ((payload: {
         results: unknown[];
@@ -102,15 +132,9 @@ export class CollabSocket {
     const token = getToken();
     if (!token || typeof window === 'undefined') return;
 
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const envWs = import.meta.env.VITE_API_WS as string | undefined;
-    // Dev: same-origin /collab → Vite proxy; prod: direct API host if VITE_API_WS set
-    const apiBase =
-      envWs ??
-      (import.meta.env.DEV
-        ? `${proto}://${window.location.host}`
-        : `${proto}://${window.location.hostname}:3000`);
-    const url = `${apiBase.replace(/\/$/, '')}/collab?token=${encodeURIComponent(token)}&sheetId=${encodeURIComponent(sheetId)}`;
+    const apiBase = resolveApiWsBase();
+    if (!apiBase) return;
+    const url = `${apiBase}/collab?token=${encodeURIComponent(token)}&sheetId=${encodeURIComponent(sheetId)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
 
@@ -125,6 +149,7 @@ export class CollabSocket {
       this.connected.value = false;
       if (this.heartbeat) clearInterval(this.heartbeat);
       this.heartbeat = null;
+      this.failAllLockWaiters('协同已断开');
     };
     ws.onerror = () => {
       this.lastError.value = '协同连接失败';
@@ -135,16 +160,22 @@ export class CollabSocket {
   }
 
   disconnect(): void {
+    if (this.heldLock) {
+      this.releaseCellLock(this.heldLock.recordId, this.heldLock.fieldId);
+    }
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     if (this.cursorTimer) clearTimeout(this.cursorTimer);
     this.cursorTimer = null;
     this.pendingCursor = null;
+    this.failAllLockWaiters('协同已断开');
     this.ws?.close();
     this.ws = null;
     this.connected.value = false;
     this.peers.value = [];
     this.cursors.value = [];
+    this.cellLocks.value = [];
+    this.heldLock = null;
   }
 
   sendUserChanges(
@@ -173,6 +204,59 @@ export class CollabSocket {
       if (!next) return;
       this.send({ type: 'cursor_message', cursor: next });
     }, 50);
+  }
+
+  /**
+   * Human cell-edit lease. Offline / no WS → allow (HTTP commit path).
+   */
+  acquireCellLock(
+    recordId: string,
+    fieldId: string,
+  ): Promise<CellLockAcquireResult> {
+    if (!recordId || !fieldId) return Promise.resolve({ ok: true });
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.resolve({ ok: true });
+    }
+    if (
+      this.heldLock &&
+      (this.heldLock.recordId !== recordId ||
+        this.heldLock.fieldId !== fieldId)
+    ) {
+      this.releaseCellLock(this.heldLock.recordId, this.heldLock.fieldId);
+    }
+    const key = `${recordId}::${fieldId}`;
+    const existing = this.lockWaiters.get(key);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.resolve({ ok: false, holderName: '等待中' });
+      this.lockWaiters.delete(key);
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.lockWaiters.delete(key);
+        resolve({ ok: false, holderName: '锁定超时' });
+      }, 4_000);
+      this.lockWaiters.set(key, { resolve, timer });
+      this.send({ type: 'cell_lock_acquire', recordId, fieldId });
+    });
+  }
+
+  releaseCellLock(recordId?: string, fieldId?: string): void {
+    const target =
+      recordId && fieldId ? { recordId, fieldId } : this.heldLock;
+    if (!target) return;
+    if (
+      this.heldLock &&
+      this.heldLock.recordId === target.recordId &&
+      this.heldLock.fieldId === target.fieldId
+    ) {
+      this.heldLock = null;
+    }
+    this.send({
+      type: 'cell_lock_release',
+      recordId: target.recordId,
+      fieldId: target.fieldId,
+    });
   }
 
   /** Live 资料变更时就地补 presence（不依赖 collab 房内重推） */
@@ -226,6 +310,14 @@ export class CollabSocket {
     return out.mutation;
   }
 
+  private failAllLockWaiters(reason: string): void {
+    for (const [, waiter] of this.lockWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ ok: false, holderName: reason });
+    }
+    this.lockWaiters.clear();
+  }
+
   private send(msg: Record<string, unknown>): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(msg));
@@ -264,6 +356,9 @@ export class CollabSocket {
         this.cursors.value = this.cursors.value.filter(
           (c) => c.userId !== msg.userId,
         );
+        this.cellLocks.value = this.cellLocks.value.filter(
+          (l) => l.userId !== msg.userId,
+        );
         break;
       case 'cursor_message': {
         if (!msg.userId) break;
@@ -281,6 +376,54 @@ export class CollabSocket {
             cursor: msg.cursor ?? {},
           },
         ];
+        break;
+      }
+      case 'cell_locks_snapshot':
+        this.cellLocks.value = msg.locks ?? [];
+        break;
+      case 'cell_lock_update': {
+        if (!msg.recordId || !msg.fieldId) break;
+        if (msg.action === 'released' || !msg.holder) {
+          this.cellLocks.value = this.cellLocks.value.filter(
+            (l) =>
+              !(l.recordId === msg.recordId && l.fieldId === msg.fieldId),
+          );
+        } else {
+          this.cellLocks.value = [
+            ...this.cellLocks.value.filter(
+              (l) =>
+                !(l.recordId === msg.recordId && l.fieldId === msg.fieldId),
+            ),
+            {
+              recordId: msg.recordId,
+              fieldId: msg.fieldId,
+              userId: msg.holder.userId,
+              account: msg.holder.account,
+              name: msg.holder.name,
+              color: msg.holder.color,
+              expiresAt: msg.holder.expiresAt,
+            },
+          ];
+        }
+        break;
+      }
+      case 'cell_lock_result': {
+        if (!msg.recordId || !msg.fieldId) break;
+        const key = `${msg.recordId}::${msg.fieldId}`;
+        const waiter = this.lockWaiters.get(key);
+        if (!waiter) break;
+        clearTimeout(waiter.timer);
+        this.lockWaiters.delete(key);
+        if (msg.ok) {
+          this.heldLock = { recordId: msg.recordId, fieldId: msg.fieldId };
+          waiter.resolve({ ok: true });
+        } else {
+          waiter.resolve({
+            ok: false,
+            holderName: msg.holder?.name || msg.holder?.account || '其他成员',
+            holderUserId: msg.holder?.userId,
+          });
+        }
         break;
       }
       case 'accept_commit':

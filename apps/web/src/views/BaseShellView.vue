@@ -154,8 +154,24 @@ function sheetHasForm(sheetId: string): boolean {
 }
 const records = ref<RecordDto[]>([]);
 const nextCursor = ref<string | null>(null);
+/** Large sheet: absolute total for virtual scrollbar (null = small/drain mode). */
+const totalRecordCount = ref<number | null>(null);
+const recordOffset = ref(0);
+const WINDOW_SIZE = 2000;
+/** Start fetch before the viewport reaches the buffer edge. */
+const WINDOW_PAD = 200;
+const PREFETCH_EDGE = 600;
+const MAX_INDEX_CACHE = 12000;
+const LARGE_SHEET_THRESHOLD = 2000;
 /** 静默续拉世代号：切表时递增，丢弃过期批次 */
 const recordsLoadGen = ref(0);
+/** Absolute row -> record (large-sheet sliding cache). */
+const recordIndexCache = new Map<number, RecordDto>();
+const recordCacheEpoch = ref(0);
+const windowFetchesInFlight = new Map<number, Promise<void>>();
+let lastWindowStats: { rows: { start: number; end: number } } | null = null;
+const SCROLL_SETTLE_MS = 90;
+let scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
 const loading = ref(false);
 const bootError = ref('');
 const rowColors = ref<Record<string, string>>({});
@@ -435,6 +451,9 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       viewGroups.value = [];
       records.value = [];
       nextCursor.value = null;
+      totalRecordCount.value = null;
+      recordOffset.value = 0;
+      clearRecordWindowCache();
       messageCenter.attachSheet(null);
       return;
     }
@@ -446,10 +465,21 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     savedViewName.value = '';
     rowColors.value = {};
     viewGroups.value = [];
-    const page = await endpoints.listRecords(sheetId, null, 200);
+    recordsLoadGen.value += 1;
+    const page = await endpoints.listRecords(sheetId, null, WINDOW_SIZE, 0);
+    clearRecordWindowCache();
     records.value = page.records;
-    nextCursor.value = page.nextCursor;
-    void drainRecordsInBackground(sheetId);
+    recordOffset.value = 0;
+    const total = page.total ?? page.records.length;
+    if (total > LARGE_SHEET_THRESHOLD) {
+      totalRecordCount.value = total;
+      nextCursor.value = null;
+      putRecordWindow(0, page.records, 0);
+    } else {
+      totalRecordCount.value = null;
+      nextCursor.value = page.nextCursor;
+      void drainRecordsInBackground(sheetId);
+    }
     messageCenter.attachSheet(sheetId);
   } catch (error) {
     toast(messageOf(error));
@@ -822,6 +852,20 @@ function onPeerCursor(cursor: {
 
 const selfUserId = computed(() => auth.state.user?.id ?? '');
 /** 只展示他人光标；自己的选区不必画 */
+function acquireCellLockForGrid(recordId: string, fieldId: string) {
+  return collabSocket.acquireCellLock(recordId, fieldId);
+}
+
+function releaseCellLockForGrid(recordId: string, fieldId: string): void {
+  collabSocket.releaseCellLock(recordId, fieldId);
+}
+
+const peerCellLocks = computed(() =>
+  collabSocket.cellLocks.value.filter(
+    (l) => l.userId && l.userId !== selfUserId.value,
+  ),
+);
+
 const peerCursors = computed(() =>
   (collabSocket.cursors.value as CollabCursor[]).filter(
     (c) => c.userId && c.userId !== selfUserId.value,
@@ -908,10 +952,180 @@ async function refreshSheet(): Promise<void> {
   toast('已刷新');
 }
 
-/**
- * 静默续拉剩余行（无分页 UI）。Canvas 虚拟滚动只渲染可视区；
- * 批次在后台拼齐，体验对齐 Excel「整表在内存、滚动浏览」。
- */
+function clearRecordWindowCache(): void {
+  recordIndexCache.clear();
+  windowFetchesInFlight.clear();
+  lastWindowStats = null;
+  if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = null;
+  recordCacheEpoch.value = 0;
+}
+
+function lookupRecord(row: number): RecordDto | undefined {
+  return recordIndexCache.get(row);
+}
+
+function trimRecordIndexCache(anchor: number): void {
+  if (recordIndexCache.size <= MAX_INDEX_CACHE) return;
+  const ranked = [...recordIndexCache.keys()].sort(
+    (a, b) => Math.abs(a - anchor) - Math.abs(b - anchor),
+  );
+  const keep = new Set(ranked.slice(0, MAX_INDEX_CACHE));
+  for (const key of recordIndexCache.keys()) {
+    if (!keep.has(key)) recordIndexCache.delete(key);
+  }
+}
+
+function putRecordWindow(offset: number, list: RecordDto[], anchor: number): void {
+  for (let i = 0; i < list.length; i += 1) {
+    recordIndexCache.set(offset + i, list[i]!);
+  }
+  trimRecordIndexCache(anchor);
+  recordCacheEpoch.value += 1;
+}
+
+/** Contiguous dense window for selection/edit; paint prefers lookupRecord. */
+function materializeRecordWindow(vStart: number, vEnd: number): void {
+  if (recordIndexCache.size === 0) return;
+  let start = Math.max(0, vStart);
+  while (start > 0 && recordIndexCache.has(start - 1)) start -= 1;
+  while (start < vEnd && !recordIndexCache.has(start)) start += 1;
+  if (!recordIndexCache.has(start)) return;
+  const out: RecordDto[] = [];
+  let i = start;
+  while (recordIndexCache.has(i) && out.length < MAX_INDEX_CACHE) {
+    out.push(recordIndexCache.get(i)!);
+    i += 1;
+  }
+  if (
+    start === recordOffset.value &&
+    out.length === records.value.length &&
+    out[0] === records.value[0] &&
+    out[out.length - 1] === records.value[out.length - 1]
+  ) {
+    return;
+  }
+  records.value = out;
+  recordOffset.value = start;
+}
+
+function clampWindowOffset(total: number, preferred: number): number {
+  const maxOffset = Math.max(0, total - WINDOW_SIZE);
+  return Math.max(0, Math.min(maxOffset, preferred));
+}
+
+function cacheContiguousEnd(from: number): number {
+  let i = from;
+  while (recordIndexCache.has(i)) i += 1;
+  return i;
+}
+
+function cacheContiguousStart(from: number): number {
+  let i = from;
+  while (i > 0 && recordIndexCache.has(i - 1)) i -= 1;
+  return recordIndexCache.has(i) ? i : from;
+}
+
+function pageAlreadyCached(offset: number): boolean {
+  let hit = 0;
+  const probe = Math.min(48, WINDOW_SIZE);
+  for (let i = 0; i < probe; i += 1) {
+    if (recordIndexCache.has(offset + i)) hit += 1;
+  }
+  return hit >= probe - 2;
+}
+
+function fetchRecordWindow(sheetId: string, offset: number, anchor: number): Promise<void> {
+  if (offset < 0) return Promise.resolve();
+  if (pageAlreadyCached(offset)) return Promise.resolve();
+  const existing = windowFetchesInFlight.get(offset);
+  if (existing) return existing;
+  const gen = recordsLoadGen.value;
+  const task = (async () => {
+    try {
+      const prev = offset > 0 ? recordIndexCache.get(offset - 1) : undefined;
+      const page = prev
+        ? await endpoints.listRecords(sheetId, prev.id, WINDOW_SIZE)
+        : await endpoints.listRecords(sheetId, null, WINDOW_SIZE, offset);
+      if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) return;
+      const appliedOffset = prev ? offset : (page.offset ?? offset);
+      putRecordWindow(appliedOffset, page.records, anchor);
+      const stats = lastWindowStats;
+      if (stats) materializeRecordWindow(stats.rows.start, stats.rows.end);
+      else materializeRecordWindow(anchor, anchor + 1);
+    } catch {
+      /* keep cache */
+    } finally {
+      windowFetchesInFlight.delete(offset);
+    }
+  })();
+  windowFetchesInFlight.set(offset, task);
+  return task;
+}
+
+function scheduleJumpFetch(sheetId: string, total: number): void {
+  if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = setTimeout(() => {
+    scrollSettleTimer = null;
+    if (totalRecordCount.value == null || activeSheet.value?.id !== sheetId) return;
+    const live = lastWindowStats;
+    if (!live) return;
+    const mid = Math.floor((live.rows.start + live.rows.end) / 2);
+    const primary = clampWindowOffset(total, mid - Math.floor(WINDOW_SIZE / 2));
+    void fetchRecordWindow(sheetId, primary, mid);
+  }, SCROLL_SETTLE_MS);
+}
+
+async function ensureRecordWindow(stats: { rows: { start: number; end: number } }): Promise<void> {
+  if (totalRecordCount.value == null || !activeSheet.value) return;
+  const total = totalRecordCount.value;
+  const sheetId = activeSheet.value.id;
+  lastWindowStats = stats;
+  materializeRecordWindow(stats.rows.start, stats.rows.end);
+
+  const viewStart = stats.rows.start;
+  const viewEnd = stats.rows.end;
+  const mid = Math.floor((viewStart + viewEnd) / 2);
+
+  // Contiguous loaded span intersecting viewport (or nearest below).
+  let haveStart = recordOffset.value;
+  let haveEnd = recordOffset.value + records.value.length;
+  if (recordIndexCache.has(viewStart)) {
+    haveStart = cacheContiguousStart(viewStart);
+    haveEnd = cacheContiguousEnd(viewStart);
+  } else if (records.value.length > 0) {
+    haveStart = recordOffset.value;
+    haveEnd = recordOffset.value + records.value.length;
+  }
+
+  const covered = haveEnd > haveStart && viewStart >= haveStart && viewEnd <= haveEnd;
+  const gapAhead = viewStart > haveEnd + WINDOW_SIZE;
+  const gapBehind = viewEnd < haveStart - WINDOW_SIZE;
+
+  // Big scrollbar jump → one OFFSET after settle (deep skip is expensive).
+  if (gapAhead || gapBehind) {
+    scheduleJumpFetch(sheetId, total);
+    return;
+  }
+
+  // Continuous scroll: ALWAYS extend from the unloaded edge via keyset.
+  // Root bug was prefetching haveEnd-PAD (already cached) → never fetched ahead.
+  if (viewEnd + PREFETCH_EDGE >= haveEnd) {
+    void fetchRecordWindow(sheetId, haveEnd, mid);
+    void fetchRecordWindow(sheetId, haveEnd + WINDOW_SIZE, mid);
+  }
+  if (viewStart - PREFETCH_EDGE <= haveStart) {
+    const back = clampWindowOffset(total, haveStart - WINDOW_SIZE);
+    void fetchRecordWindow(sheetId, back, mid);
+  }
+  if (!covered) {
+    if (viewStart >= haveEnd) void fetchRecordWindow(sheetId, haveEnd, mid);
+    if (viewEnd <= haveStart) {
+      void fetchRecordWindow(sheetId, clampWindowOffset(total, haveStart - WINDOW_SIZE), mid);
+    }
+  }
+}
+
 async function drainRecordsInBackground(sheetId: string): Promise<void> {
   const gen = ++recordsLoadGen.value;
   let cursor = nextCursor.value;
@@ -1727,6 +1941,8 @@ async function applyViewQuery(query: ViewQuery): Promise<void> {
     const result = await endpoints.querySheet(activeSheet.value.id, query);
     records.value = result.records;
     nextCursor.value = null;
+    totalRecordCount.value = null;
+    recordOffset.value = 0;
     rowColors.value = result.colors;
     viewGroups.value = result.groups;
     rowHeightPx.value =
@@ -2585,6 +2801,10 @@ onBeforeUnmount(() => {
               :sheet-name="activeSheet.name"
               :fields="activeSheet.fields ?? []"
               :records="records"
+              :total-record-count="totalRecordCount"
+              :record-offset="recordOffset"
+              :record-lookup="lookupRecord"
+              :record-cache-epoch="recordCacheEpoch"
               :next-cursor="nextCursor"
               :loading="loading"
               :editable="canEditSheet"
@@ -2595,10 +2815,14 @@ onBeforeUnmount(() => {
               :sheets="sheets"
               :upload-attachment="uploadToSheet"
               :peer-cursors="peerCursors"
+              :acquire-cell-lock="acquireCellLockForGrid"
+              :release-cell-lock="releaseCellLockForGrid"
+              :peer-cell-locks="peerCellLocks"
               @add-row="addRow"
               @insert-rows="insertRows"
               @insert-columns="insertColumns"
               @load-more="loadMore"
+              @ensure-window="ensureRecordWindow"
               @refresh="refreshSheet"
               @undo="undoEdit"
               @redo="redoEdit"
@@ -2689,6 +2913,10 @@ onBeforeUnmount(() => {
             :sheet-name="activeSheet.name"
             :fields="activeSheet.fields ?? []"
             :records="records"
+            :total-record-count="totalRecordCount"
+            :record-offset="recordOffset"
+            :record-lookup="lookupRecord"
+            :record-cache-epoch="recordCacheEpoch"
             :next-cursor="nextCursor"
             :loading="loading"
             :editable="canEditSheet"
@@ -2699,10 +2927,14 @@ onBeforeUnmount(() => {
             :sheets="sheets"
             :upload-attachment="uploadToSheet"
             :peer-cursors="peerCursors"
+            :acquire-cell-lock="acquireCellLockForGrid"
+            :release-cell-lock="releaseCellLockForGrid"
+            :peer-cell-locks="peerCellLocks"
             @add-row="addRow"
             @insert-rows="insertRows"
             @insert-columns="insertColumns"
             @load-more="loadMore"
+            @ensure-window="ensureRecordWindow"
             @refresh="refreshSheet"
             @undo="undoEdit"
             @redo="redoEdit"

@@ -18,6 +18,16 @@ export type CollabClientMsg =
         colIndex?: number;
       };
     }
+  | {
+      type: 'cell_lock_acquire';
+      recordId: string;
+      fieldId: string;
+    }
+  | {
+      type: 'cell_lock_release';
+      recordId: string;
+      fieldId: string;
+    }
   | { type: 'get_changes'; fromRev: number };
 
 export type CollabServerMsg =
@@ -57,6 +67,44 @@ export type CollabServerMsg =
       name: string;
       color: string;
       cursor: Record<string, unknown>;
+    }
+  | {
+      type: 'cell_lock_result';
+      ok: boolean;
+      recordId: string;
+      fieldId: string;
+      holder?: {
+        userId: string;
+        account: string;
+        name: string;
+        color: string;
+        expiresAt: number;
+      };
+    }
+  | {
+      type: 'cell_lock_update';
+      action: 'acquired' | 'released';
+      recordId: string;
+      fieldId: string;
+      holder: {
+        userId: string;
+        account: string;
+        name: string;
+        color: string;
+        expiresAt: number;
+      } | null;
+    }
+  | {
+      type: 'cell_locks_snapshot';
+      locks: Array<{
+        recordId: string;
+        fieldId: string;
+        userId: string;
+        account: string;
+        name: string;
+        color: string;
+        expiresAt: number;
+      }>;
     }
   | { type: 'user_leave'; userId: string }
   | {
