@@ -124,7 +124,12 @@ export async function api<T>(
       path === '/auth/register' ||
       path === '/auth/recovery/question' ||
       path === '/auth/recovery/reset';
-    if (response.status === 401 && !isAuthAttempt) {
+    // 公开视图缺密码也返回 401，不算登录失效
+    if (
+      response.status === 401 &&
+      !isAuthAttempt &&
+      !path.startsWith('/public-views/')
+    ) {
       window.dispatchEvent(new CustomEvent('st:unauthorized'));
     }
     throw new ApiError(response.status, data);

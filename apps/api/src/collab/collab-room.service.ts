@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { WebSocket } from 'ws';
 import type { SheetMutation } from 'shared';
-import { COMMIT_ERROR } from 'shared';
+import { COMMIT_ERROR, peerColorFromUserId } from 'shared';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { SheetsService } from '../sheets/sheets.service';
@@ -13,7 +13,10 @@ interface RoomClient {
   userId: string;
   account: string;
   name: string;
-  colorId: number;
+  /** 由 userId 哈希得到的稳定色（无人数上限） */
+  color: string;
+  avatarSeed: string;
+  avatarUrl: string | null;
   sheetId: string;
 }
 
@@ -21,7 +24,6 @@ interface RoomClient {
 export class CollabRoomService {
   private readonly logger = new Logger(CollabRoomService.name);
   private readonly rooms = new Map<string, Set<RoomClient>>();
-  private colorSeq = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,20 +65,22 @@ export class CollabRoomService {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });
-    const client: RoomClient = {
-      socket,
-      userId: payload.sub,
-      account: user?.account ?? payload.account ?? payload.sub,
-      name: user?.name ?? user?.account ?? payload.sub,
-      colorId: (this.colorSeq++ % 12) + 1,
-      sheetId,
-    };
 
     let room = this.rooms.get(sheetId);
     if (!room) {
       room = new Set();
       this.rooms.set(sheetId, room);
     }
+    const client: RoomClient = {
+      socket,
+      userId: payload.sub,
+      account: user?.account ?? payload.account ?? payload.sub,
+      name: user?.name ?? user?.account ?? payload.sub,
+      color: peerColorFromUserId(payload.sub),
+      avatarSeed: user?.avatarSeed || user?.account || payload.sub,
+      avatarUrl: user?.avatarUrl ?? null,
+      sheetId,
+    };
     room.add(client);
 
     socket.on('message', (raw) => {
@@ -97,12 +101,20 @@ export class CollabRoomService {
     const room = this.rooms.get(client.sheetId);
     if (!room) return;
     room.delete(client);
+    const stillPresent = [...room].some((c) => c.userId === client.userId);
     if (room.size === 0) this.rooms.delete(client.sheetId);
     else {
-      this.broadcast(client.sheetId, {
-        type: 'user_leave',
-        userId: client.userId,
-      }, client);
+      // 仅当该用户已无任何连接时才广播离开（同账号其他页签仍在则不算离线）
+      if (!stillPresent) {
+        this.broadcast(
+          client.sheetId,
+          {
+            type: 'user_leave',
+            userId: client.userId,
+          },
+          client,
+        );
+      }
       this.broadcastPresence(client.sheetId);
     }
   }
@@ -110,12 +122,30 @@ export class CollabRoomService {
   private broadcastPresence(sheetId: string): void {
     const room = this.rooms.get(sheetId);
     if (!room) return;
-    const members = [...room].map((c) => ({
-      userId: c.userId,
-      account: c.account,
-      name: c.name,
-      colorId: c.colorId,
-    }));
+    const byUser = new Map<
+      string,
+      {
+        userId: string;
+        account: string;
+        name: string;
+        color: string;
+        avatarSeed: string;
+        avatarUrl: string | null;
+      }
+    >();
+    for (const c of room) {
+      if (!byUser.has(c.userId)) {
+        byUser.set(c.userId, {
+          userId: c.userId,
+          account: c.account,
+          name: c.name,
+          color: c.color,
+          avatarSeed: c.avatarSeed,
+          avatarUrl: c.avatarUrl,
+        });
+      }
+    }
+    const members = [...byUser.values()];
     const msg: CollabServerMsg = { type: 'user_newinfos', members };
     for (const c of room) this.send(c.socket, msg);
   }
@@ -155,6 +185,8 @@ export class CollabRoomService {
             type: 'cursor_message',
             userId: client.userId,
             account: client.account,
+            name: client.name,
+            color: client.color,
             cursor: msg.cursor ?? {},
           },
           client,
@@ -303,6 +335,38 @@ export class CollabRoomService {
       client,
     );
     this.broadcast(client.sheetId, {
+      type: 'comm_notice',
+      noticeType: 'DIRTY_AREA_CHANGE',
+      sheetRev: newRev,
+    });
+  }
+
+  /**
+   * HTTP `commitchanges` 成功后广播，使其他页签/用户不刷新也能看到。
+   * （WS 路径在 handleUserChanges 内已广播；此处补齐离线/回退通道）
+   */
+  async publishHttpCommit(params: {
+    sheetId: string;
+    authorId: string;
+    commitId: string;
+    mutations: unknown[];
+  }): Promise<void> {
+    const room = this.rooms.get(params.sheetId);
+    if (!room || room.size === 0) return;
+    if (!params.mutations.length) return;
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: params.sheetId },
+    });
+    const newRev = sheet?.sheetRev ?? 0;
+    this.broadcast(params.sheetId, {
+      type: 'new_changes',
+      baseRev: Math.max(0, newRev - 1),
+      newRev,
+      commitId: params.commitId,
+      authorId: params.authorId,
+      mutations: params.mutations as SheetMutation[],
+    });
+    this.broadcast(params.sheetId, {
       type: 'comm_notice',
       noticeType: 'DIRTY_AREA_CHANGE',
       sheetRev: newRev,

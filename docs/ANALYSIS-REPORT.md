@@ -8,7 +8,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `messages` | 对话回合（user/assistant；可选 choice 选项） |
+| `messages` | 对话回合（user/assistant；可选 choice 选项；user 可带 `attachments` 附图） |
 | `steps` | 进度步骤：ask → explore → generate → done |
 | `sheetIds` | 参与分析的工作表 id 列表 |
 | `reportMarkdown` | 生成完成后的报告正文 |
@@ -30,10 +30,12 @@
 | `GET` | `/analysis-reports/:id` | 详情（含 messages / steps / markdown）；生成中轮询此接口 |
 | `PATCH` | `/analysis-reports/:id` | 重命名：`{ name }` |
 | `DELETE` | `/analysis-reports/:id` | 删除 |
-| `POST` | `/analysis-reports/:id/answer` | 作答：`{ optionId?, text?, skip? }`；选表后入队生成并立即返回 `exploring` |
+| `POST` | `/analysis-reports/:id/chat` | 自由对话：`{ text?, attachments? }`（文本与附件至少一个）；附件为已上传的 `{ url, name, mimetype, size }` |
+| `POST` | `/analysis-reports/:id/attachments` | multipart 上传任意文件（单个小于 100MB，数量不限）；计入工作区存储配额 |
+| `POST` | `/analysis-reports/:id/answer` | 作答：`{ optionId?, text?, skip? }`；选表后入队生成并立即返回 `exploring`（旧引导路径） |
 | `POST` | `/analysis-reports/:id/generate` | 在已有 `sheetIds` 上重新生成（异步，返回 `exploring`） |
 
-单表文档创建后可直接确认；多表时助手给出表选项、`综合/全景`、`请输入其他…`。
+主路径为右侧自由对话（可粘贴/上传多个任意文件）；需要完整报告时用户直接说「生成分析报告」。`answer` / 选表引导仍保留兼容。
 
 ## 3. 生成链路（异步）
 
@@ -44,7 +46,7 @@
 
 ## 4. 前端
 
-- `AnalysisReportPanel`：左历史（多份时）、中报告画布（简易 Markdown）、右对话与步骤；生成中轮询；失败展示 `error`；支持删除。
+- `AnalysisReportPanel`：嵌入 Base 主区；左报告画布（简易 Markdown）、右自由对话；支持选文件/粘贴上传（不限个数、单个小于 100MB；图片缩略图、其它文件名卡片）；生成中轮询；失败展示 `error`；支持删除。
 - Base 侧栏「分析报告」→ 打开本面板；「仪表盘」仍打开 `DashboardPanel`。
 
 ## 5. 环境变量

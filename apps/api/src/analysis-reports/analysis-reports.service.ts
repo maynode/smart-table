@@ -8,8 +8,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import { QuotasService } from '../quotas/quotas.service';
+import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import {
+  chatAnalysisReply,
   generateAnalysisMarkdown,
   type SheetDigest,
 } from './analysis-llm.adapter';
@@ -18,10 +21,12 @@ import {
   markSteps,
   newMessageId,
   type AnalysisMessage,
+  type AnalysisMessageAttachment,
 } from './analysis-steps';
 
 const SAMPLE_LIMIT = 200;
 const TOP_VALUE_LIMIT = 5;
+const ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 
 @Injectable()
 export class AnalysisReportsService {
@@ -31,6 +36,8 @@ export class AnalysisReportsService {
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
     private readonly permissions: PermissionsService,
+    private readonly storage: StorageService,
+    private readonly quotas: QuotasService,
   ) {}
 
   async list(baseId: string, userId: string) {
@@ -58,57 +65,185 @@ export class AnalysisReportsService {
     const sheets = await this.listReadableSheets(baseId, userId);
 
     const now = new Date().toISOString();
-    const messages: AnalysisMessage[] = [
-      {
-        id: newMessageId(),
-        role: 'user',
-        content: '帮我分析表格数据，生成分析报告',
-        kind: 'text',
-        createdAt: now,
-      },
-      {
-        id: newMessageId(),
-        role: 'assistant',
-        content:
-          sheets.length === 0
-            ? '当前文档没有可分析的工作表，请先新建表格或确认内容权限后再试。'
-            : sheets.length === 1
-              ? `当前文档包含工作表「${sheets[0].name}」。确认后我将开始分析。`
-              : `当前文档包含 ${sheets.length} 张表，您想分析哪张表的数据？`,
-        kind: sheets.length <= 1 ? 'text' : 'choice',
-        options:
-          sheets.length <= 1
-            ? undefined
-            : [
-                ...sheets.map((s) => ({
-                  id: `sheet:${s.id}`,
-                  label: s.name,
-                })),
-                {
-                  id: 'all',
-                  label: `综合/全景（${sheets.length} 张表都看）`,
-                },
-                { id: 'other', label: '请输入其他…' },
-              ],
-        createdAt: now,
-      },
-    ];
-
-    const sheetIds =
-      sheets.length === 1 ? [sheets[0].id] : ([] as string[]);
+    const welcome =
+      sheets.length === 0
+        ? '你好，我是分析助手。当前文档还没有可分析的工作表，先准备好数据再来聊。'
+        : `你好，我是分析助手。当前可读 ${sheets.length} 张表，直接告诉我你想了解什么即可，例如「数据概况」或「生成分析报告」。`;
 
     return this.prisma.analysisReport.create({
       data: {
         baseId: base.id,
         name: (name?.trim() || '分析报告') as string,
-        status: sheets.length === 0 ? 'failed' : 'asking',
-        messages: messages as unknown as Prisma.InputJsonValue,
-        steps: markSteps('ask') as unknown as Prisma.InputJsonValue,
-        sheetIds: sheetIds as unknown as Prisma.InputJsonValue,
+        status: sheets.length === 0 ? 'failed' : 'draft',
+        messages: [
+          {
+            id: newMessageId(),
+            role: 'assistant',
+            content: welcome,
+            kind: 'text',
+            createdAt: now,
+          },
+        ] as unknown as Prisma.InputJsonValue,
+        steps: [] as unknown as Prisma.InputJsonValue,
+        sheetIds: sheets.map((s) => s.id) as unknown as Prisma.InputJsonValue,
         createdBy: userId,
         error: sheets.length === 0 ? '没有可分析的工作表' : null,
       },
     });
+  }
+
+  async uploadAttachment(
+    id: string,
+    userId: string,
+    buffer: Buffer,
+    mimetype: string,
+    originalName: string,
+  ) {
+    const report = await this.requireReport(id, userId, 'editor');
+    if (!buffer.length) {
+      throw new BadRequestException('未上传文件');
+    }
+    if (buffer.byteLength > ATTACHMENT_MAX_BYTES) {
+      throw new BadRequestException('单个文件需小于 100MB');
+    }
+    const base = await this.prisma.base.findUnique({
+      where: { id: report.baseId },
+    });
+    if (!base) throw new NotFoundException('Base 不存在');
+    await this.quotas.assertStorage(base.workspaceId, buffer.byteLength);
+    const saved = await this.storage.saveUpload(
+      buffer,
+      mimetype || 'application/octet-stream',
+      originalName || 'file',
+    );
+    await this.quotas.recordStorage(base.workspaceId, saved.key, saved.size);
+    return {
+      url: saved.url,
+      name: saved.name,
+      mimetype: saved.mimetype,
+      size: saved.size,
+    } satisfies AnalysisMessageAttachment;
+  }
+
+  /** 自由对话：用户发消息（可附任意文件）→ AI 回复；需要时同步更新左侧 Markdown 报告。 */
+  async chat(
+    id: string,
+    userId: string,
+    text: string,
+    attachments?: AnalysisMessageAttachment[],
+  ) {
+    const content = text?.trim() ?? '';
+    const files = normalizeAttachments(attachments);
+    if (!content && !files.length) {
+      throw new BadRequestException('请输入消息或添加附件');
+    }
+
+    const report = await this.requireReport(id, userId, 'editor');
+    if (report.status === 'exploring' || report.status === 'generating') {
+      throw new BadRequestException('正在回复中，请稍候');
+    }
+    if (report.status === 'failed' && !(report.sheetIds as string[])?.length) {
+      throw new BadRequestException('当前没有可分析的工作表');
+    }
+
+    const sheets = await this.listReadableSheets(report.baseId, userId);
+    const sheetIds =
+      ((report.sheetIds as string[]) ?? []).filter((sid) =>
+        sheets.some((s) => s.id === sid),
+      ).length > 0
+        ? ((report.sheetIds as string[]) ?? []).filter((sid) =>
+            sheets.some((s) => s.id === sid),
+          )
+        : sheets.map((s) => s.id);
+
+    const userContent =
+      content ||
+      (files.length ? `（发送了 ${files.length} 个附件）` : '');
+
+    const messages: AnalysisMessage[] = [
+      ...(report.messages as unknown as AnalysisMessage[]),
+      {
+        id: newMessageId(),
+        role: 'user',
+        content: userContent,
+        kind: 'text',
+        ...(files.length ? { attachments: files } : {}),
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    await this.prisma.analysisReport.update({
+      where: { id: report.id },
+      data: {
+        status: 'generating',
+        messages: messages as unknown as Prisma.InputJsonValue,
+        sheetIds: sheetIds as unknown as Prisma.InputJsonValue,
+        error: null,
+      },
+    });
+
+    try {
+      const base = await this.prisma.base.findUnique({
+        where: { id: report.baseId },
+      });
+      const digests = sheetIds.length
+        ? await this.buildDigests(sheetIds, userId)
+        : [];
+      const conversation = messages.map((m) => ({
+        role: m.role,
+        content: formatMessageForLlm(m),
+      }));
+      const { reply, reportMarkdown } = await chatAnalysisReply({
+        baseName: base?.name ?? '智能表格',
+        digests,
+        conversation,
+      });
+
+      let markdown = reportMarkdown;
+      if (
+        !markdown &&
+        /报告|生成完整|输出报告|写一份/.test(content) &&
+        digests.length
+      ) {
+        markdown = await generateAnalysisMarkdown({
+          baseName: base?.name ?? '智能表格',
+          digests,
+          conversation,
+        });
+      }
+
+      messages.push({
+        id: newMessageId(),
+        role: 'assistant',
+        content: reply,
+        kind: 'text',
+        createdAt: new Date().toISOString(),
+      });
+
+      return this.prisma.analysisReport.update({
+        where: { id: report.id },
+        data: {
+          status: markdown ? 'ready' : 'draft',
+          messages: messages as unknown as Prisma.InputJsonValue,
+          reportMarkdown: markdown ?? report.reportMarkdown,
+          steps: markdown
+            ? (markAllDone() as unknown as Prisma.InputJsonValue)
+            : ([] as unknown as Prisma.InputJsonValue),
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '对话失败';
+      return this.prisma.analysisReport.update({
+        where: { id: report.id },
+        data: {
+          status: 'failed',
+          error: message,
+          messages: messages as unknown as Prisma.InputJsonValue,
+        },
+      });
+    }
   }
 
   async update(
@@ -504,4 +639,45 @@ function cellToText(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function normalizeAttachments(
+  input?: AnalysisMessageAttachment[],
+): AnalysisMessageAttachment[] {
+  if (!Array.isArray(input) || !input.length) return [];
+  const out: AnalysisMessageAttachment[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const url = typeof item.url === 'string' ? item.url.trim() : '';
+    if (!url.startsWith('/files/')) {
+      throw new BadRequestException('无效的附件');
+    }
+    const mimetype =
+      typeof item.mimetype === 'string' && item.mimetype.trim()
+        ? item.mimetype.trim()
+        : 'application/octet-stream';
+    const size = typeof item.size === 'number' ? item.size : 0;
+    if (size > ATTACHMENT_MAX_BYTES) {
+      throw new BadRequestException('单个文件需小于 100MB');
+    }
+    out.push({
+      url,
+      name:
+        typeof item.name === 'string' && item.name.trim()
+          ? item.name.trim()
+          : 'file',
+      mimetype,
+      size,
+    });
+  }
+  return out;
+}
+
+function formatMessageForLlm(message: AnalysisMessage): string {
+  const attachments = message.attachments ?? [];
+  if (!attachments.length) return message.content;
+  const lines = attachments.map(
+    (a, i) => `- 附件${i + 1}: ${a.name} (${a.mimetype}, ${a.size}B, ${a.url})`,
+  );
+  return `${message.content}\n[附件]\n${lines.join('\n')}`;
 }

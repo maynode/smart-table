@@ -6,6 +6,7 @@ import type {
 } from 'shared';
 import { api, ApiError, getToken } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { newId } from '../ui/id';
 import {
   idbDeleteBlob,
   idbDeleteMutation,
@@ -21,10 +22,6 @@ export type SyncStatus = 'online' | 'offline' | 'syncing' | 'conflict';
 const CHANNEL = 'st-message-center';
 const LOCK_NAME = 'st-message-center-flush';
 const WS_ACCEPT_TIMEOUT_MS = 20_000;
-
-function newId(): string {
-  return crypto.randomUUID();
-}
 
 class MessageCenter {
   readonly status: Ref<SyncStatus> = ref(
@@ -47,6 +44,8 @@ class MessageCenter {
     }
   >();
   private activeSheetId: string | null = null;
+  /** 本端刚提交成功的 batch，用于忽略 HTTP 回退后广播回来的 new_changes（防重复行） */
+  private recentBatchIds = new Set<string>();
 
   async bootstrap(): Promise<void> {
     if (this.bootstrapped || typeof window === 'undefined') return;
@@ -107,6 +106,17 @@ class MessageCenter {
   onAccept(handler: (results: MutationResult[]) => void): () => void {
     this.acceptHandlers.add(handler);
     return () => this.acceptHandlers.delete(handler);
+  }
+
+  /** 是否应把远端 new_changes 应用到本地（跳过本端刚提交的同一批） */
+  shouldApplyRemote(commitId?: string): boolean {
+    if (!commitId) return true;
+    return !this.recentBatchIds.has(commitId);
+  }
+
+  private rememberBatch(clientBatchId: string): void {
+    this.recentBatchIds.add(clientBatchId);
+    setTimeout(() => this.recentBatchIds.delete(clientBatchId), 60_000);
   }
 
   /**
@@ -344,6 +354,7 @@ class MessageCenter {
       ];
     }
     if (accepted.length) {
+      this.rememberBatch(clientBatchId);
       for (const handler of this.acceptHandlers) handler(accepted);
     }
     this.channel?.postMessage({ type: 'queue-changed' });

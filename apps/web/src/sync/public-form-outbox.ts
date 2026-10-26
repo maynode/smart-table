@@ -1,5 +1,6 @@
 import { endpoints } from '../api/endpoints';
 import { NetworkError } from '../api/client';
+import { newId } from '../ui/id';
 
 const KEY = 'st.public-form-outbox';
 
@@ -28,7 +29,7 @@ export async function enqueuePublicFormSubmit(
   shareToken: string,
   cells: Record<string, unknown>,
 ): Promise<{ queued: boolean; result?: Awaited<ReturnType<typeof endpoints.submitPublicForm>> }> {
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey = newId();
   if (!navigator.onLine) {
     const rows = load();
     rows.push({

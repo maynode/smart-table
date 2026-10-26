@@ -69,36 +69,29 @@ describe('Analysis reports (e2e)', () => {
     if (app) await app.close();
   });
 
-  it('creates, answers async to ready, and deletes', async () => {
+  it('creates, chats to ready report, and deletes', async () => {
     const created = await request(app.getHttpServer())
       .post(`/bases/${baseId}/analysis-reports`)
       .set(auth())
       .send({ name: '销售简报' });
     expect(created.status).toBe(201);
+    expect(created.body.status).toBe('draft');
+    expect(created.body.messages?.[0]?.role).toBe('assistant');
     const reportId = created.body.id as string;
 
-    const answered = await request(app.getHttpServer())
-      .post(`/analysis-reports/${reportId}/answer`)
+    const chatted = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/chat`)
       .set(auth())
-      .send({ optionId: `sheet:${sheetId}` });
-    expect(answered.status).toBe(201);
-    expect(['exploring', 'generating', 'ready']).toContain(
-      answered.body.status,
-    );
-
-    let status = answered.body.status as string;
-    for (let i = 0; i < 40 && status !== 'ready' && status !== 'failed'; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const polled = await request(app.getHttpServer())
-        .get(`/analysis-reports/${reportId}`)
-        .set(auth());
-      expect(polled.status).toBe(200);
-      status = polled.body.status;
-      if (status === 'ready') {
-        expect(polled.body.reportMarkdown).toBeTruthy();
-      }
-    }
-    expect(status).toBe('ready');
+      .send({ text: '请生成分析报告' });
+    expect(chatted.status).toBe(201);
+    expect(chatted.body.status).toBe('ready');
+    expect(chatted.body.reportMarkdown).toBeTruthy();
+    expect(
+      chatted.body.messages.some(
+        (m: { role: string; content: string }) =>
+          m.role === 'user' && m.content.includes('生成分析报告'),
+      ),
+    ).toBe(true);
 
     const deleted = await request(app.getHttpServer())
       .delete(`/analysis-reports/${reportId}`)
@@ -111,4 +104,89 @@ describe('Analysis reports (e2e)', () => {
       .set(auth());
     expect(gone.status).toBe(404);
   }, 30_000);
+
+  it('uploads arbitrary files and chats with unlimited attachments under 100MB', async () => {
+    const PNG_1X1 = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+
+    const created = await request(app.getHttpServer())
+      .post(`/bases/${baseId}/analysis-reports`)
+      .set(auth())
+      .send({ name: '附件对话' });
+    expect(created.status).toBe(201);
+    const reportId = created.body.id as string;
+
+    const uploaded: Array<{
+      url: string;
+      name: string;
+      mimetype: string;
+      size: number;
+    }> = [];
+
+    const png = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/attachments`)
+      .set(auth())
+      .attach('file', PNG_1X1, {
+        filename: 'shot.png',
+        contentType: 'image/png',
+      });
+    expect(png.status).toBe(201);
+    uploaded.push(png.body);
+
+    const txt = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/attachments`)
+      .set(auth())
+      .attach('file', Buffer.from('hello analysis'), {
+        filename: 'note.txt',
+        contentType: 'text/plain',
+      });
+    expect(txt.status).toBe(201);
+    expect(txt.body.mimetype).toBe('text/plain');
+    uploaded.push(txt.body);
+
+    const pdf = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/attachments`)
+      .set(auth())
+      .attach('file', Buffer.from('%PDF-1.4 demo'), {
+        filename: 'brief.pdf',
+        contentType: 'application/pdf',
+      });
+    expect(pdf.status).toBe(201);
+    uploaded.push(pdf.body);
+
+    for (const item of uploaded) {
+      expect(item.url).toMatch(/^\/files\/uploads\//);
+      expect(item.size).toBeLessThan(100 * 1024 * 1024);
+    }
+
+    const rejectedSize = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/attachments`)
+      .set(auth())
+      .attach('file', Buffer.alloc(100 * 1024 * 1024 + 1, 1), {
+        filename: 'too-big.bin',
+        contentType: 'application/octet-stream',
+      });
+    expect(rejectedSize.status).toBeGreaterThanOrEqual(400);
+
+    const chatted = await request(app.getHttpServer())
+      .post(`/analysis-reports/${reportId}/chat`)
+      .set(auth())
+      .send({ text: '看看这些附件', attachments: uploaded });
+    expect(chatted.status).toBe(201);
+    const userMsg = chatted.body.messages.find(
+      (m: {
+        role: string;
+        content: string;
+        attachments?: Array<{ url: string }>;
+      }) => m.role === 'user' && m.content.includes('看看这些附件'),
+    );
+    expect(userMsg?.attachments).toHaveLength(3);
+    expect(userMsg.attachments[0].url).toBe(uploaded[0].url);
+
+    await request(app.getHttpServer())
+      .delete(`/analysis-reports/${reportId}`)
+      .set(auth());
+  }, 120_000);
 });

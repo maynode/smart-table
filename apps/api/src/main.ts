@@ -5,7 +5,6 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 
@@ -15,7 +14,6 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ logger: true }),
   );
 
-  app.useWebSocketAdapter(new WsAdapter(app));
   await configureApp(app);
 
   const port = Number(process.env.API_PORT ?? 3000);

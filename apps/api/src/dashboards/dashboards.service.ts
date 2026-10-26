@@ -238,6 +238,25 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** 公开只读链接：跳过成员/内容权限，仅按仪表盘配置聚合。 */
+  async publicSnapshot(dashboardId: string) {
+    const dashboard = await this.prisma.dashboard.findUnique({
+      where: { id: dashboardId },
+      include: { widgets: { orderBy: { order: 'asc' } } },
+    });
+    if (!dashboard) return null;
+    const widgets = [];
+    for (const widget of dashboard.widgets) {
+      widgets.push(await this.computeWidget(widget, '', { skipAcl: true }));
+    }
+    return {
+      id: dashboard.id,
+      name: dashboard.name,
+      kind: dashboard.kind,
+      widgets,
+    };
+  }
+
   async createSchedule(
     dashboardId: string,
     userId: string,
@@ -369,6 +388,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       layout: unknown;
     },
     userId: string,
+    options: { skipAcl?: boolean } = {},
   ) {
     const config = (widget.config ?? {}) as WidgetConfig;
     if (widget.type === 'text' || !widget.sheetId) {
@@ -395,12 +415,14 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         driver: this.analytics.driver,
       };
     }
-    await this.permissions.assertCan(
-      'sheet',
-      widget.sheetId,
-      userId,
-      'read',
-    );
+    if (!options.skipAcl) {
+      await this.permissions.assertCan(
+        'sheet',
+        widget.sheetId,
+        userId,
+        'read',
+      );
+    }
     if (widget.type === 'metric') {
       return this.computeMetricWidget(widget, config, userId);
     }

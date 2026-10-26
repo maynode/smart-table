@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AutomationsModule } from '../automations/automations.module';
+import { CollabModule } from '../collab/collab.module';
 import { FormsModule } from '../forms/forms.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { SharingModule } from '../sharing/sharing.module';
@@ -25,6 +26,7 @@ import { SheetsService } from './sheets.service';
     StorageModule,
     QuotasModule,
     forwardRef(() => FormsModule),
+    forwardRef(() => CollabModule),
   ],
   controllers: [SheetsController, ExcelController],
   providers: [SheetsService, ExcelService, CommitChangesService],

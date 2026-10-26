@@ -2,7 +2,7 @@ import { expect, test, request as apiRequest } from '@playwright/test';
 
 const API = 'http://127.0.0.1:3000';
 
-test('analysis report panel: create, generate, delete', async ({ page }) => {
+test('analysis report panel: chat, generate, delete', async ({ page }) => {
   test.setTimeout(180_000);
   const stamp = Date.now();
   const account = `arui${String(stamp).slice(-8)}`;
@@ -71,32 +71,16 @@ test('analysis report panel: create, generate, delete', async ({ page }) => {
     timeout: 30_000,
   });
   await expect(page.getByTestId('analysis-chat')).toBeVisible();
+  await expect(page.getByTestId('analysis-chat-input')).toBeVisible();
+  await expect(page.getByTestId('analysis-steps')).toHaveCount(0);
+  await expect(page.getByTestId('analysis-confirm')).toHaveCount(0);
 
-  // 对话确认：选表 / 跳过直到进入 generating → ready
-  for (let i = 0; i < 8; i += 1) {
-    const confirm = page.getByTestId('analysis-confirm');
-    if (!(await confirm.isVisible().catch(() => false))) break;
-    if (await confirm.isDisabled().catch(() => true)) break;
-    const choice = page.getByTestId('analysis-choice').first();
-    if (await choice.isVisible().catch(() => false)) {
-      await choice.check();
-    }
-    await confirm.click();
-    await page.waitForTimeout(800);
-  }
+  await page.getByTestId('analysis-chat-input').fill('请生成分析报告');
+  await page.getByTestId('analysis-chat-send').click();
 
-  await expect(
-    page
-      .getByTestId('analysis-report-loading')
-      .or(page.getByTestId('analysis-report-body')),
-  ).toBeVisible({ timeout: 60_000 });
-
-  await expect
-    .poll(
-      async () => page.getByTestId('analysis-report-body').isVisible(),
-      { timeout: 120_000 },
-    )
-    .toBe(true);
+  await expect(page.getByTestId('analysis-report-body')).toBeVisible({
+    timeout: 120_000,
+  });
 
   await page.getByTestId('analysis-delete').click();
   await expect(page.getByTestId('app-dialog')).toBeVisible();

@@ -28,7 +28,9 @@ export type CollabServerMsg =
         userId: string;
         account: string;
         name: string;
-        colorId: number;
+        color: string;
+        avatarSeed: string;
+        avatarUrl: string | null;
       }>;
     }
   | { type: 'heart_beat'; ok: true }
@@ -52,6 +54,8 @@ export type CollabServerMsg =
       type: 'cursor_message';
       userId: string;
       account: string;
+      name: string;
+      color: string;
       cursor: Record<string, unknown>;
     }
   | { type: 'user_leave'; userId: string }

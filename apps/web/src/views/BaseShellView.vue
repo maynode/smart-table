@@ -26,7 +26,10 @@ import {
   syncBannerText,
 } from '../sync/message-center';
 import { collabSocket, type CollabCursor } from '../sync/collab-socket';
+import { auth } from '../stores/auth';
+import { newId } from '../ui/id';
 import { toast } from '../ui/toast';
+import { resolveAvatarSrc } from '../utils/avatar';
 import type { MutationResult, SheetMutation, ViewQuery } from 'shared';
 import type {
   AnalysisReportListItemDto,
@@ -61,8 +64,11 @@ const activeDashboardId = ref('');
  * form：收集表单（编辑/填写）
  * form-results：该表单的提交记录（收集结果，底层仍是表记录网格）
  * dashboard：仪表盘主区
+ * analysis：分析报告主区（右侧嵌入，非弹窗）
  */
-const mainView = ref<'grid' | 'form' | 'form-results' | 'dashboard'>('grid');
+const mainView = ref<
+  'grid' | 'form' | 'form-results' | 'dashboard' | 'analysis'
+>('grid');
 /** 从收集结果返回表单时，恢复编辑/填写 Tab */
 const formReturnTab = ref<'design' | 'preview'>('design');
 
@@ -112,7 +118,6 @@ const members = ref<MemberDto[]>([]);
 const automationsOpen = ref(false);
 const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
-const analysisOpen = ref(false);
 const templatesOpen = ref(false);
 const publicViewOpen = ref(false);
 
@@ -264,6 +269,7 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
       clearEditHistory();
     }
     activeDashboardId.value = '';
+    activeAnalysisReportId.value = '';
     activeSheet.value = detail;
     // 企微：收集表单默认进表单 UI；提交数据在「收集结果」里看
     if (isFormSheet(detail)) {
@@ -337,7 +343,7 @@ async function insertRows(payload: {
   try {
     const created: RecordDto[] = [];
     for (let i = 0; i < count; i += 1) {
-      const clientRecordId = crypto.randomUUID();
+      const clientRecordId = newId();
       const temp: RecordDto = {
         id: clientRecordId,
         sheetId,
@@ -651,7 +657,14 @@ function onPeerCursor(cursor: {
   collabSocket.sendCursor(cursor);
 }
 
-const peerCursors = computed(() => collabSocket.cursors.value as CollabCursor[]);
+const selfUserId = computed(() => auth.state.user?.id ?? '');
+/** 只展示他人光标；自己的选区不必画 */
+const peerCursors = computed(() =>
+  (collabSocket.cursors.value as CollabCursor[]).filter(
+    (c) => c.userId && c.userId !== selfUserId.value,
+  ),
+);
+/** 在线名单含自己（人数 = 房内去重后的总人数） */
 const collabPeers = computed(() => collabSocket.peers.value);
 
 async function reloadActiveRecords(): Promise<void> {
@@ -788,7 +801,7 @@ async function createField(payload: {
   options?: Record<string, unknown>;
 }): Promise<void> {
   if (!activeSheet.value) return;
-  const clientFieldId = crypto.randomUUID();
+  const clientFieldId = newId();
   const created: FieldDto = {
     id: clientFieldId,
     name: payload.name,
@@ -911,7 +924,7 @@ async function deleteRecords(recordIds: string[]): Promise<void> {
 async function uploadToSheet(file: File) {
   if (!activeSheet.value) throw new Error('no active sheet');
   if (!navigator.onLine) {
-    const blobId = crypto.randomUUID();
+    const blobId = newId();
     const { idbPutBlob } = await import('../sync/idb-store');
     await idbPutBlob(blobId, file, {
       fileName: file.name,
@@ -1089,7 +1102,35 @@ async function openOrCreateFormSheet(): Promise<void> {
 function openAnalysisReport(reportId: string): void {
   sectionCollapsed.value = { ...sectionCollapsed.value, reports: false };
   activeAnalysisReportId.value = reportId;
-  analysisOpen.value = true;
+  activeDashboardId.value = '';
+  mainView.value = 'analysis';
+  sheetMenuId.value = null;
+}
+
+function closeAnalysisReport(): void {
+  activeAnalysisReportId.value = '';
+  if (mainView.value === 'analysis') {
+    const sheet = activeSheet.value;
+    if (sheet && isFormSheet(sheet)) {
+      mainView.value = 'form';
+    } else if (sheet) {
+      mainView.value = 'grid';
+    } else if (activeDashboardId.value) {
+      mainView.value = 'dashboard';
+    } else {
+      mainView.value = 'grid';
+    }
+  }
+}
+
+function onAnalysisReportCreated(reportId: string): void {
+  void endpoints
+    .listAnalysisReports(baseId.value)
+    .then((list) => {
+      analysisReports.value = list;
+    })
+    .catch(() => undefined);
+  openAnalysisReport(reportId);
 }
 
 async function createAnalysisReport(): Promise<void> {
@@ -1132,6 +1173,7 @@ async function createSheet(): Promise<void> {
 function openDashboard(dashboardId: string): void {
   sectionCollapsed.value = { ...sectionCollapsed.value, dashboards: false };
   activeDashboardId.value = dashboardId;
+  activeAnalysisReportId.value = '';
   mainView.value = 'dashboard';
   sheetMenuId.value = null;
 }
@@ -1445,7 +1487,8 @@ onMounted(() => {
   void messageCenter.bootstrap();
   unsubAccept = messageCenter.onAccept(onCommitAccept);
   collabSocket.setHandlers({
-    onRemote: ({ mutations }) => {
+    onRemote: ({ mutations, commitId }) => {
+      if (!messageCenter.shouldApplyRemote(commitId)) return;
       applyRemoteMutations(mutations);
     },
   });
@@ -1509,10 +1552,20 @@ onBeforeUnmount(() => {
             v-for="peer in collabPeers.slice(0, 5)"
             :key="peer.userId"
             class="collab-avatar"
-            :data-color="peer.colorId"
             :title="peer.name || peer.account"
           >
-            {{ (peer.name || peer.account || '?').slice(0, 1) }}
+            <img
+              class="collab-avatar-img"
+              :src="
+                resolveAvatarSrc({
+                  avatarUrl: peer.avatarUrl,
+                  avatarSeed: peer.avatarSeed,
+                  account: peer.account,
+                  size: 48,
+                })
+              "
+              :alt="peer.name || peer.account"
+            />
           </span>
           <span
             v-if="collabPeers.length > 5"
@@ -1792,7 +1845,8 @@ onBeforeUnmount(() => {
                 class="sheet-row"
                 :class="{
                   active:
-                    analysisOpen && activeAnalysisReportId === report.id,
+                    mainView === 'analysis' &&
+                    activeAnalysisReportId === report.id,
                 }"
               >
                 <button
@@ -1838,6 +1892,16 @@ onBeforeUnmount(() => {
           :dashboard-id="activeDashboardId"
           kind="dashboard"
           :sheets="sheets"
+        />
+        <AnalysisReportPanel
+          v-else-if="mainView === 'analysis' && activeAnalysisReportId"
+          :key="activeAnalysisReportId"
+          embedded
+          :base-id="baseId"
+          :sheets="sheets"
+          :report-id="activeAnalysisReportId"
+          @close="closeAnalysisReport"
+          @created="onAnalysisReportCreated"
         />
         <template
           v-else-if="
@@ -2131,18 +2195,6 @@ onBeforeUnmount(() => {
       <PermissionsPanel
         :base-id="baseId"
         @close="permissionsOpen = false"
-      />
-    </div>
-    <div
-      v-if="analysisOpen"
-      class="modal-mask"
-      @click.self="analysisOpen = false"
-    >
-      <AnalysisReportPanel
-        :base-id="baseId"
-        :sheets="sheets"
-        :report-id="activeAnalysisReportId || undefined"
-        @close="analysisOpen = false; activeAnalysisReportId = ''"
       />
     </div>
     <div

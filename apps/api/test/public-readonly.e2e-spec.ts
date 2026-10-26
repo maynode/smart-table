@@ -12,6 +12,7 @@ describe('Public read-only views (e2e)', () => {
   let app: NestFastifyApplication;
   const stamp = Date.now();
   let token: string;
+  let baseId: string;
   let sheetId: string;
   let openViewId: string;
   let openViewToken: string;
@@ -34,11 +35,12 @@ describe('Public read-only views (e2e)', () => {
     const owner = await http()
       .post('/auth/register')
       .send({
-        account: `public_view${stamp}`,
-        password: 'Passw0rd!123',
-        name: '公开视图管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
-        });
+        account: `pv${stamp}`,
+        password: 'Ab12_cd34',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
+    expect(owner.status).toBe(201);
     token = owner.body.accessToken;
     const workspace = await http()
       .post('/workspaces')
@@ -48,8 +50,9 @@ describe('Public read-only views (e2e)', () => {
       .post(`/workspaces/${workspace.body.id}/bases`)
       .set(auth())
       .send({ name: '公开只读 Base' });
+    baseId = base.body.id;
     const sheet = await http()
-      .post(`/bases/${base.body.id}/sheets`)
+      .post(`/bases/${baseId}/sheets`)
       .set(auth())
       .send({ name: '公开数据', seed: false });
     sheetId = sheet.body.id;
@@ -95,6 +98,8 @@ describe('Public read-only views (e2e)', () => {
       .expect(200);
     expect(view.body.readonly).toBe(true);
     expect(view.body.name).toBe('对外数据');
+    expect(view.body.sheets).toHaveLength(1);
+    expect(view.body.sheets[0].id).toBe(sheetId);
     expect(view.body.fields.map((field: { name: string }) => field.name)).toEqual([
       '名称',
     ]);
@@ -112,6 +117,84 @@ describe('Public read-only views (e2e)', () => {
     await http()
       .delete(`/public-views/${openViewToken}/records/${recordId}`)
       .expect(403);
+  });
+
+  it('accepts explicit multi-type scope and rejects empty/no-data picks', async () => {
+    const options = await http()
+      .get(`/sheets/${sheetId}/public-views/scope-options`)
+      .set(auth())
+      .expect(200);
+    expect(
+      options.body.sheets.some(
+        (item: { id: string; hasData: boolean }) =>
+          item.id === sheetId && item.hasData,
+      ),
+    ).toBe(true);
+
+    const second = await http()
+      .post(`/bases/${baseId}/sheets`)
+      .set(auth())
+      .send({ name: '第二张表', seed: false })
+      .expect(201);
+    const secondId = second.body.id as string;
+    const field = await http()
+      .post(`/sheets/${secondId}/fields`)
+      .set(auth())
+      .send({ name: '标题', type: 'text' })
+      .expect(201);
+    await http()
+      .post(`/sheets/${secondId}/records`)
+      .set(auth())
+      .send({ cells: { [field.body.id]: 'B行' } })
+      .expect(201);
+
+    const dashboard = await http()
+      .post(`/bases/${baseId}/dashboards`)
+      .set(auth())
+      .send({ name: '公开仪表盘' })
+      .expect(201);
+    await http()
+      .post(`/dashboards/${dashboard.body.id}/widgets`)
+      .set(auth())
+      .send({
+        type: 'metric',
+        title: '行数',
+        sheetId,
+        config: { aggregation: 'count' },
+      })
+      .expect(201);
+
+    const created = await http()
+      .post(`/sheets/${sheetId}/public-views`)
+      .set(auth())
+      .send({
+        name: '多类型公开',
+        sheetIds: [sheetId, secondId],
+        formSheetIds: [],
+        dashboardIds: [dashboard.body.id],
+        analysisReportIds: [],
+      })
+      .expect(201);
+    expect(created.body.sheetIds).toEqual([sheetId, secondId]);
+    expect(created.body.dashboardIds).toEqual([dashboard.body.id]);
+
+    const view = await http()
+      .get(`/public-views/${created.body.token}`)
+      .expect(200);
+    expect(view.body.sheets).toHaveLength(2);
+    expect(view.body.dashboards).toHaveLength(1);
+    expect(view.body.dashboards[0].widgets.length).toBeGreaterThan(0);
+
+    await http()
+      .post(`/sheets/${sheetId}/public-views`)
+      .set(auth())
+      .send({
+        sheetIds: [],
+        formSheetIds: [],
+        dashboardIds: [],
+        analysisReportIds: [],
+      })
+      .expect(400);
   });
 
   it('enforces password and expiry, then revokes', async () => {
@@ -154,11 +237,11 @@ describe('Public read-only views (e2e)', () => {
     const outsider = await http()
       .post('/auth/register')
       .send({
-        account: `public_view_outsider${stamp}`,
-        password: 'Passw0rd!123',
-        name: '公开视图局外人',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
-        })
+        account: `pvo${stamp}`,
+        password: 'Ab12_cd34',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      })
       .expect(201);
     await http()
       .post(`/sheets/${sheetId}/public-views`)

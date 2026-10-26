@@ -14,6 +14,7 @@ import {
   type GridColumn,
   type GridStats,
 } from '../grid-canvas/engine';
+import { peerColorFromUserId } from 'shared';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
@@ -43,6 +44,8 @@ const props = withDefaults(
     peerCursors?: Array<{
       userId: string;
       account: string;
+      name?: string;
+      color?: string;
       cursor: {
         recordId?: string;
         fieldId?: string;
@@ -85,6 +88,8 @@ const emit = defineEmits<{
   ];
   resizeField: [payload: { field: FieldDto; width: number }];
   rowsSelected: [recordIds: string[]];
+  /** 底栏「+」与工具栏「添加一行」同一动作：末尾追加一行 */
+  addRow: [];
   /** 企微：向上/向下插入 N 行（相对 atIndex；无持久 order 时本地插入）。 */
   insertRows: [
     payload: { count: number; direction: 'above' | 'below'; atIndex?: number },
@@ -243,6 +248,8 @@ const editing = ref<{
 let engine: CanvasGridEngine | null = null;
 const resizedWidths = new Map<string, number>();
 let lastViewportEnd = -1;
+/** 滚动时刷新协同光标叠层位置 */
+const layoutEpoch = ref(0);
 /** Same-tab clipboard for raw cell values (system clipboard carries display text / TSV). */
 let appClipboard: { values: unknown[][]; texts: string[][] } | null = null;
 
@@ -531,12 +538,24 @@ function renderCell(row: number, col: number): CellRender | null {
   return cell;
 }
 
+function emitPeerCursorAt(row: number, col: number): void {
+  const record = props.records[row];
+  const field = visibleFields.value[col];
+  emit('peerCursor', {
+    recordId: record?.id,
+    fieldId: field?.id,
+    rowIndex: row,
+    colIndex: col,
+  });
+}
+
 function beginEdit(row: number, col: number): void {
   if (!props.editable || !engine) return;
   if (columns.value[col]?.id === ADD_FIELD_COLUMN_ID) return;
   const record = props.records[row];
   const field = visibleFields.value[col];
   if (!record || !field) return;
+  emitPeerCursorAt(row, col);
 
   // System / computed fields are display-only in the grid.
   if (
@@ -1160,6 +1179,7 @@ function toggleMultiChoice(choiceId: string): void {
 }
 
 function handleViewport(stats: GridStats): void {
+  layoutEpoch.value += 1;
   if (stats.rows.end === lastViewportEnd) return;
   lastViewportEnd = stats.rows.end;
   emit('viewport', stats);
@@ -1203,14 +1223,7 @@ function createEngine(): void {
     onCellClick: onCellClick,
     onSelectionChange: (selection) => {
       selectedCell.value = selection;
-      const record = props.records[selection.row];
-      const field = visibleFields.value[selection.col];
-      emit('peerCursor', {
-        recordId: record?.id,
-        fieldId: field?.id,
-        rowIndex: selection.row,
-        colIndex: selection.col,
-      });
+      if (selection) emitPeerCursorAt(selection.row, selection.col);
     },
     onCellDoubleClick: (selection) => {
       selectedCell.value = selection;
@@ -1224,7 +1237,8 @@ function createEngine(): void {
     },
     onRowNumberClick: selectRow,
     onAddColumnClick: (anchor) => emit('addColumn', anchor),
-    onFooterAddClick: openInsertMenu,
+    // 底栏「+」= 添加一行（与顶栏按钮同功能，不再弹出插入菜单）
+    onFooterAddClick: () => emit('addRow'),
     onRowInsertMenu: (row, anchor) => openInsertMenu(anchor, row),
     onCellContextMenu: openCellMenu,
     onHeaderClick: (columnIndex, anchor) => {
@@ -1287,10 +1301,15 @@ onBeforeUnmount(() => {
 });
 
 const peerCursorOverlays = computed(() => {
+  // layoutEpoch：滚动后重算叠层坐标
+  void layoutEpoch.value;
   if (!engine || !props.peerCursors?.length) return [];
   const fields = visibleFields.value;
+  const hostH = host.value?.clientHeight ?? 0;
+  const hostW = host.value?.clientWidth ?? 0;
+  const CARET_HIT = 10;
   return props.peerCursors
-    .map((peer, index) => {
+    .map((peer) => {
       let row = peer.cursor.rowIndex;
       let col = peer.cursor.colIndex;
       if (row === undefined && peer.cursor.recordId) {
@@ -1303,22 +1322,32 @@ const peerCursorOverlays = computed(() => {
         return null;
       }
       const rect = engine!.cellRect(row, col);
+      // 视口外不画，避免飘在表格外
+      if (
+        rect.y + rect.height < 0 ||
+        rect.y > hostH ||
+        rect.x + CARET_HIT < 0 ||
+        rect.x > hostW
+      ) {
+        return null;
+      }
+      const fullName = (peer.name || peer.account || '?').trim();
+      const color =
+        peer.color || peerColorFromUserId(peer.userId);
       return {
         key: peer.userId,
-        label: (peer.account || '?').slice(0, 1),
-        colorId: (index % 12) + 1,
+        label: fullName,
         style: {
           left: `${rect.x}px`,
           top: `${rect.y}px`,
-          width: `${rect.width}px`,
           height: `${rect.height}px`,
-        },
+          '--peer-color': color,
+        } as Record<string, string>,
       };
     })
     .filter(Boolean) as Array<{
     key: string;
     label: string;
-    colorId: number;
     style: Record<string, string>;
   }>;
 });
@@ -1344,9 +1373,9 @@ defineExpose({
       :key="cursor.key"
       class="peer-cursor"
       data-testid="peer-cursor"
-      :data-color="cursor.colorId"
       :style="cursor.style"
     >
+      <span class="peer-cursor-caret" aria-hidden="true" />
       <span class="peer-cursor-label">{{ cursor.label }}</span>
     </div>
     <div
@@ -1693,39 +1722,54 @@ defineExpose({
   height: 100%;
   min-height: 0;
 }
+/* 企微文档风：竖线光标；用户名仅 hover 光标条时出现 */
 .peer-cursor {
   position: absolute;
-  box-sizing: border-box;
-  border: 2px solid var(--peer-color, #2d8cf0);
+  z-index: 6;
+  width: 10px;
+  margin-left: -4px;
+  pointer-events: auto;
+  cursor: default;
+}
+.peer-cursor-caret {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--peer-color, #9b59b6);
   pointer-events: none;
-  z-index: 5;
 }
 .peer-cursor-label {
   position: absolute;
-  top: -16px;
-  left: -2px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  left: 4px;
+  bottom: 100%;
+  margin-bottom: 0;
+  max-width: 160px;
+  height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border-radius: 2px 2px 2px 0;
-  background: var(--peer-color, #2d8cf0);
+  background: var(--peer-color, #9b59b6);
   color: #fff;
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px);
+  transition: opacity 0.12s ease, visibility 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 16%);
 }
-.peer-cursor[data-color='1'] { --peer-color: #e74c3c; }
-.peer-cursor[data-color='2'] { --peer-color: #e67e22; }
-.peer-cursor[data-color='3'] { --peer-color: #f1c40f; }
-.peer-cursor[data-color='4'] { --peer-color: #2ecc71; }
-.peer-cursor[data-color='5'] { --peer-color: #1abc9c; }
-.peer-cursor[data-color='6'] { --peer-color: #3498db; }
-.peer-cursor[data-color='7'] { --peer-color: #9b59b6; }
-.peer-cursor[data-color='8'] { --peer-color: #34495e; }
-.peer-cursor[data-color='9'] { --peer-color: #e91e63; }
-.peer-cursor[data-color='10'] { --peer-color: #00bcd4; }
-.peer-cursor[data-color='11'] { --peer-color: #8bc34a; }
-.peer-cursor[data-color='12'] { --peer-color: #ff5722; }
+.peer-cursor:hover .peer-cursor-label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 .hidden-upload {
   display: none;
 }

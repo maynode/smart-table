@@ -465,9 +465,30 @@ export interface TemplateInstantiateResult {
   shareUrl?: string;
 }
 
+export interface PublicViewScopeOption {
+  id: string;
+  name: string;
+  hasData: boolean;
+  recordCount?: number;
+  widgetCount?: number;
+  formId?: string;
+  status?: string;
+}
+
+export interface PublicViewScopeOptions {
+  sheets: PublicViewScopeOption[];
+  formSheets: PublicViewScopeOption[];
+  dashboards: PublicViewScopeOption[];
+  analysisReports: PublicViewScopeOption[];
+}
+
 export interface PublicViewDto {
   id: string;
   sheetId: string;
+  sheetIds?: string[];
+  formSheetIds?: string[];
+  dashboardIds?: string[];
+  analysisReportIds?: string[];
   name: string;
   token: string;
   passwordRequired: boolean;
@@ -477,10 +498,10 @@ export interface PublicViewDto {
   url: string;
 }
 
-export interface PublicViewData {
-  readonly: true;
+export interface PublicViewSheetData {
+  id: string;
   name: string;
-  sheet: { id: string; name: string };
+  kind?: 'sheet' | 'form';
   fields: Array<{
     id: string;
     name: string;
@@ -489,6 +510,51 @@ export interface PublicViewData {
     required?: boolean;
   }>;
   records: Array<{ id: string; cells: Record<string, unknown> }>;
+}
+
+export interface PublicViewDashboardWidget {
+  id: string;
+  type: string;
+  title: string;
+  labels: string[];
+  values: number[];
+  config?: Record<string, unknown>;
+  metric?: {
+    value: number;
+    previousValue?: number | null;
+    delta?: number | null;
+    deltaPercent?: number | null;
+    compareLabel?: string;
+    displayColor?: string;
+    prefix?: string;
+    suffix?: string;
+    decimalPlaces?: number;
+  } | null;
+}
+
+export interface PublicViewDashboardData {
+  id: string;
+  name: string;
+  kind: string;
+  widgets: PublicViewDashboardWidget[];
+}
+
+export interface PublicViewAnalysisReportData {
+  id: string;
+  name: string;
+  reportMarkdown: string;
+}
+
+export interface PublicViewData {
+  readonly: true;
+  name: string;
+  sheet: { id: string; name: string };
+  sheets?: PublicViewSheetData[];
+  formSheets?: PublicViewSheetData[];
+  dashboards?: PublicViewDashboardData[];
+  analysisReports?: PublicViewAnalysisReportData[];
+  fields: PublicViewSheetData['fields'];
+  records: PublicViewSheetData['records'];
   expiresAt: string | null;
 }
 
@@ -520,12 +586,20 @@ export interface AnalysisMessageOptionDto {
   label: string;
 }
 
+export interface AnalysisMessageAttachmentDto {
+  url: string;
+  name: string;
+  mimetype: string;
+  size: number;
+}
+
 export interface AnalysisMessageDto {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   kind?: 'text' | 'choice';
   options?: AnalysisMessageOptionDto[];
+  attachments?: AnalysisMessageAttachmentDto[];
   createdAt: string;
 }
 

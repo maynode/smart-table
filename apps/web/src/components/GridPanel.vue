@@ -50,6 +50,8 @@ const props = defineProps<{
   peerCursors?: Array<{
     userId: string;
     account: string;
+    name?: string;
+    color?: string;
     cursor: {
       recordId?: string;
       fieldId?: string;
@@ -1616,6 +1618,7 @@ defineExpose({
         @header-click="openColumnMenu"
         @resize-field="onColumnResize"
         @rows-selected="onRowsSelected"
+        @add-row="emit('addRow')"
         @insert-rows="emit('insertRows', $event)"
         @insert-columns="emit('insertColumns', $event)"
         @delete-records="emit('deleteRecords', $event)"

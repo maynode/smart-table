@@ -12,3 +12,4 @@ export * from './security-question';
 export * from './avatar';
 export * from './offline-mutations';
 export * from './collab-ot';
+export * from './peer-color';

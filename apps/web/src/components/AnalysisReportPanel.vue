@@ -6,27 +6,63 @@ import { confirmDialog, promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
 import type {
+  AnalysisMessageAttachmentDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
   SheetDto,
 } from '../api/types';
 
-const props = defineProps<{
-  baseId: string;
-  sheets: SheetDto[];
-  /** 从壳层新建时传入，直接打开该报告 */
-  reportId?: string;
-}>();
+const FILE_MAX_BYTES = 100 * 1024 * 1024;
 
-const emit = defineEmits<{ close: [] }>();
+type PendingFile = {
+  localId: string;
+  previewUrl: string | null;
+  name: string;
+  size: number;
+  mimetype: string;
+  isImage: boolean;
+  uploading: boolean;
+  error?: string;
+  uploaded?: AnalysisMessageAttachmentDto;
+};
+
+function isImageMime(type: string): boolean {
+  return type.startsWith('image/');
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const props = withDefaults(
+  defineProps<{
+    baseId: string;
+    sheets: SheetDto[];
+    /** 从壳层新建时传入，直接打开该报告 */
+    reportId?: string;
+    /** 嵌入 Base 右侧主区（非弹窗） */
+    embedded?: boolean;
+  }>(),
+  { embedded: false },
+);
+
+const emit = defineEmits<{
+  close: [];
+  /** 嵌入模式下新建报告后通知壳层切换侧栏选中 */
+  created: [reportId: string];
+}>();
 
 const list = ref<AnalysisReportListItemDto[]>([]);
 const active = ref<AnalysisReportDto | null>(null);
 const loading = ref(false);
 const submitting = ref(false);
-const selectedOption = ref('');
-const otherText = ref('');
+const draft = ref('');
+const pendingFiles = ref<PendingFile[]>([]);
 const chatEnd = ref<HTMLElement | null>(null);
+const inputRef = ref<HTMLTextAreaElement | null>(null);
+const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const busy = computed(() =>
   ['exploring', 'generating'].includes(active.value?.status ?? ''),
@@ -38,32 +74,43 @@ const reportHtml = computed(() => {
   return renderSimpleMarkdown(md);
 });
 
-const lastChoice = computed(() => {
-  const messages = active.value?.messages ?? [];
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (msg.role === 'assistant' && msg.kind === 'choice' && msg.options?.length) {
-      return msg;
-    }
-  }
-  return null;
-});
+const readyAttachments = computed(() =>
+  pendingFiles.value
+    .filter((p) => p.uploaded && !p.error)
+    .map((p) => p.uploaded!),
+);
 
-const showConfirmBar = computed(() => {
-  if (!active.value) return false;
-  if (active.value.status !== 'asking') return false;
-  return true;
-});
+const uploadingFiles = computed(() =>
+  pendingFiles.value.some((p) => p.uploading),
+);
+
+const canSend = computed(
+  () =>
+    Boolean(active.value) &&
+    (Boolean(draft.value.trim()) || readyAttachments.value.length > 0) &&
+    !uploadingFiles.value &&
+    !submitting.value &&
+    !busy.value &&
+    !loading.value,
+);
+
+function clearPendingFiles(): void {
+  for (const item of pendingFiles.value) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  }
+  pendingFiles.value = [];
+}
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : '网络错误';
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  asking: '待确认',
+  draft: '对话中',
+  asking: '对话中',
   exploring: '分析中',
-  generating: '生成中',
-  ready: '已完成',
+  generating: '思考中',
+  ready: '已有报告',
   failed: '失败',
 };
 
@@ -84,9 +131,11 @@ async function openReport(id: string): Promise<void> {
   loading.value = true;
   try {
     active.value = await endpoints.getAnalysisReport(id);
-    selectedOption.value = '';
-    otherText.value = '';
+    draft.value = '';
+    clearPendingFiles();
     await scrollChat();
+    await nextTick();
+    inputRef.value?.focus();
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -101,9 +150,12 @@ async function startNew(): Promise<void> {
   try {
     active.value = await endpoints.createAnalysisReport(props.baseId, name);
     await loadList();
-    selectedOption.value = '';
-    otherText.value = '';
+    draft.value = '';
+    clearPendingFiles();
+    emit('created', active.value.id);
     await scrollChat();
+    await nextTick();
+    inputRef.value?.focus();
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -111,35 +163,113 @@ async function startNew(): Promise<void> {
   }
 }
 
-async function submitAnswer(skip = false): Promise<void> {
-  if (!active.value || submitting.value) return;
-  submitting.value = true;
-  try {
-    const body: { optionId?: string; text?: string; skip?: boolean } = {};
-    if (skip) {
-      body.skip = true;
-    } else if (selectedOption.value === 'other') {
-      body.optionId = 'other';
-      body.text = otherText.value.trim() || undefined;
-    } else if (selectedOption.value) {
-      body.optionId = selectedOption.value;
-    } else if ((active.value.sheetIds ?? []).length > 0) {
-      // single-sheet preselected — confirm
-      body.skip = false;
-      body.optionId = `sheet:${active.value.sheetIds[0]}`;
-    } else {
-      body.skip = true;
+async function enqueueFiles(files: FileList | File[]): Promise<void> {
+  if (!active.value) return;
+  const reportId = active.value.id;
+  const list = Array.from(files);
+  for (const file of list) {
+    if (!file.size) {
+      toast(`「${file.name || '文件'}」为空`);
+      continue;
     }
-    active.value = await endpoints.answerAnalysisReport(active.value.id, body);
+    if (file.size > FILE_MAX_BYTES) {
+      toast(`「${file.name}」超过 100MB`);
+      continue;
+    }
+    const localId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const image = isImageMime(file.type);
+    const pending: PendingFile = {
+      localId,
+      previewUrl: image ? URL.createObjectURL(file) : null,
+      name: file.name || 'file',
+      size: file.size,
+      mimetype: file.type || 'application/octet-stream',
+      isImage: image,
+      uploading: true,
+    };
+    pendingFiles.value = [...pendingFiles.value, pending];
+    try {
+      const uploaded = await endpoints.uploadAnalysisAttachment(reportId, file);
+      pendingFiles.value = pendingFiles.value.map((item) =>
+        item.localId === localId
+          ? { ...item, uploading: false, uploaded }
+          : item,
+      );
+    } catch (error) {
+      pendingFiles.value = pendingFiles.value.map((item) =>
+        item.localId === localId
+          ? { ...item, uploading: false, error: messageOf(error) }
+          : item,
+      );
+      toast(messageOf(error));
+    }
+  }
+}
+
+function removePending(localId: string): void {
+  const target = pendingFiles.value.find((p) => p.localId === localId);
+  if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+  pendingFiles.value = pendingFiles.value.filter((p) => p.localId !== localId);
+}
+
+function openFilePicker(): void {
+  fileInputRef.value?.click();
+}
+
+function onFilePicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  if (input.files?.length) void enqueueFiles(input.files);
+  input.value = '';
+}
+
+function onComposerPaste(event: ClipboardEvent): void {
+  const items = event.clipboardData?.items;
+  if (!items?.length) return;
+  const files: File[] = [];
+  for (const item of Array.from(items)) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  if (!files.length) return;
+  event.preventDefault();
+  void enqueueFiles(files);
+}
+
+async function sendChat(): Promise<void> {
+  if (!active.value || !canSend.value) return;
+  const text = draft.value.trim();
+  const attachments = [...readyAttachments.value];
+  const snapshotPending = [...pendingFiles.value];
+  submitting.value = true;
+  draft.value = '';
+  pendingFiles.value = [];
+  try {
+    active.value = await endpoints.chatAnalysisReport(
+      active.value.id,
+      text,
+      attachments,
+    );
+    for (const item of snapshotPending) {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    }
     await loadList();
-    selectedOption.value = '';
-    otherText.value = '';
     await scrollChat();
   } catch (error) {
+    draft.value = text;
+    pendingFiles.value = snapshotPending;
     toast(messageOf(error));
   } finally {
     submitting.value = false;
+    await nextTick();
+    inputRef.value?.focus();
   }
+}
+
+function onComposerKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  void sendChat();
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -188,7 +318,12 @@ async function removeActive(): Promise<void> {
     stopPoll();
     active.value = null;
     await loadList();
-    if (list.value[0]) await openReport(list.value[0].id);
+    if (list.value[0]) {
+      await openReport(list.value[0].id);
+      if (props.embedded) emit('created', list.value[0].id);
+    } else {
+      emit('close');
+    }
     toast('已删除');
   } catch (error) {
     toast(messageOf(error));
@@ -199,6 +334,16 @@ watch(
   () => active.value?.status,
   async (status) => {
     if (status === 'ready') await scrollChat();
+    startPollIfBusy();
+  },
+);
+
+watch(
+  () => props.reportId,
+  async (id, prev) => {
+    if (!id || id === prev) return;
+    if (active.value?.id === id) return;
+    await openReport(id);
     startPollIfBusy();
   },
 );
@@ -220,14 +365,21 @@ onMounted(async () => {
   }
 });
 
-onUnmounted(() => stopPoll());
+onUnmounted(() => {
+  stopPoll();
+  clearPendingFiles();
+});
 </script>
 
 <template>
-  <section class="analysis-panel" data-testid="analysis-report-panel">
-    <header class="analysis-top">
+  <section
+    class="analysis-panel"
+    :class="{ embedded }"
+    data-testid="analysis-report-panel"
+  >
+    <header class="analysis-top" :class="{ embedded }">
       <div class="analysis-top-left">
-        <strong>分析报告</strong>
+        <strong>{{ active?.name || '分析报告' }}</strong>
         <span class="muted">AI 对话生成</span>
       </div>
       <div class="analysis-top-actions">
@@ -256,7 +408,7 @@ onUnmounted(() => stopPoll());
     </header>
 
     <div class="analysis-body">
-      <aside class="analysis-list" v-if="list.length > 1">
+      <aside class="analysis-list" v-if="!embedded && list.length > 1">
         <div class="list-head">历史</div>
         <button
           v-for="item in list"
@@ -273,12 +425,12 @@ onUnmounted(() => stopPoll());
 
       <div class="analysis-main">
         <div
-          v-if="busy || loading"
+          v-if="loading && !active"
           class="report-canvas loading"
           data-testid="analysis-report-loading"
         >
           <div class="spinner"></div>
-          <p>预计需要几分钟，可以稍后回来查看</p>
+          <p>加载中…</p>
         </div>
         <div
           v-else-if="active?.reportMarkdown"
@@ -289,14 +441,14 @@ onUnmounted(() => stopPoll());
         <div v-else class="report-canvas empty">
           <template v-if="active?.error">
             <div class="empty-icon error" aria-hidden="true">!</div>
-            <p class="empty-state-title">生成失败</p>
+            <p class="empty-state-title">出错了</p>
             <p class="empty-state-hint">{{ active.error }}</p>
           </template>
           <template v-else>
             <div class="empty-icon" aria-hidden="true">◇</div>
             <p class="empty-state-title">暂无报告</p>
             <p class="empty-state-hint">
-              在右侧对话中确认要分析的工作表后，Markdown 报告会显示在这里。
+              在右侧和 AI 正常聊天；需要完整报告时直接说「生成分析报告」。
             </p>
           </template>
         </div>
@@ -304,26 +456,9 @@ onUnmounted(() => stopPoll());
 
       <aside class="analysis-chat" data-testid="analysis-chat">
         <header class="chat-head">
-          <strong>生成分析报告</strong>
+          <strong>分析助手</strong>
+          <span v-if="submitting || busy" class="chat-busy">思考中…</span>
         </header>
-
-        <div v-if="active?.steps?.length" class="steps" data-testid="analysis-steps">
-          <div class="steps-title">分析进度</div>
-          <ol>
-            <li
-              v-for="step in active.steps"
-              :key="step.id"
-              :class="step.status"
-            >
-              <span class="step-mark">
-                {{
-                  step.status === 'done' ? '✓' : step.status === 'active' ? '…' : '○'
-                }}
-              </span>
-              {{ step.label }}
-            </li>
-          </ol>
-        </div>
 
         <div class="messages" data-testid="analysis-messages">
           <div
@@ -335,56 +470,113 @@ onUnmounted(() => stopPoll());
             <div class="bubble-role">
               {{ msg.role === 'user' ? '我' : '分析助手' }}
             </div>
-            <div class="bubble-body">{{ msg.content }}</div>
             <div
-              v-if="msg.kind === 'choice' && msg.options?.length && active?.status === 'asking' && msg.id === lastChoice?.id"
-              class="choice-list"
+              v-if="msg.attachments?.length"
+              class="bubble-attachments"
+              data-testid="analysis-msg-attachments"
             >
-              <label
-                v-for="opt in msg.options"
-                :key="opt.id"
-                class="choice-row"
+              <a
+                v-for="(att, idx) in msg.attachments"
+                :key="`${msg.id}-${idx}`"
+                class="bubble-attach"
+                :class="{ image: isImageMime(att.mimetype) }"
+                :href="att.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                :download="att.name"
               >
-                <input
-                  v-model="selectedOption"
-                  type="radio"
-                  name="analysis-choice"
-                  :value="opt.id"
-                  data-testid="analysis-choice"
+                <img
+                  v-if="isImageMime(att.mimetype)"
+                  :src="att.url"
+                  :alt="att.name"
                 />
-                <span>{{ opt.label }}</span>
-              </label>
-              <input
-                v-if="selectedOption === 'other'"
-                v-model="otherText"
-                class="other-input"
-                placeholder="请输入…"
-                data-testid="analysis-other-input"
-              />
+                <span v-else class="bubble-file">
+                  <span class="bubble-file-name">{{ att.name }}</span>
+                  <span class="bubble-file-size">{{ formatBytes(att.size) }}</span>
+                </span>
+              </a>
             </div>
+            <div v-if="msg.content" class="bubble-body">{{ msg.content }}</div>
           </div>
           <div ref="chatEnd"></div>
         </div>
 
-        <footer v-if="showConfirmBar" class="chat-actions">
-          <button
-            class="btn"
-            type="button"
-            data-testid="analysis-skip"
-            :disabled="submitting || busy"
-            @click="submitAnswer(true)"
+        <footer class="chat-composer" data-testid="analysis-composer">
+          <div
+            v-if="pendingFiles.length"
+            class="pending-files"
+            data-testid="analysis-pending-files"
           >
-            跳过
-          </button>
-          <button
-            class="btn btn-primary"
-            type="button"
-            data-testid="analysis-confirm"
-            :disabled="submitting || busy"
-            @click="submitAnswer(false)"
-          >
-            {{ submitting || busy ? '生成中…' : '确认' }}
-          </button>
+            <div
+              v-for="item in pendingFiles"
+              :key="item.localId"
+              class="pending-item"
+              :class="{
+                error: item.error,
+                uploading: item.uploading,
+                image: item.isImage,
+              }"
+            >
+              <img
+                v-if="item.isImage && item.previewUrl"
+                :src="item.previewUrl"
+                :alt="item.name"
+              />
+              <div v-else class="pending-file-meta">
+                <span class="pending-file-name">{{ item.name }}</span>
+                <span class="pending-file-size">{{ formatBytes(item.size) }}</span>
+              </div>
+              <span v-if="item.uploading" class="pending-badge">上传中</span>
+              <span v-else-if="item.error" class="pending-badge error">失败</span>
+              <button
+                type="button"
+                class="pending-remove"
+                aria-label="移除附件"
+                @click="removePending(item.localId)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <textarea
+            ref="inputRef"
+            v-model="draft"
+            class="chat-input"
+            rows="3"
+            placeholder="输入消息，可粘贴/上传文件；Enter 发送，Shift+Enter 换行"
+            data-testid="analysis-chat-input"
+            :disabled="!active || submitting || busy || loading"
+            @keydown="onComposerKeydown"
+            @paste="onComposerPaste"
+          />
+          <div class="composer-actions">
+            <input
+              ref="fileInputRef"
+              type="file"
+              multiple
+              hidden
+              data-testid="analysis-file-input"
+              @change="onFilePicked"
+            />
+            <button
+              class="btn btn-ghost"
+              type="button"
+              data-testid="analysis-file-upload"
+              :disabled="!active || submitting || busy || loading"
+              @click="openFilePicker"
+            >
+              附件
+            </button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              data-testid="analysis-chat-send"
+              :disabled="!canSend"
+              @click="sendChat"
+            >
+              {{ submitting || busy ? '发送中…' : '发送' }}
+            </button>
+          </div>
         </footer>
       </aside>
     </div>
@@ -402,12 +594,25 @@ onUnmounted(() => stopPoll());
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.22);
 }
+.analysis-panel.embedded {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #f7f8fa;
+}
 .analysis-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-light, #eef0f3);
+  background: #fff;
+}
+.analysis-top.embedded {
+  padding: 14px 20px;
+  flex: none;
 }
 .analysis-top-left {
   display: flex;
@@ -635,6 +840,10 @@ onUnmounted(() => stopPoll());
   background: #fff;
 }
 .chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-light, #eef0f3);
 }
@@ -643,54 +852,9 @@ onUnmounted(() => stopPoll());
   font-weight: 600;
   color: var(--text-primary, #1f2329);
 }
-.steps {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-light, #eef0f3);
+.chat-busy {
   font-size: 12px;
-  background: #fafbfc;
-}
-.steps-title {
-  color: var(--text-tertiary, #8f959e);
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-.steps ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.steps li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  color: var(--text-tertiary, #8f959e);
-}
-.steps li.active {
-  color: var(--text-primary, #1f2329);
-  font-weight: 600;
-}
-.steps li.done {
-  color: #0f9d58;
-}
-.step-mark {
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  font-size: 10px;
-  background: #f0f2f5;
-  flex-shrink: 0;
-}
-.steps li.active .step-mark {
-  background: #e8f0ff;
   color: #3370ff;
-}
-.steps li.done .step-mark {
-  background: #e6f7ef;
-  color: #0f9d58;
 }
 .messages {
   flex: 1;
@@ -717,6 +881,55 @@ onUnmounted(() => stopPoll());
   background: #e8f3ff;
   color: #1f2329;
 }
+.bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  justify-content: flex-end;
+}
+.bubble:not(.user) .bubble-attachments {
+  justify-content: flex-start;
+}
+.bubble-attach {
+  display: block;
+  max-width: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e8ef;
+  background: #fff;
+  text-decoration: none;
+  color: inherit;
+}
+.bubble-attach.image {
+  width: 72px;
+  height: 72px;
+}
+.bubble-attach.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.bubble-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  min-width: 120px;
+}
+.bubble-file-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bubble-file-size {
+  font-size: 11px;
+  color: #8f959e;
+}
 .bubble-body {
   display: inline-block;
   max-width: 100%;
@@ -727,54 +940,124 @@ onUnmounted(() => stopPoll());
   line-height: 1.55;
   white-space: pre-wrap;
 }
-.choice-list {
-  margin-top: 10px;
+.chat-composer {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-.choice-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 9px 11px;
-  border: 1px solid var(--border-light, #e5e6eb);
-  border-radius: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  background: #fff;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-.choice-row:hover {
-  border-color: #3370ff;
-  background: #f5f8ff;
-}
-.choice-row:has(input:checked) {
-  border-color: #3370ff;
-  background: #eef3ff;
-  box-shadow: 0 0 0 1px #3370ff inset;
-}
-.other-input {
-  width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid #d0d3d6;
-  border-radius: 6px;
-  font-size: 13px;
-  box-sizing: border-box;
-}
-.other-input:focus {
-  outline: none;
-  border-color: #3370ff;
-  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.15);
-}
-.chat-actions {
-  display: flex;
-  justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border-light, #eef0f3);
   background: #fafbfc;
+}
+.pending-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pending-item {
+  position: relative;
+  min-width: 64px;
+  max-width: 180px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #d0d3d9;
+  background: #fff;
+}
+.pending-item.image {
+  width: 64px;
+  height: 64px;
+}
+.pending-item.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pending-file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 28px 10px 10px;
+}
+.pending-file-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-file-size {
+  font-size: 11px;
+  color: #8f959e;
+}
+.pending-item.uploading,
+.pending-item.error {
+  opacity: 0.7;
+}
+.pending-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(51, 112, 255, 0.9);
+}
+.pending-badge.error {
+  background: rgba(212, 56, 13, 0.9);
+}
+.pending-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.65);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat-input {
+  width: 100%;
+  min-height: 72px;
+  max-height: 160px;
+  padding: 10px 12px;
+  border: 1px solid #d0d3d9;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+  background: #fff;
+  color: #1f2329;
+}
+.chat-input:focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 2px rgba(51, 112, 255, 0.15);
+}
+.chat-input:disabled {
+  background: #f5f6f7;
+  color: #8a9099;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.composer-actions .btn-primary {
+  min-width: 88px;
+  margin-left: auto;
+}
+.composer-actions .btn-primary:disabled,
+.composer-actions .btn-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

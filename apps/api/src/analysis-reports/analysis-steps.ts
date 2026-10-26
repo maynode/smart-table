@@ -19,12 +19,21 @@ export interface AnalysisMessageOption {
   label: string;
 }
 
+export interface AnalysisMessageAttachment {
+  url: string;
+  name: string;
+  mimetype: string;
+  size: number;
+}
+
 export interface AnalysisMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   kind?: 'text' | 'choice';
   options?: AnalysisMessageOption[];
+  /** 用户消息附件（上传/粘贴任意文件），数量不限 */
+  attachments?: AnalysisMessageAttachment[];
   createdAt: string;
 }
 

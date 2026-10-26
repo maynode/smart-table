@@ -27,11 +27,13 @@ import type {
   TemplateInstantiateResult,
   PublicViewDto,
   PublicViewData,
+  PublicViewScopeOptions,
   SavedViewDto,
   UserDto,
   NotificationDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
+  AnalysisMessageAttachmentDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -681,9 +683,22 @@ export const endpoints = {
   listPublicViews: (sheetId: string) =>
     api<PublicViewDto[]>(`/sheets/${sheetId}/public-views`),
 
+  publicViewScopeOptions: (sheetId: string) =>
+    api<PublicViewScopeOptions>(
+      `/sheets/${sheetId}/public-views/scope-options`,
+    ),
+
   createPublicView: (
     sheetId: string,
-    body: { name?: string; password?: string; expiresAt?: string | null },
+    body: {
+      name?: string;
+      password?: string;
+      expiresAt?: string | null;
+      sheetIds?: string[];
+      formSheetIds?: string[];
+      dashboardIds?: string[];
+      analysisReportIds?: string[];
+    },
   ) =>
     api<PublicViewDto>(`/sheets/${sheetId}/public-views`, {
       method: 'POST',
@@ -696,11 +711,14 @@ export const endpoints = {
     }),
 
   getPublicView: (token: string, password?: string) =>
-    api<PublicViewData>(
-      `/public-views/${token}${
-        password ? `?password=${encodeURIComponent(password)}` : ''
-      }`,
-    ),
+    password
+      ? api<PublicViewData>(`/public-views/${token}/verify`, {
+          method: 'POST',
+          body: { password },
+          // 公开页：不把登录态 401 语义套到「需要访问密码」上
+          token: null,
+        })
+      : api<PublicViewData>(`/public-views/${token}`, { token: null }),
 
   listNotifications: (limit = 50) =>
     api<{ notifications: NotificationDto[] }>(
@@ -736,6 +754,37 @@ export const endpoints = {
   deleteAnalysisReport: (id: string) =>
     api<{ deleted: boolean; id: string }>(`/analysis-reports/${id}`, {
       method: 'DELETE',
+    }),
+
+  uploadAnalysisAttachment: async (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const response = await fetch(
+      `${API_BASE}/analysis-reports/${id}/attachments`,
+      {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      },
+    );
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as AnalysisMessageAttachmentDto;
+  },
+
+  chatAnalysisReport: (
+    id: string,
+    text: string,
+    attachments?: AnalysisMessageAttachmentDto[],
+  ) =>
+    api<AnalysisReportDto>(`/analysis-reports/${id}/chat`, {
+      method: 'POST',
+      body: {
+        text,
+        ...(attachments?.length ? { attachments } : {}),
+      },
     }),
 
   answerAnalysisReport: (

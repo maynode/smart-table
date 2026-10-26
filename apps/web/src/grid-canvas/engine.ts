@@ -668,7 +668,7 @@ export class CanvasGridEngine {
       return;
     }
     const footerY = this.footerTop(this.host.clientHeight);
-    // 企微：底栏行号区「+」可点，打开插入菜单。
+    // 底栏行号区「+」：添加一行（与工具栏同功能）
     if (point.y >= footerY) {
       if (point.x < this.rowGutterWidth && this.options.onFooterAddClick) {
         event.preventDefault();

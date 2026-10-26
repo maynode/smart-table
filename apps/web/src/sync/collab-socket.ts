@@ -1,18 +1,22 @@
 import { ref, type Ref } from 'vue';
 import type { SheetMutation } from 'shared';
-import { transformAgainstPeers } from 'shared';
+import { peerColorFromUserId, transformAgainstPeers } from 'shared';
 import { getToken } from '../api/client';
 
 export interface CollabPeer {
   userId: string;
   account: string;
   name: string;
-  colorId: number;
+  color: string;
+  avatarSeed?: string;
+  avatarUrl?: string | null;
 }
 
 export interface CollabCursor {
   userId: string;
   account: string;
+  name: string;
+  color: string;
   cursor: {
     recordId?: string;
     fieldId?: string;
@@ -34,6 +38,8 @@ type ServerMsg = {
   mutations?: SheetMutation[];
   userId?: string;
   account?: string;
+  name?: string;
+  color?: string;
   cursor?: CollabCursor['cursor'];
   code?: string;
   message?: string;
@@ -55,6 +61,8 @@ export class CollabSocket {
   private ws: WebSocket | null = null;
   private sheetId = '';
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private cursorTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingCursor: CollabCursor['cursor'] | null = null;
   private onAccept:
     | ((payload: {
         results: unknown[];
@@ -64,7 +72,12 @@ export class CollabSocket {
       }) => void)
     | null = null;
   private onRemote:
-    | ((payload: { mutations: SheetMutation[]; authorId: string; newRev: number }) => void)
+    | ((payload: {
+        mutations: SheetMutation[];
+        authorId: string;
+        newRev: number;
+        commitId?: string;
+      }) => void)
     | null = null;
   private onError:
     | ((payload: { code?: string; message?: string; sheetRev?: number }) => void)
@@ -124,6 +137,9 @@ export class CollabSocket {
   disconnect(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
+    if (this.cursorTimer) clearTimeout(this.cursorTimer);
+    this.cursorTimer = null;
+    this.pendingCursor = null;
     this.ws?.close();
     this.ws = null;
     this.connected.value = false;
@@ -146,8 +162,17 @@ export class CollabSocket {
     return true;
   }
 
+  /** 选区/编辑位置广播（节流，避免每个 pointermove 打爆） */
   sendCursor(cursor: CollabCursor['cursor']): void {
-    this.send({ type: 'cursor_message', cursor });
+    this.pendingCursor = cursor;
+    if (this.cursorTimer) return;
+    this.cursorTimer = setTimeout(() => {
+      this.cursorTimer = null;
+      const next = this.pendingCursor;
+      this.pendingCursor = null;
+      if (!next) return;
+      this.send({ type: 'cursor_message', cursor: next });
+    }, 50);
   }
 
   /** Transform local pending against remote peers before retry. */
@@ -180,26 +205,47 @@ export class CollabSocket {
       case 'last_reversion':
         this.sheetRev.value = msg.sheetRev ?? 0;
         break;
-      case 'user_newinfos':
-        this.peers.value = msg.members ?? [];
+      case 'user_newinfos': {
+        // 防御：同账号多连接时按 userId 去重（服务端也会去重）
+        const seen = new Set<string>();
+        const unique: CollabPeer[] = [];
+        for (const peer of msg.members ?? []) {
+          if (!peer.userId || seen.has(peer.userId)) continue;
+          seen.add(peer.userId);
+          unique.push({
+            ...peer,
+            color: peer.color || peerColorFromUserId(peer.userId),
+            avatarSeed: peer.avatarSeed || peer.account || peer.userId,
+            avatarUrl: peer.avatarUrl ?? null,
+          });
+        }
+        this.peers.value = unique;
         break;
+      }
       case 'user_leave':
         this.peers.value = this.peers.value.filter((p) => p.userId !== msg.userId);
         this.cursors.value = this.cursors.value.filter(
           (c) => c.userId !== msg.userId,
         );
         break;
-      case 'cursor_message':
+      case 'cursor_message': {
         if (!msg.userId) break;
+        const peer = this.peers.value.find((p) => p.userId === msg.userId);
         this.cursors.value = [
           ...this.cursors.value.filter((c) => c.userId !== msg.userId),
           {
             userId: msg.userId,
-            account: msg.account ?? '',
+            account: msg.account ?? peer?.account ?? '',
+            name: msg.name ?? peer?.name ?? msg.account ?? '',
+            color:
+              msg.color ||
+              peer?.color ||
+              peerColorFromUserId(msg.userId),
             cursor: msg.cursor ?? {},
           },
         ];
         break;
+      }
       case 'accept_commit':
         this.sheetRev.value = msg.newRev ?? this.sheetRev.value;
         this.onAccept?.({
@@ -215,6 +261,7 @@ export class CollabSocket {
           mutations: msg.mutations ?? [],
           authorId: msg.authorId ?? '',
           newRev: msg.newRev ?? this.sheetRev.value,
+          commitId: msg.commitId,
         });
         break;
       case 'error':

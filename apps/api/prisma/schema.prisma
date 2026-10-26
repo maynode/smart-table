@@ -497,6 +497,12 @@ model PublicView {
   passwordHash String?   @map("password_hash")
   expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
   enabled      Boolean   @default(true)
+  /** 公开内容范围：工作表 id；空数组 + 其它范围皆空时回落 host sheetId */
+  sheetIds           Json @default("[]") @map("sheet_ids")
+  /** 表单收集结果（关联 Form 的 sheet） */
+  formSheetIds       Json @default("[]") @map("form_sheet_ids")
+  dashboardIds       Json @default("[]") @map("dashboard_ids")
+  analysisReportIds  Json @default("[]") @map("analysis_report_ids")
   createdBy    String?   @map("created_by") @db.Uuid
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 

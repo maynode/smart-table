@@ -6,17 +6,20 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
   Param,
   Patch,
   Post,
   Query,
   Req,
   UseGuards,
+  forwardRef,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import type { MultipartFile } from '@fastify/multipart';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
+import { CollabRoomService } from '../collab/collab-room.service';
 import { CreateFieldDto } from './dto/create-field.dto';
 import { CreateRecordDto } from './dto/create-record.dto';
 import { CreateSheetDto } from './dto/create-sheet.dto';
@@ -34,6 +37,8 @@ export class SheetsController {
   constructor(
     private readonly sheetsService: SheetsService,
     private readonly commitChangesService: CommitChangesService,
+    @Inject(forwardRef(() => CollabRoomService))
+    private readonly collabRooms: CollabRoomService,
   ) {}
 
   @Post('bases/:baseId/sheets')
@@ -137,18 +142,30 @@ export class SheetsController {
 
   @Post('sheets/:sheetId/commitchanges')
   @HttpCode(HttpStatus.OK)
-  commitChanges(
+  async commitChanges(
     @CurrentUser() user: JwtPayload,
     @Param('sheetId') sheetId: string,
     @Body() dto: CommitChangesDto,
     @Req() request: FastifyRequest,
   ) {
-    return this.commitChangesService.commit(
+    const response = await this.commitChangesService.commit(
       sheetId,
       user.sub,
       dto,
       request.ip ?? '0.0.0.0',
     );
+    const allOk = response.results.every(
+      (r) => r.status === 'ok' || r.status === 'duplicate',
+    );
+    if (allOk && dto.mutations.length > 0) {
+      await this.collabRooms.publishHttpCommit({
+        sheetId,
+        authorId: user.sub,
+        commitId: dto.clientBatchId,
+        mutations: dto.mutations,
+      });
+    }
+    return response;
   }
 
   @Post('sheets/:sheetId/records')

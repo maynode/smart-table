@@ -19,12 +19,30 @@ import { PublicViewsService } from './public-views.service';
 export class PublicViewsController {
   constructor(private readonly publicViews: PublicViewsService) {}
 
+  @Get('sheets/:sheetId/public-views/scope-options')
+  @UseGuards(JwtAuthGuard)
+  scopeOptions(
+    @CurrentUser() user: JwtPayload,
+    @Param('sheetId', ParseUUIDPipe) sheetId: string,
+  ) {
+    return this.publicViews.scopeOptions(sheetId, user.sub);
+  }
+
   @Post('sheets/:sheetId/public-views')
   @UseGuards(JwtAuthGuard)
   create(
     @CurrentUser() user: JwtPayload,
     @Param('sheetId', ParseUUIDPipe) sheetId: string,
-    @Body() body: { name?: string; password?: string; expiresAt?: string | null },
+    @Body()
+    body: {
+      name?: string;
+      password?: string;
+      expiresAt?: string | null;
+      sheetIds?: string[];
+      formSheetIds?: string[];
+      dashboardIds?: string[];
+      analysisReportIds?: string[];
+    },
   ) {
     return this.publicViews.create(sheetId, user.sub, body);
   }
