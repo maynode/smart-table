@@ -12,8 +12,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 **当前主线（2026-10-26）：** 交付闭环收尾；像素级视觉对齐 mock **本轮不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 可选 `perf:window`（缺千万行 `.perf-env.json`）。  
-**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）。  
-**待定（成熟后再议）：** 跨端同步深化；企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
+**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）。  
+**待定（成熟后再议）：** 企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
 
 ---
 
@@ -127,6 +127,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | 断网感知 / 恢复后自动重连或重试 | **已完成（2026-10-26）** | `NetworkError`、`online`/`offline`、壳层 `sync-banner`、恢复自动 `flush` |
 | 离线编辑 / 本地队列 / 回放提交 | **已完成（2026-10-26）** | MessageCenter + IndexedDB + `POST /sheets/:id/commitchanges`；幂等 `clientOpId`；公开表 `Idempotency-Key`；见 `docs/OFFLINE.md` |
 | 多人实时协同（OT / WS / `NEW_CHANGES`） | **已完成（2026-10-26）** | Nest `/collab`：`client_ready`/`heart_beat`/`user_changes`/`accept_commit`/`new_changes`/`cursor`；`sheet_rev`+changeset；共享 OT；在线 MessageCenter→WS，降级 HTTP；见 `docs/COLLAB.md` |
+| Live Bus（全站自动更新） | **已完成（2026-10-26）** | Nest `/live` 支持 workspace/base/user/public/form；首页·Base·通知·公开页·填表全覆盖；含通知/模板/视图/Excel/表单提交/图表增删；`GET bases|workspaces/.../live/since`；见 `docs/LIVE.md` |
+| Live Bus 多 Tab 镜像（P4） | **已完成（2026-10-26）** | 同 scope `BroadcastChannel` + `navigator.locks` 单 leader WS；follower 镜像 + `live/since` 补洞；见 `docs/LIVE.md` §5 |
 | 跨端 / 多会话数据同步 | **部分完成** | 同表多会话由 WS `new_changes` 对齐；跨设备离线队列仍走 OFFLINE 回放 |
 | 企微登录 | **待定** | 产品用本系统自有账号；不做企微 OAuth 强绑定登录 |
 | 企微通讯录 / 联系人 | **待定** | 用本系统工作区成员表达同类语义 |

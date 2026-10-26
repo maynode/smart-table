@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { LiveEvent } from 'shared';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { liveBus } from '../sync/live-bus';
 import { copyText } from '../ui/clipboard';
 import { rewritePublicUrl } from '../ui/public-url';
 import { toast } from '../ui/toast';
@@ -18,13 +20,18 @@ const views = ref<PublicViewDto[]>([]);
 const scope = ref<PublicViewScopeOptions | null>(null);
 const name = ref('只读数据视图');
 const password = ref('');
+const clearPassword = ref(false);
 const expiresAt = ref('');
 const loading = ref(false);
+const editingId = ref<string | null>(null);
+const saving = ref(false);
 
 const selectedSheetIds = ref<string[]>([]);
 const selectedFormSheetIds = ref<string[]>([]);
 const selectedDashboardIds = ref<string[]>([]);
 const selectedReportIds = ref<string[]>([]);
+
+const isEditing = computed(() => Boolean(editingId.value));
 
 const selectableCount = computed(() => {
   if (!scope.value) return 0;
@@ -133,7 +140,12 @@ async function load(): Promise<void> {
     ]);
     views.value = list;
     scope.value = options;
-    syncDefaultSelection();
+    if (editingId.value) {
+      const current = list.find((item) => item.id === editingId.value);
+      if (!current) resetForm();
+    } else {
+      syncDefaultSelection();
+    }
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -141,35 +153,85 @@ async function load(): Promise<void> {
   }
 }
 
-async function create(): Promise<void> {
+function resetForm(): void {
+  editingId.value = null;
+  name.value = '只读数据视图';
+  password.value = '';
+  clearPassword.value = false;
+  expiresAt.value = '';
+  syncDefaultSelection();
+}
+
+function beginEdit(view: PublicViewDto): void {
+  editingId.value = view.id;
+  name.value = view.name;
+  password.value = '';
+  clearPassword.value = false;
+  expiresAt.value = view.expiresAt
+    ? new Date(view.expiresAt).toISOString().slice(0, 10)
+    : '';
+  selectedSheetIds.value = [...(view.sheetIds ?? [])];
+  selectedFormSheetIds.value = [...(view.formSheetIds ?? [])];
+  selectedDashboardIds.value = [...(view.dashboardIds ?? [])];
+  selectedReportIds.value = [...(view.analysisReportIds ?? [])];
+  if (!selectedCount.value) syncDefaultSelection();
+}
+
+function cancelEdit(): void {
+  resetForm();
+}
+
+async function save(): Promise<void> {
   if (!selectedCount.value) {
     toast('请至少选择一项有数据的公开内容');
     return;
   }
+  if (saving.value) return;
+  saving.value = true;
   try {
     const expires = expiresAt.value
       ? new Date(`${expiresAt.value}T23:59:59`).toISOString()
       : null;
-    await endpoints.createPublicView(props.sheetId, {
-      name: name.value,
-      password: password.value || undefined,
-      expiresAt: expires,
+    const scopeBody = {
       sheetIds: selectedSheetIds.value,
       formSheetIds: selectedFormSheetIds.value,
       dashboardIds: selectedDashboardIds.value,
       analysisReportIds: selectedReportIds.value,
-    });
-    password.value = '';
+    };
+    if (editingId.value) {
+      await endpoints.updatePublicView(editingId.value, {
+        name: name.value,
+        expiresAt: expires,
+        ...(clearPassword.value
+          ? { clearPassword: true }
+          : password.value
+            ? { password: password.value }
+            : {}),
+        ...scopeBody,
+      });
+      toast('公开链接已更新');
+    } else {
+      await endpoints.createPublicView(props.sheetId, {
+        name: name.value,
+        password: password.value || undefined,
+        expiresAt: expires,
+        ...scopeBody,
+      });
+      toast('公开只读链接已创建');
+    }
+    resetForm();
     await load();
-    toast('公开只读链接已创建');
   } catch (error) {
     toast(messageOf(error));
+  } finally {
+    saving.value = false;
   }
 }
 
 async function revoke(view: PublicViewDto): Promise<void> {
   try {
     await endpoints.revokePublicView(view.id);
+    if (editingId.value === view.id) resetForm();
     await load();
     toast('公开链接已撤销');
   } catch (error) {
@@ -203,8 +265,25 @@ watch(
   },
 );
 
+const liveUnsubs: Array<() => void> = [];
+
+function onPublicViewLive(event: LiveEvent): void {
+  if (event.meta?.sheetId === props.sheetId) {
+    void load();
+    return;
+  }
+  if (views.value.some((view) => view.id === event.entityId)) {
+    void load();
+  }
+}
+
 onMounted(() => {
   void load();
+  liveUnsubs.push(liveBus.on('public_view.*', onPublicViewLive));
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
 });
 </script>
 
@@ -343,7 +422,7 @@ onMounted(() => {
 
       <div class="public-main">
         <div class="public-form">
-          <h4>新建链接</h4>
+          <h4>{{ isEditing ? '编辑链接' : '新建链接' }}</h4>
           <label>
             名称
             <input v-model="name" data-testid="public-view-name" />
@@ -353,9 +432,33 @@ onMounted(() => {
             <input
               v-model="password"
               type="password"
-              placeholder="至少 4 位"
+              :placeholder="
+                isEditing
+                  ? '留空则保持原密码；填写则更换'
+                  : '至少 4 位'
+              "
               data-testid="public-view-password"
+              @input="clearPassword = false"
             />
+          </label>
+          <label
+            v-if="
+              isEditing &&
+              views.find((v) => v.id === editingId)?.passwordRequired
+            "
+            class="scope-row password-clear"
+          >
+            <input
+              v-model="clearPassword"
+              type="checkbox"
+              data-testid="public-view-clear-password"
+              @change="
+                () => {
+                  if (clearPassword) password = '';
+                }
+              "
+            />
+            <span>清除访问密码</span>
           </label>
           <label>
             有效期（可选）
@@ -365,14 +468,25 @@ onMounted(() => {
               data-testid="public-view-expiry"
             />
           </label>
-          <button
-            class="btn btn-primary"
-            data-testid="public-view-create"
-            :disabled="!selectedCount"
-            @click="create"
-          >
-            创建公开链接
-          </button>
+          <div class="form-actions">
+            <button
+              class="btn btn-primary"
+              data-testid="public-view-create"
+              :disabled="!selectedCount || saving"
+              @click="save"
+            >
+              {{ isEditing ? '保存修改' : '创建公开链接' }}
+            </button>
+            <button
+              v-if="isEditing"
+              class="btn btn-ghost"
+              type="button"
+              data-testid="public-view-cancel-edit"
+              @click="cancelEdit"
+            >
+              取消编辑
+            </button>
+          </div>
         </div>
 
         <div class="public-list">
@@ -381,6 +495,7 @@ onMounted(() => {
             v-for="view in views"
             :key="view.id"
             class="public-row"
+            :class="{ editing: editingId === view.id }"
             data-testid="public-view-row"
           >
             <div>
@@ -397,6 +512,13 @@ onMounted(() => {
               }}</a>
             </div>
             <div class="row-actions">
+              <button
+                class="btn btn-ghost"
+                data-testid="public-view-edit"
+                @click="beginEdit(view)"
+              >
+                编辑
+              </button>
               <button
                 class="btn btn-ghost"
                 data-testid="public-view-copy"
@@ -596,6 +718,18 @@ onMounted(() => {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.form-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.password-clear {
+  flex-direction: row !important;
+  align-items: center;
+  padding: 0;
+  cursor: pointer;
+}
 .public-row {
   display: flex;
   justify-content: space-between;
@@ -608,6 +742,10 @@ onMounted(() => {
 .public-row:hover {
   border-color: #d0d7e3;
   background: #fafbfc;
+}
+.public-row.editing {
+  border-color: #3370ff;
+  background: #f5f8ff;
 }
 .public-row strong {
   font-size: 13px;

@@ -18,6 +18,8 @@ import NotificationBell from '../components/NotificationBell.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import { auth } from '../stores/auth';
+import { liveBus } from '../sync/live-bus';
+import { liveSocket } from '../sync/live-socket';
 import { confirmDialog, promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import { buildAvatarUrl, resolveAvatarSrc } from '../utils/avatar';
@@ -26,6 +28,7 @@ import type {
   TemplateInstantiateResult,
   WorkspaceDto,
 } from '../api/types';
+import type { LiveEvent } from 'shared';
 
 const WS_STORAGE_KEY = 'smart-table.currentWorkspaceId';
 
@@ -1051,10 +1054,70 @@ watch(
   { flush: 'post' },
 );
 
+const liveUnsubs: Array<() => void> = [];
+
+function onHomeLive(event: LiveEvent): void {
+  if (event.kind === 'member.changed') {
+    const meta = event.meta ?? {};
+    const action = meta.action;
+    if (
+      event.entityId &&
+      event.entityId === auth.state.user?.id &&
+      (action === 'avatar' || action === 'username')
+    ) {
+      auth.updateUser({
+        id: auth.state.user.id,
+        account:
+          typeof meta.account === 'string'
+            ? meta.account
+            : auth.state.user.account,
+        name:
+          typeof meta.name === 'string' ? meta.name : auth.state.user.name,
+        avatarSeed:
+          typeof meta.avatarSeed === 'string'
+            ? meta.avatarSeed
+            : auth.state.user.avatarSeed,
+        avatarUrl:
+          meta.avatarUrl === null || typeof meta.avatarUrl === 'string'
+            ? meta.avatarUrl
+            : (auth.state.user.avatarUrl ?? null),
+      });
+    }
+  }
+  if (
+    event.kind.startsWith('workspace.') ||
+    event.kind === 'member.changed'
+  ) {
+    void loadWorkspaces();
+  }
+  if (
+    event.kind.startsWith('base.') ||
+    event.kind === 'member.changed' ||
+    event.kind === 'permission.changed'
+  ) {
+    void loadBases();
+  }
+}
+
+watch(
+  currentWorkspaceId,
+  (id) => {
+    if (id) liveSocket.connect({ workspaceId: id });
+    else liveSocket.disconnect();
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick);
   document.addEventListener('keydown', onDocumentKeydown);
   window.addEventListener('resize', scheduleMeasureBaseHeadlines);
+  liveUnsubs.push(
+    liveBus.on('workspace.*', onHomeLive),
+    liveBus.on('base.*', onHomeLive),
+    liveBus.on('member.changed', onHomeLive),
+    liveBus.on('permission.changed', onHomeLive),
+  );
   void loadWorkspaces();
 });
 
@@ -1062,6 +1125,8 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick);
   document.removeEventListener('keydown', onDocumentKeydown);
   window.removeEventListener('resize', scheduleMeasureBaseHeadlines);
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+  liveSocket.disconnect();
 });
 </script>
 

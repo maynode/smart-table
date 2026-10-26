@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
@@ -22,6 +23,7 @@ export class ExcelService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
+    private readonly live: LiveBusService,
   ) {}
 
   async exportSheet(
@@ -160,6 +162,20 @@ export class ExcelService {
         })),
       });
       imported += result.count;
+    }
+
+    if (imported > 0) {
+      await this.live.emit({
+        baseId: sheet.baseId,
+        actorId: userId,
+        kind: 'sheet.rev_bumped',
+        entityId: sheetId,
+        meta: {
+          sheetRev: sheet.sheetRev,
+          reason: 'excel_import',
+          imported,
+        },
+      });
     }
 
     return {

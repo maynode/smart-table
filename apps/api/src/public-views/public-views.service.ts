@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
 import { randomBytes } from 'node:crypto';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharingService } from '../sharing/sharing.service';
@@ -50,6 +51,7 @@ export class PublicViewsService {
     private readonly workspaces: WorkspacesService,
     private readonly sharing: SharingService,
     private readonly dashboards: DashboardsService,
+    private readonly live: LiveBusService,
   ) {}
 
   async scopeOptions(sheetId: string, userId: string) {
@@ -176,6 +178,13 @@ export class PublicViewsService {
         createdBy: userId,
       },
     });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'public_view.created',
+      entityId: created.id,
+      meta: { sheetId, token: created.token },
+    });
     return this.present(created);
   }
 
@@ -188,13 +197,123 @@ export class PublicViewsService {
     return views.map((view) => this.present(view));
   }
 
+  async update(
+    viewId: string,
+    userId: string,
+    body: ScopePayload & {
+      name?: string;
+      password?: string | null;
+      clearPassword?: boolean;
+      expiresAt?: string | null;
+      enabled?: boolean;
+    },
+  ) {
+    const existing = await this.prisma.publicView.findUnique({
+      where: { id: viewId },
+    });
+    if (!existing) throw new NotFoundException('公开视图不存在');
+    const sheet = await this.assertEditor(existing.sheetId, userId);
+
+    const data: {
+      name?: string;
+      passwordHash?: string | null;
+      expiresAt?: Date | null;
+      enabled?: boolean;
+      sheetIds?: string[];
+      formSheetIds?: string[];
+      dashboardIds?: string[];
+      analysisReportIds?: string[];
+    } = {};
+
+    if (body.name !== undefined) {
+      const name = body.name.trim();
+      if (!name) throw new BadRequestException('名称不能为空');
+      data.name = name;
+    }
+
+    if (body.clearPassword) {
+      data.passwordHash = null;
+    } else if (body.password !== undefined && body.password !== null) {
+      const password = String(body.password).trim();
+      if (!password) {
+        throw new BadRequestException('访问密码至少 4 位');
+      }
+      if (password.length < 4) {
+        throw new BadRequestException('访问密码至少 4 位');
+      }
+      data.passwordHash = await hash(password);
+    }
+
+    if (body.expiresAt !== undefined) {
+      if (body.expiresAt === null || body.expiresAt === '') {
+        data.expiresAt = null;
+      } else {
+        const expiresAt = new Date(body.expiresAt);
+        if (Number.isNaN(expiresAt.getTime())) {
+          throw new BadRequestException('有效期时间无效');
+        }
+        if (expiresAt.getTime() <= Date.now()) {
+          throw new BadRequestException('有效期必须晚于当前时间');
+        }
+        data.expiresAt = expiresAt;
+      }
+    }
+
+    if (body.enabled !== undefined) {
+      data.enabled = Boolean(body.enabled);
+    }
+
+    const scopeTouched =
+      body.sheetIds !== undefined ||
+      body.formSheetIds !== undefined ||
+      body.dashboardIds !== undefined ||
+      body.analysisReportIds !== undefined;
+    if (scopeTouched) {
+      const scope = await this.resolveScope(sheet.baseId, existing.sheetId, {
+        sheetIds: body.sheetIds ?? asIdList(existing.sheetIds),
+        formSheetIds: body.formSheetIds ?? asIdList(existing.formSheetIds),
+        dashboardIds: body.dashboardIds ?? asIdList(existing.dashboardIds),
+        analysisReportIds:
+          body.analysisReportIds ?? asIdList(existing.analysisReportIds),
+      });
+      data.sheetIds = scope.sheetIds;
+      data.formSheetIds = scope.formSheetIds;
+      data.dashboardIds = scope.dashboardIds;
+      data.analysisReportIds = scope.analysisReportIds;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return this.present(existing);
+    }
+
+    const updated = await this.prisma.publicView.update({
+      where: { id: viewId },
+      data,
+    });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'public_view.updated',
+      entityId: updated.id,
+      meta: { sheetId: updated.sheetId, token: updated.token },
+    });
+    return this.present(updated);
+  }
+
   async remove(viewId: string, userId: string) {
     const view = await this.prisma.publicView.findUnique({
       where: { id: viewId },
     });
     if (!view) throw new NotFoundException('公开视图不存在');
-    await this.assertEditor(view.sheetId, userId);
+    const sheet = await this.assertEditor(view.sheetId, userId);
     await this.prisma.publicView.delete({ where: { id: viewId } });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'public_view.deleted',
+      entityId: viewId,
+      meta: { sheetId: view.sheetId },
+    });
     return { id: viewId, revoked: true };
   }
 

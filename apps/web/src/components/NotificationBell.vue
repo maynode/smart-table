@@ -2,11 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { endpoints } from '../api/endpoints';
+import { liveBus } from '../sync/live-bus';
 import type { NotificationDto } from '../api/types';
 
 const router = useRouter();
 const items = ref<NotificationDto[]>([]);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+const liveUnsubs: Array<() => void> = [];
 
 const unreadCount = computed(
   () => items.value.filter((row) => !row.readAt).length,
@@ -30,9 +32,18 @@ onMounted(() => {
   pollTimer = setInterval(() => {
     void refresh();
   }, 30_000);
+  liveUnsubs.push(
+    liveBus.on('notification.created', () => {
+      void refresh();
+    }),
+    liveBus.on('notification.read', () => {
+      void refresh();
+    }),
+  );
 });
 
 onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
   if (pollTimer) clearInterval(pollTimer);
 });
 </script>

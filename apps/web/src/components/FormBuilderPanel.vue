@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import QRCode from 'qrcode';
 import {
   FIELD_TYPE_LABELS,
@@ -15,9 +15,11 @@ import {
   walkDisplayConditionLeaves,
   type DisplayConditionOperator,
   type FieldType,
+  type LiveEvent,
 } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { liveBus } from '../sync/live-bus';
 import { copyText } from '../ui/clipboard';
 import { confirmDialog } from '../ui/dialog';
 import { fieldTypeIcon } from '../ui/field-icons';
@@ -782,7 +784,30 @@ async function copyShareUrl(): Promise<void> {
   toast(ok ? '分享链接已复制' : '复制失败，请手动选中链接复制');
 }
 
-onMounted(load);
+const liveUnsubs: Array<() => void> = [];
+
+function onFormLive(event: LiveEvent): void {
+  const sheetId = props.sheet?.id;
+  if (!sheetId) return;
+  if (form.value?.id && event.entityId === form.value.id) {
+    void load();
+    return;
+  }
+  if (event.meta?.sheetId === sheetId) {
+    void load();
+    return;
+  }
+  if (!form.value) void load();
+}
+
+onMounted(() => {
+  void load();
+  liveUnsubs.push(liveBus.on('form.*', onFormLive));
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+});
 </script>
 
 <template>

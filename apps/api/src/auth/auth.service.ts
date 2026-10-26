@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
 import {
@@ -17,6 +18,8 @@ import {
   validateSecurityAnswer,
   validateSecurityQuestion,
 } from 'shared';
+import { CollabRoomService } from '../collab/collab-room.service';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { hashPassword, verifyPassword } from './password';
@@ -45,6 +48,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly storage: StorageService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async register(
@@ -255,7 +259,9 @@ export class AuthService {
     }
 
     await this.claimWorkspaceInvites(updated.id, account);
-    return toPublicUser(updated);
+    const publicUser = toPublicUser(updated);
+    await this.notifyProfileChanged(publicUser, 'username');
+    return publicUser;
   }
 
   /** 登录态更换卡通头像种子（清除自定义上传） */
@@ -279,7 +285,9 @@ export class AuthService {
       where: { id: userId },
       data: { avatarSeed, avatarUrl: null },
     });
-    return toPublicUser(updated);
+    const publicUser = toPublicUser(updated);
+    await this.notifyProfileChanged(publicUser, 'avatar');
+    return publicUser;
   }
 
   /** 登录态上传自定义方图头像（裁剪后） */
@@ -306,7 +314,54 @@ export class AuthService {
       where: { id: userId },
       data: { avatarUrl },
     });
-    return toPublicUser(updated);
+    const publicUser = toPublicUser(updated);
+    await this.notifyProfileChanged(publicUser, 'avatar');
+    return publicUser;
+  }
+
+  /** 资料变更：成员列表 Live + 在线协同 presence（ModuleRef 避开 Auth↔Live/Collab 环） */
+  private async notifyProfileChanged(
+    user: PublicUser,
+    action: 'avatar' | 'username',
+  ): Promise<void> {
+    try {
+      const live = this.moduleRef.get(LiveBusService, { strict: false });
+      const memberships = await this.prisma.workspaceMember.findMany({
+        where: { userId: user.id },
+        select: { workspaceId: true },
+      });
+      for (const m of memberships) {
+        await live.emit({
+          baseId: null,
+          workspaceId: m.workspaceId,
+          actorId: user.id,
+          kind: 'member.changed',
+          entityId: user.id,
+          userId: user.id,
+          meta: {
+            workspaceId: m.workspaceId,
+            action,
+            account: user.account,
+            name: user.name,
+            avatarSeed: user.avatarSeed,
+            avatarUrl: user.avatarUrl,
+          },
+        });
+      }
+    } catch {
+      /* Live 失败不回滚资料写入 */
+    }
+    try {
+      const collab = this.moduleRef.get(CollabRoomService, { strict: false });
+      collab.updateUserProfile(user.id, {
+        account: user.account,
+        name: user.name,
+        avatarSeed: user.avatarSeed,
+        avatarUrl: user.avatarUrl,
+      });
+    } catch {
+      /* presence 刷新失败可忽略；客户端仍会靠 live 补 */
+    }
   }
 
   /** 登录态修改密码：校验当前密码后写入新密码。 */

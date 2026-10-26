@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import {
@@ -157,6 +158,7 @@ export class TemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
+    private readonly live: LiveBusService,
   ) {}
 
   list(scope: 'workspace' | 'base' = 'workspace') {
@@ -201,7 +203,14 @@ export class TemplatesService {
       if (!baseId) {
         throw new BadRequestException('对象模板需要 baseId');
       }
-      return this.instantiateIntoBase(baseId, userId, objectTemplate, name);
+      const created = await this.instantiateIntoBase(
+        baseId,
+        userId,
+        objectTemplate,
+        name,
+      );
+      await this.emitInstantiateLive(created, userId, workspaceId);
+      return created;
     }
 
     await this.workspaces.requireMember(workspaceId, userId, 'editor');
@@ -209,10 +218,108 @@ export class TemplatesService {
     if (!template) throw new BadRequestException('模板不存在');
     const baseName = (name ?? '').trim() || template.name;
     await this.assertBaseNameAvailable(workspaceId, baseName);
-    if (template.serialClaim) {
-      return this.instantiateSerialClaim(workspaceId, template, baseName);
+    const created = template.serialClaim
+      ? await this.instantiateSerialClaim(workspaceId, template, baseName)
+      : await this.instantiateSimple(workspaceId, template, baseName);
+    await this.emitInstantiateLive(created, userId, workspaceId);
+    return created;
+  }
+
+  private async emitInstantiateLive(
+    created: Record<string, unknown>,
+    actorId: string,
+    workspaceId: string,
+  ): Promise<void> {
+    const baseId =
+      typeof created.baseId === 'string' ? created.baseId : null;
+    if (!baseId) return;
+
+    if (created.kind === undefined || created.kind === 'base') {
+      await this.live.emit({
+        baseId,
+        workspaceId,
+        actorId,
+        kind: 'base.created',
+        entityId: baseId,
+        meta: {
+          name: typeof created.name === 'string' ? created.name : undefined,
+          template:
+            typeof created.template === 'string' ? created.template : undefined,
+        },
+      });
     }
-    return this.instantiateSimple(workspaceId, template, baseName);
+
+    if (typeof created.sheetId === 'string') {
+      await this.live.emit({
+        baseId,
+        actorId,
+        kind: 'sheet.created',
+        entityId: created.sheetId,
+        meta: {
+          name: typeof created.name === 'string' ? created.name : undefined,
+        },
+      });
+    }
+    if (Array.isArray(created.sheets)) {
+      for (const sheet of created.sheets) {
+        if (!sheet || typeof sheet !== 'object') continue;
+        const id = (sheet as { id?: unknown }).id;
+        const name = (sheet as { name?: unknown }).name;
+        if (typeof id !== 'string') continue;
+        await this.live.emit({
+          baseId,
+          actorId,
+          kind: 'sheet.created',
+          entityId: id,
+          meta: { name: typeof name === 'string' ? name : undefined },
+        });
+      }
+    }
+    if (typeof created.formId === 'string') {
+      await this.live.emit({
+        baseId,
+        actorId,
+        kind: 'form.created',
+        entityId: created.formId,
+        meta: {
+          name: typeof created.name === 'string' ? created.name : undefined,
+        },
+      });
+    }
+    if (typeof created.dashboardId === 'string') {
+      await this.live.emit({
+        baseId,
+        actorId,
+        kind: 'dashboard.created',
+        entityId: created.dashboardId,
+        meta: {
+          name: typeof created.name === 'string' ? created.name : undefined,
+        },
+      });
+    }
+    if (typeof created.reportId === 'string') {
+      await this.live.emit({
+        baseId,
+        actorId,
+        kind: 'analysis.created',
+        entityId: created.reportId,
+        meta: {
+          name: typeof created.name === 'string' ? created.name : undefined,
+        },
+      });
+    }
+    await this.live.emit({
+      baseId,
+      workspaceId,
+      actorId,
+      kind: 'template.changed',
+      entityId: baseId,
+      meta: {
+        template:
+          typeof created.template === 'string' ? created.template : undefined,
+        kind: created.kind,
+      },
+    });
   }
 
   private async instantiateIntoBase(

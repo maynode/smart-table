@@ -609,6 +609,17 @@ export const endpoints = {
   getDashboard: (dashboardId: string) =>
     api<DashboardDto>(`/dashboards/${dashboardId}`),
 
+  updateDashboard: (dashboardId: string, name: string) =>
+    api<DashboardDto>(`/dashboards/${dashboardId}`, {
+      method: 'PATCH',
+      body: { name },
+    }),
+
+  deleteDashboard: (dashboardId: string) =>
+    api<{ id: string; deleted: boolean }>(`/dashboards/${dashboardId}`, {
+      method: 'DELETE',
+    }),
+
   getDashboardData: (dashboardId: string) =>
     api<DashboardDataDto>(`/dashboards/${dashboardId}/data`),
 
@@ -702,6 +713,25 @@ export const endpoints = {
   ) =>
     api<PublicViewDto>(`/sheets/${sheetId}/public-views`, {
       method: 'POST',
+      body,
+    }),
+
+  updatePublicView: (
+    viewId: string,
+    body: {
+      name?: string;
+      password?: string | null;
+      clearPassword?: boolean;
+      expiresAt?: string | null;
+      enabled?: boolean;
+      sheetIds?: string[];
+      formSheetIds?: string[];
+      dashboardIds?: string[];
+      analysisReportIds?: string[];
+    },
+  ) =>
+    api<PublicViewDto>(`/public-views/${viewId}`, {
+      method: 'PATCH',
       body,
     }),
 

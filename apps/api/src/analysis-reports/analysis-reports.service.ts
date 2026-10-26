@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { LiveBusService } from '../live/live-bus.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { StorageService } from '../storage/storage.service';
@@ -38,6 +39,7 @@ export class AnalysisReportsService {
     private readonly permissions: PermissionsService,
     private readonly storage: StorageService,
     private readonly quotas: QuotasService,
+    private readonly live: LiveBusService,
   ) {}
 
   async list(baseId: string, userId: string) {
@@ -70,7 +72,7 @@ export class AnalysisReportsService {
         ? '你好，我是分析助手。当前文档还没有可分析的工作表，先准备好数据再来聊。'
         : `你好，我是分析助手。当前可读 ${sheets.length} 张表，直接告诉我你想了解什么即可，例如「数据概况」或「生成分析报告」。`;
 
-    return this.prisma.analysisReport.create({
+    const created = await this.prisma.analysisReport.create({
       data: {
         baseId: base.id,
         name: (name?.trim() || '分析报告') as string,
@@ -90,6 +92,14 @@ export class AnalysisReportsService {
         error: sheets.length === 0 ? '没有可分析的工作表' : null,
       },
     });
+    await this.live.emit({
+      baseId: created.baseId,
+      actorId: userId,
+      kind: 'analysis.created',
+      entityId: created.id,
+      meta: { name: created.name },
+    });
+    return created;
   }
 
   async uploadAttachment(
@@ -220,7 +230,7 @@ export class AnalysisReportsService {
         createdAt: new Date().toISOString(),
       });
 
-      return this.prisma.analysisReport.update({
+      const updated = await this.prisma.analysisReport.update({
         where: { id: report.id },
         data: {
           status: markdown ? 'ready' : 'draft',
@@ -232,6 +242,19 @@ export class AnalysisReportsService {
           error: null,
         },
       });
+      await this.live.emit({
+        baseId: report.baseId,
+        actorId: userId,
+        kind: 'analysis.message',
+        entityId: report.id,
+      });
+      await this.live.emit({
+        baseId: report.baseId,
+        actorId: userId,
+        kind: 'analysis.updated',
+        entityId: report.id,
+      });
+      return updated;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : '对话失败';
@@ -256,15 +279,29 @@ export class AnalysisReportsService {
     if (!name) {
       throw new BadRequestException('名称不能为空');
     }
-    return this.prisma.analysisReport.update({
+    const updated = await this.prisma.analysisReport.update({
       where: { id: report.id },
       data: { name },
     });
+    await this.live.emit({
+      baseId: report.baseId,
+      actorId: userId,
+      kind: 'analysis.updated',
+      entityId: report.id,
+      meta: { name },
+    });
+    return updated;
   }
 
   async delete(id: string, userId: string) {
     const report = await this.requireReport(id, userId, 'editor');
     await this.prisma.analysisReport.delete({ where: { id: report.id } });
+    await this.live.emit({
+      baseId: report.baseId,
+      actorId: userId,
+      kind: 'analysis.deleted',
+      entityId: report.id,
+    });
     return { deleted: true, id: report.id };
   }
 

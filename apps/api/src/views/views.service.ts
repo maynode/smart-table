@@ -12,6 +12,7 @@ import {
   type FilterGroup,
   type ViewQuery,
 } from 'shared';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
@@ -34,6 +35,7 @@ export class ViewsService {
     private readonly workspacesService: WorkspacesService,
     private readonly permissions: PermissionsService,
     private readonly sharing: SharingService,
+    private readonly live: LiveBusService,
   ) {}
 
   async query(sheetId: string, userId: string, query: ViewQuery) {
@@ -161,7 +163,7 @@ export class ViewsService {
     userId: string,
     dto: CreateSavedViewDto,
   ) {
-    await this.requireSavedSheet(sheetId, userId, 'editor');
+    const sheet = await this.requireSavedSheet(sheetId, userId, 'editor');
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('视图名称不能为空');
     this.validateSavedQuery(dto.query);
@@ -174,6 +176,7 @@ export class ViewsService {
           createdBy: userId,
         },
       });
+      await this.emitViewChanged(sheet.baseId, sheetId, view.id, userId, 'create');
       return {
         id: view.id,
         sheetId: view.sheetId,
@@ -202,7 +205,7 @@ export class ViewsService {
       where: { id: viewId },
     });
     if (!existing) throw new NotFoundException('视图不存在');
-    await this.requireSavedSheet(existing.sheetId, userId, 'editor');
+    const sheet = await this.requireSavedSheet(existing.sheetId, userId, 'editor');
     if (dto.query) this.validateSavedQuery(dto.query);
     try {
       const view = await this.prisma.savedView.update({
@@ -214,6 +217,13 @@ export class ViewsService {
             : { query: dto.query as Prisma.InputJsonValue }),
         },
       });
+      await this.emitViewChanged(
+        sheet.baseId,
+        existing.sheetId,
+        view.id,
+        userId,
+        'update',
+      );
       return {
         id: view.id,
         sheetId: view.sheetId,
@@ -238,9 +248,32 @@ export class ViewsService {
       where: { id: viewId },
     });
     if (!existing) throw new NotFoundException('视图不存在');
-    await this.requireSavedSheet(existing.sheetId, userId, 'editor');
+    const sheet = await this.requireSavedSheet(existing.sheetId, userId, 'editor');
     await this.prisma.savedView.delete({ where: { id: viewId } });
+    await this.emitViewChanged(
+      sheet.baseId,
+      existing.sheetId,
+      viewId,
+      userId,
+      'delete',
+    );
     return { deleted: true };
+  }
+
+  private async emitViewChanged(
+    baseId: string,
+    sheetId: string,
+    viewId: string,
+    actorId: string,
+    action: 'create' | 'update' | 'delete',
+  ): Promise<void> {
+    await this.live.emit({
+      baseId,
+      actorId,
+      kind: 'view.changed',
+      entityId: sheetId,
+      meta: { viewId, action },
+    });
   }
 
   private async requireSavedSheet(

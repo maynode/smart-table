@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { endpoints } from '../api/endpoints';
 import { ApiError, NetworkError } from '../api/client';
 import DashboardChart from '../components/DashboardChart.vue';
+import { liveBus } from '../sync/live-bus';
+import { liveSocket } from '../sync/live-socket';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
 import type {
   PublicViewData,
@@ -170,6 +172,7 @@ async function load(withPassword?: string): Promise<void> {
       submitted || undefined,
     );
     needPassword.value = false;
+    liveSocket.connectPublic(token);
   } catch (caught) {
     if (caught instanceof ApiError && caught.status === 401) {
       needPassword.value = true;
@@ -189,7 +192,33 @@ function submitPassword(): void {
   void load(password.value);
 }
 
-onMounted(() => load());
+const liveUnsubs: Array<() => void> = [];
+
+function onPublicLive(): void {
+  if (!data.value) return;
+  void load(password.value || undefined);
+}
+
+onMounted(() => {
+  void load();
+  liveUnsubs.push(
+    liveBus.on('sheet.rev_bumped', onPublicLive),
+    liveBus.on('sheet.schema_changed', onPublicLive),
+    liveBus.on('dashboard.updated', onPublicLive),
+    liveBus.on('dashboard.deleted', onPublicLive),
+    liveBus.on('widget.changed', onPublicLive),
+    liveBus.on('public_view.*', onPublicLive),
+    liveBus.on('form.updated', onPublicLive),
+    liveBus.on('form.deleted', onPublicLive),
+    liveBus.on('analysis.updated', onPublicLive),
+    liveBus.on('analysis.deleted', onPublicLive),
+  );
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+  liveSocket.disconnect();
+});
 </script>
 
 <template>

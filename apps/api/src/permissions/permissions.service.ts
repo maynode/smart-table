@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
 import { evaluateFilterGroup, type FilterGroup } from 'shared';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharingService } from '../sharing/sharing.service';
@@ -69,6 +70,7 @@ export class PermissionsService {
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
     private readonly sharing: SharingService,
+    private readonly live: LiveBusService,
   ) {}
 
   async resolveObject(objectType: string, objectId: string) {
@@ -368,19 +370,23 @@ export class PermissionsService {
     if (memberId !== userId) {
       const actorName = await actorDisplayName(this.prisma, userId);
       const kind = objectKindLabel(objectType);
-      await notifyUser(this.prisma, {
-        userId: memberId,
-        title: '你的内容权限已移除',
-        body: `${actorName} 移除了你对${kind}「${object.name}」的权限`,
-        data: {
-          kind: 'content_permission_removed',
-          objectType,
-          objectId,
-          baseId: object.baseId,
-          workspaceId: object.workspaceId,
-          actorId: userId,
+      await notifyUser(
+        this.prisma,
+        {
+          userId: memberId,
+          title: '你的内容权限已移除',
+          body: `${actorName} 移除了你对${kind}「${object.name}」的权限`,
+          data: {
+            kind: 'content_permission_removed',
+            objectType,
+            objectId,
+            baseId: object.baseId,
+            workspaceId: object.workspaceId,
+            actorId: userId,
+          },
         },
-      });
+        this.live,
+      );
     }
     return this.getSettings(objectType, objectId, userId);
   }
@@ -536,58 +542,77 @@ export class PermissionsService {
         const config = this.validateConfig(member);
         const prev = beforeLevel.get(member.userId);
         if (!prev) {
-          await notifyUser(this.prisma, {
-            userId: member.userId,
-            title: '你获得了内容权限',
-            body: `${actorName} 为你分配了${kind}「${object.name}」的${aclLevelLabel(config.level)}权限`,
-            data: {
-              kind: 'content_permission_assigned',
-              objectType,
-              objectId,
-              baseId: object.baseId,
-              workspaceId: object.workspaceId,
-              level: config.level,
-              actorId: userId,
+          await notifyUser(
+            this.prisma,
+            {
+              userId: member.userId,
+              title: '你获得了内容权限',
+              body: `${actorName} 为你分配了${kind}「${object.name}」的${aclLevelLabel(config.level)}权限`,
+              data: {
+                kind: 'content_permission_assigned',
+                objectType,
+                objectId,
+                baseId: object.baseId,
+                workspaceId: object.workspaceId,
+                level: config.level,
+                actorId: userId,
+              },
             },
-          });
+            this.live,
+          );
         } else if (prev !== config.level) {
-          await notifyUser(this.prisma, {
-            userId: member.userId,
-            title: '你的内容权限已变更',
-            body: `${actorName} 将你在${kind}「${object.name}」的权限从${aclLevelLabel(prev)}调整为${aclLevelLabel(config.level)}`,
-            data: {
-              kind: 'content_permission_changed',
-              objectType,
-              objectId,
-              baseId: object.baseId,
-              workspaceId: object.workspaceId,
-              previousLevel: prev,
-              level: config.level,
-              actorId: userId,
+          await notifyUser(
+            this.prisma,
+            {
+              userId: member.userId,
+              title: '你的内容权限已变更',
+              body: `${actorName} 将你在${kind}「${object.name}」的权限从${aclLevelLabel(prev)}调整为${aclLevelLabel(config.level)}`,
+              data: {
+                kind: 'content_permission_changed',
+                objectType,
+                objectId,
+                baseId: object.baseId,
+                workspaceId: object.workspaceId,
+                previousLevel: prev,
+                level: config.level,
+                actorId: userId,
+              },
             },
-          });
+            this.live,
+          );
         }
       }
 
       for (const [subjectId, prev] of beforeLevel) {
         if (afterIds.has(subjectId) || subjectId === userId) continue;
-        await notifyUser(this.prisma, {
-          userId: subjectId,
-          title: '你的内容权限已移除',
-          body: `${actorName} 移除了你对${kind}「${object.name}」的${aclLevelLabel(prev)}权限`,
-          data: {
-            kind: 'content_permission_removed',
-            objectType,
-            objectId,
-            baseId: object.baseId,
-            workspaceId: object.workspaceId,
-            previousLevel: prev,
-            actorId: userId,
+        await notifyUser(
+          this.prisma,
+          {
+            userId: subjectId,
+            title: '你的内容权限已移除',
+            body: `${actorName} 移除了你对${kind}「${object.name}」的${aclLevelLabel(prev)}权限`,
+            data: {
+              kind: 'content_permission_removed',
+              objectType,
+              objectId,
+              baseId: object.baseId,
+              workspaceId: object.workspaceId,
+              previousLevel: prev,
+              actorId: userId,
+            },
           },
-        });
+          this.live,
+        );
       }
     }
 
+    await this.live.emit({
+      baseId: object.baseId,
+      actorId: userId,
+      kind: 'permission.changed',
+      entityId: objectId,
+      meta: { objectType },
+    });
     return this.getSettings(objectType, objectId, userId);
   }
 

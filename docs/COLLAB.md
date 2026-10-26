@@ -62,15 +62,16 @@ WebSocket：`/collab?token=<JWT>&sheetId=<uuid>`（JSON 文本帧）
 - 字段删除 vs 对该字段的 setRecord：删除胜，丢弃 set。
 - 未知交叉：**标 conflict**，要求客户端 `get_changes` 拉齐后重试（禁止静默丢）。
 
-## 5. 与 OFFLINE 关系
+## 5. 与 OFFLINE / LIVE 关系
 
 | 场景 | 通道 |
 |------|------|
 | 在线且已进房 | MessageCenter → WS `user_changes` |
 | 离线 / WS 超时 / WS 拒收 | HTTP `POST /sheets/:id/commitchanges` |
-| 对端 | WS `new_changes` → 本地 apply（含 OT 重试） |
+| 对端单元格 | WS `new_changes` → 本地 apply（含 OT 重试） |
+| Base 对象（侧栏/表单/仪表盘/权限等） | **Live Bus** `/live`（见 [LIVE.md](./LIVE.md)）；accept 后可附带 `sheet.rev_bumped` |
 
-二者共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等。
+Collab 与 Offline 共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等；Live 不承担单元格 OT。
 
 ## 6. 实现索引
 

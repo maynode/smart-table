@@ -69,7 +69,7 @@ describe('Analysis reports (e2e)', () => {
     if (app) await app.close();
   });
 
-  it('creates, chats to ready report, and deletes', async () => {
+  it('creates, renames, chats to ready report, and deletes', async () => {
     const created = await request(app.getHttpServer())
       .post(`/bases/${baseId}/analysis-reports`)
       .set(auth())
@@ -78,6 +78,13 @@ describe('Analysis reports (e2e)', () => {
     expect(created.body.status).toBe('draft');
     expect(created.body.messages?.[0]?.role).toBe('assistant');
     const reportId = created.body.id as string;
+
+    const renamed = await request(app.getHttpServer())
+      .patch(`/analysis-reports/${reportId}`)
+      .set(auth())
+      .send({ name: '销售简报（改名）' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.name).toBe('销售简报（改名）');
 
     const chatted = await request(app.getHttpServer())
       .post(`/analysis-reports/${reportId}/chat`)

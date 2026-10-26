@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import type { LiveEvent } from 'shared';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { liveBus } from '../sync/live-bus';
 import { confirmDialog, promptDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
@@ -348,7 +350,43 @@ watch(
   },
 );
 
+const liveUnsubs: Array<() => void> = [];
+
+async function onAnalysisLive(event: LiveEvent): Promise<void> {
+  if (!active.value || event.entityId !== active.value.id) return;
+  try {
+    active.value = await endpoints.getAnalysisReport(active.value.id);
+    await loadList();
+    if (active.value.status === 'ready') await scrollChat();
+    startPollIfBusy();
+  } catch {
+    /* live 刷新失败忽略 */
+  }
+}
+
+async function onAnalysisDeleted(event: LiveEvent): Promise<void> {
+  const deletedId = event.entityId;
+  if (!deletedId) return;
+  await loadList();
+  if (active.value?.id !== deletedId) return;
+  stopPoll();
+  active.value = null;
+  const next = list.value[0];
+  if (next) {
+    await openReport(next.id);
+    if (props.embedded) emit('created', next.id);
+    startPollIfBusy();
+    return;
+  }
+  emit('close');
+}
+
 onMounted(async () => {
+  liveUnsubs.push(
+    liveBus.on('analysis.message', onAnalysisLive),
+    liveBus.on('analysis.updated', onAnalysisLive),
+    liveBus.on('analysis.deleted', onAnalysisDeleted),
+  );
   try {
     await loadList();
     if (props.reportId) {
@@ -366,6 +404,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
   stopPoll();
   clearPendingFiles();
 });

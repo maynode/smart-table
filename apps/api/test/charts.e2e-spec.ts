@@ -36,10 +36,11 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
       .post('/auth/register')
       .send({
         account: `charts${stamp}`,
-        password: 'Passw0rd!123',
-        name: '图表管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
-        });
+        password: 'Ab12_cd34',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
+    expect(owner.status).toBeLessThan(400);
     token = owner.body.accessToken;
 
     const workspace = await http()
@@ -229,5 +230,28 @@ describe('Dashboard charts and scheduled delivery (e2e)', () => {
     expect(response.body.metric.compareLabel).toContain('环比');
     expect(response.body.metric.delta).not.toBeNull();
     expect(Array.isArray(response.body.labels)).toBe(true);
+  });
+
+  it('renames and deletes a dashboard', async () => {
+    const created = await http()
+      .post(`/bases/${baseId}/dashboards`)
+      .set(auth())
+      .send({ name: '待改名仪表盘' })
+      .expect(201);
+    const id = created.body.id as string;
+
+    const renamed = await http()
+      .patch(`/dashboards/${id}`)
+      .set(auth())
+      .send({ name: '已改名仪表盘' })
+      .expect(200);
+    expect(renamed.body.name).toBe('已改名仪表盘');
+
+    await http()
+      .delete(`/dashboards/${id}`)
+      .set(auth())
+      .expect(200);
+
+    await http().get(`/dashboards/${id}`).set(auth()).expect(404);
   });
 });

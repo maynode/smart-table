@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { liveBus } from '../sync/live-bus';
 import AutomationEditor from './AutomationEditor.vue';
 import type {
   AutomationDto,
@@ -268,7 +269,25 @@ function onEditorOpenRuns(): void {
   if (target) void openRuns(target);
 }
 
-onMounted(load);
+const liveUnsubs: Array<() => void> = [];
+
+async function onAutomationLive(): Promise<void> {
+  await load();
+  const viewing = runsViewAutomation.value;
+  if (viewing) {
+    const next = automations.value.find((item) => item.id === viewing.id);
+    if (next) await openRuns(next);
+  }
+}
+
+onMounted(() => {
+  void load();
+  liveUnsubs.push(liveBus.on('automation.*', onAutomationLive));
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+});
 </script>
 
 <template>

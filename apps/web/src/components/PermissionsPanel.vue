@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { liveBus } from '../sync/live-bus';
 import { toast } from '../ui/toast';
 import type {
   AclFieldAccess,
@@ -230,7 +231,21 @@ async function save(): Promise<void> {
   }
 }
 
-onMounted(loadObjects);
+const liveUnsubs: Array<() => void> = [];
+
+function onPermissionLive(): void {
+  if (selected.value) void selectObject(selected.value);
+  else void loadObjects();
+}
+
+onMounted(() => {
+  void loadObjects();
+  liveUnsubs.push(liveBus.on('permission.changed', onPermissionLive));
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+});
 </script>
 
 <template>

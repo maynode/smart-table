@@ -1,8 +1,8 @@
 # 断网 / 离线提交协议（企微 MessageCenter 对齐）
 
 > 对照：`docs/design-refs/wecom/smart-table/HAR-TECH-ANALYSIS.md` §8.3 / §12  
-> 协同 OT / WS `NEW_CHANGES`：**不做**（见 `.cursor/rules/wecom-tech-first.mdc`）。  
-> 在线与离线统一走 **MessageCenter → HTTP `commitchanges`**。
+> 在线实时单元格：见 [COLLAB.md](./COLLAB.md)；Base 对象自动更新：见 [LIVE.md](./LIVE.md)。  
+> 离线 / WS 不可用时 MessageCenter 降级 **HTTP `commitchanges`**。
 
 ## 1. 客户端流水线
 

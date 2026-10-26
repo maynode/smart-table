@@ -13,6 +13,7 @@ import {
   type FieldType,
 } from 'shared';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SharingService } from '../sharing/sharing.service';
@@ -43,6 +44,7 @@ export class SheetsService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
     private readonly quotas: QuotasService,
+    private readonly live: LiveBusService,
   ) {}
 
   private async requireBase(
@@ -106,7 +108,7 @@ export class SheetsService {
   ) {
     await this.requireBase(baseId, userId, 'editor');
     const seed = options?.seed !== false;
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const sheet = await tx.sheet.create({
         data: { baseId, name: name.trim() },
       });
@@ -119,6 +121,14 @@ export class SheetsService {
       });
       return { ...sheet, fields };
     });
+    await this.live.emit({
+      baseId,
+      actorId: userId,
+      kind: 'sheet.created',
+      entityId: result.id,
+      meta: { name: result.name },
+    });
+    return result;
   }
 
   async listByBase(baseId: string, userId: string) {
@@ -157,17 +167,81 @@ export class SheetsService {
   }
 
   async renameSheet(sheetId: string, userId: string, name: string) {
-    await this.requireSheet(sheetId, userId, 'editor');
-    return this.prisma.sheet.update({
+    const sheet = await this.requireSheet(sheetId, userId, 'editor');
+    const trimmed = name.trim();
+    const updated = await this.prisma.sheet.update({
       where: { id: sheetId },
-      data: { name: name.trim() },
+      data: { name: trimmed },
     });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'sheet.updated',
+      entityId: sheetId,
+      meta: { name: updated.name },
+    });
+    // 收集表单公开页标题用 Form.name，与侧栏 Sheet 名同步
+    const forms = await this.prisma.form.findMany({
+      where: { sheetId },
+      select: { id: true, name: true },
+    });
+    for (const form of forms) {
+      if (form.name === trimmed) continue;
+      await this.prisma.form.update({
+        where: { id: form.id },
+        data: { name: trimmed },
+      });
+      await this.live.emit({
+        baseId: sheet.baseId,
+        actorId: userId,
+        kind: 'form.updated',
+        entityId: form.id,
+        meta: { name: trimmed, sheetId, action: 'rename' },
+      });
+    }
+    return updated;
   }
 
   async deleteSheet(sheetId: string, userId: string) {
-    await this.requireSheet(sheetId, userId, 'editor');
+    const sheet = await this.requireSheet(sheetId, userId, 'editor');
+    const baseId = sheet.baseId;
+    // 级联删除 Form / PublicView 前先记下，删后推公开安全事件
+    const [forms, publicViews] = await Promise.all([
+      this.prisma.form.findMany({
+        where: { sheetId },
+        select: { id: true },
+      }),
+      this.prisma.publicView.findMany({
+        where: { sheetId },
+        select: { id: true, token: true },
+      }),
+    ]);
     await this.prisma.sheet.delete({ where: { id: sheetId } });
     void this.audit.recordSheet(sheetId, userId, 'sheet.deleted', sheetId, {});
+    await this.live.emit({
+      baseId,
+      actorId: userId,
+      kind: 'sheet.deleted',
+      entityId: sheetId,
+    });
+    for (const form of forms) {
+      await this.live.emit({
+        baseId,
+        actorId: userId,
+        kind: 'form.deleted',
+        entityId: form.id,
+        meta: { sheetId },
+      });
+    }
+    for (const view of publicViews) {
+      await this.live.emit({
+        baseId,
+        actorId: userId,
+        kind: 'public_view.deleted',
+        entityId: view.id,
+        meta: { sheetId, token: view.token },
+      });
+    }
     return { id: sheetId, deleted: true };
   }
 
@@ -193,6 +267,12 @@ export class SheetsService {
         WHERE "sheet_id" = ${field.sheetId}::uuid
           AND "cells" ? ${fieldId}::text
       `;
+    });
+    await this.live.emit({
+      baseId: field.sheet.baseId,
+      actorId: userId,
+      kind: 'sheet.schema_changed',
+      entityId: field.sheetId,
     });
     return { id: fieldId, deleted: true };
   }
@@ -225,7 +305,7 @@ export class SheetsService {
   }
 
   async createField(sheetId: string, userId: string, dto: CreateFieldDto) {
-    await this.requireSheet(sheetId, userId, 'editor');
+    const sheet = await this.requireSheet(sheetId, userId, 'editor');
 
     const order =
       dto.order ?? (await this.prisma.field.count({ where: { sheetId } }));
@@ -238,7 +318,7 @@ export class SheetsService {
       });
     }
 
-    return this.prisma.field.create({
+    const created = await this.prisma.field.create({
       data: {
         sheetId,
         name: dto.name.trim(),
@@ -251,6 +331,13 @@ export class SheetsService {
           : { options: dto.options as Prisma.InputJsonValue }),
       },
     });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'sheet.schema_changed',
+      entityId: sheetId,
+    });
+    return created;
   }
 
   async updateField(fieldId: string, userId: string, dto: UpdateFieldDto) {
@@ -267,7 +354,7 @@ export class SheetsService {
       'editor',
     );
 
-    return this.prisma.field.update({
+    const updated = await this.prisma.field.update({
       where: { id: fieldId },
       data: {
         ...(dto.name === undefined ? {} : { name: dto.name.trim() }),
@@ -280,6 +367,13 @@ export class SheetsService {
           : { options: dto.options as Prisma.InputJsonValue }),
       },
     });
+    await this.live.emit({
+      baseId: field.sheet.baseId,
+      actorId: userId,
+      kind: 'sheet.schema_changed',
+      entityId: field.sheetId,
+    });
+    return updated;
   }
 
   async createRecord(
@@ -340,6 +434,10 @@ export class SheetsService {
       record.id,
       { cells: record.cells },
     );
+    void this.emitSheetRevBumped(sheetId, userId, {
+      reason: 'record_created',
+      recordId: record.id,
+    });
 
     return record;
   }
@@ -378,6 +476,10 @@ export class SheetsService {
       recordId,
       { cells: record.cells },
     );
+    void this.emitSheetRevBumped(record.sheetId, userId, {
+      reason: 'record_deleted',
+      recordId,
+    });
     return { id: recordId, deleted: true };
   }
 
@@ -473,6 +575,10 @@ export class SheetsService {
       recordId,
       { changes: cells, version: updatedRecord.version },
     );
+    void this.emitSheetRevBumped(record.sheetId, userId, {
+      reason: 'record_updated',
+      recordId,
+    });
 
     const sheetFields = await this.prisma.field.findMany({
       where: { sheetId: record.sheetId },
@@ -608,5 +714,33 @@ export class SheetsService {
       return 'claimed';
     }
     return null;
+  }
+
+  /** REST 写记录后通知仪表盘/公开页/打开中网格（单元格主路径仍走 Collab OT） */
+  private async emitSheetRevBumped(
+    sheetId: string,
+    actorId: string,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const sheet = await this.prisma.sheet.findUnique({
+        where: { id: sheetId },
+        select: { baseId: true, sheetRev: true },
+      });
+      if (!sheet) return;
+      await this.live.emit({
+        baseId: sheet.baseId,
+        actorId,
+        kind: 'sheet.rev_bumped',
+        entityId: sheetId,
+        meta: { sheetRev: sheet.sheetRev, ...meta },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `live sheet.rev_bumped emit failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }

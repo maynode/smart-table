@@ -10,12 +10,16 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard, JwtPayload } from '../auth/jwt-auth.guard';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 export class NotificationsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly live: LiveBusService,
+  ) {}
 
   @Get()
   async list(
@@ -37,6 +41,15 @@ export class NotificationsController {
       where: { userId: user.sub, readAt: null },
       data: { readAt: new Date() },
     });
+    if (updated.count > 0) {
+      await this.live.emit({
+        baseId: null,
+        actorId: user.sub,
+        kind: 'notification.read',
+        userId: user.sub,
+        meta: { all: true, count: updated.count },
+      });
+    }
     return { read: true, count: updated.count };
   }
 
@@ -52,6 +65,13 @@ export class NotificationsController {
     if (updated.count === 0) {
       throw new NotFoundException('通知不存在');
     }
+    await this.live.emit({
+      baseId: null,
+      actorId: user.sub,
+      kind: 'notification.read',
+      entityId: id,
+      userId: user.sub,
+    });
     return { read: true };
   }
 }

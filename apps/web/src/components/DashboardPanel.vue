@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { LiveEvent } from 'shared';
 import DashboardChart from './DashboardChart.vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { liveBus } from '../sync/live-bus';
 import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 import type {
@@ -446,8 +448,32 @@ watch(
   },
 );
 
+const liveUnsubs: Array<() => void> = [];
+
+function onDashboardLive(event: LiveEvent): void {
+  const id = active.value?.id ?? props.dashboardId;
+  if (!id) return;
+  if (event.kind === 'sheet.rev_bumped') {
+    void loadDashboard(id);
+    return;
+  }
+  if (event.entityId === props.dashboardId || event.entityId === id) {
+    void loadDashboard(id);
+  }
+}
+
 onMounted(() => {
   void loadDashboard(props.dashboardId);
+  liveUnsubs.push(
+    liveBus.on('widget.changed', onDashboardLive),
+    liveBus.on('dashboard.*', onDashboardLive),
+    liveBus.on('schedule.updated', onDashboardLive),
+    liveBus.on('sheet.rev_bumped', onDashboardLive),
+  );
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
 });
 </script>
 

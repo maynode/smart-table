@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { LiveBusService } from '../live/live-bus.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -80,6 +81,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     private readonly workspacesService: WorkspacesService,
     private readonly permissions: PermissionsService,
     private readonly analytics: AnalyticsService,
+    private readonly live: LiveBusService,
   ) {}
 
   async create(baseId: string, userId: string, name: string, kind = 'dashboard') {
@@ -87,7 +89,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     if (!['dashboard', 'report'].includes(kind)) {
       throw new BadRequestException('仪表盘类型无效');
     }
-    return this.prisma.dashboard.create({
+    const created = await this.prisma.dashboard.create({
       data: {
         baseId: base.id,
         name: name.trim(),
@@ -95,6 +97,14 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         createdBy: userId,
       },
     });
+    await this.live.emit({
+      baseId: created.baseId,
+      actorId: userId,
+      kind: 'dashboard.created',
+      entityId: created.id,
+      meta: { name: created.name },
+    });
+    return created;
   }
 
   async list(baseId: string, userId: string, kind?: string) {
@@ -124,6 +134,43 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  async update(
+    dashboardId: string,
+    userId: string,
+    body: { name?: string },
+  ) {
+    const dashboard = await this.requireDashboard(dashboardId, userId, 'editor');
+    const name = body.name?.trim();
+    if (!name) {
+      throw new BadRequestException('名称不能为空');
+    }
+    const updated = await this.prisma.dashboard.update({
+      where: { id: dashboard.id },
+      data: { name },
+    });
+    await this.live.emit({
+      baseId: updated.baseId,
+      actorId: userId,
+      kind: 'dashboard.updated',
+      entityId: updated.id,
+      meta: { name: updated.name, action: 'rename' },
+    });
+    return updated;
+  }
+
+  async delete(dashboardId: string, userId: string) {
+    const dashboard = await this.requireDashboard(dashboardId, userId, 'editor');
+    await this.prisma.dashboard.delete({ where: { id: dashboard.id } });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'dashboard.deleted',
+      entityId: dashboard.id,
+      meta: { name: dashboard.name },
+    });
+    return { id: dashboard.id, deleted: true };
+  }
+
   async addWidget(
     dashboardId: string,
     userId: string,
@@ -148,7 +195,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     const count = await this.prisma.dashboardWidget.count({
       where: { dashboardId },
     });
-    return this.prisma.dashboardWidget.create({
+    const widget = await this.prisma.dashboardWidget.create({
       data: {
         dashboardId,
         type: dto.type,
@@ -159,6 +206,21 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         order: count,
       },
     });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'widget.changed',
+      entityId: dashboardId,
+      meta: { widgetId: widget.id, action: 'create' },
+    });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'dashboard.updated',
+      entityId: dashboardId,
+      meta: { widgetId: widget.id, action: 'create' },
+    });
+    return widget;
   }
 
   async updateWidget(
@@ -188,7 +250,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('图表类型无效');
     }
     if (dto.sheetId) await this.assertSheetInBase(dto.sheetId, dashboard.baseId);
-    return this.prisma.dashboardWidget.update({
+    const updated = await this.prisma.dashboardWidget.update({
       where: { id: widgetId },
       data: {
         ...(dto.title === undefined ? {} : { title: dto.title.trim() }),
@@ -203,12 +265,41 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         ...(dto.order === undefined ? {} : { order: dto.order }),
       },
     });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'widget.changed',
+      entityId: dashboardId,
+      meta: { widgetId },
+    });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'dashboard.updated',
+      entityId: dashboardId,
+      meta: { widgetId, action: 'update' },
+    });
+    return updated;
   }
 
   async deleteWidget(dashboardId: string, widgetId: string, userId: string) {
     const dashboard = await this.requireDashboard(dashboardId, userId, 'editor');
     await this.prisma.dashboardWidget.deleteMany({
       where: { id: widgetId, dashboardId: dashboard.id },
+    });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'widget.changed',
+      entityId: dashboardId,
+      meta: { widgetId, deleted: true },
+    });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'dashboard.updated',
+      entityId: dashboardId,
+      meta: { widgetId, action: 'delete' },
     });
     return { id: widgetId, deleted: true };
   }
@@ -267,7 +358,7 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     if (cron.split(/\s+/).length !== 5) {
       throw new BadRequestException('Cron 表达式需为 5 段');
     }
-    return this.prisma.dashboardSchedule.create({
+    const schedule = await this.prisma.dashboardSchedule.create({
       data: {
         dashboardId: dashboard.id,
         cron,
@@ -276,6 +367,14 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
         nextRunAt: this.nextRun(cron),
       },
     });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: userId,
+      kind: 'schedule.updated',
+      entityId: dashboardId,
+      meta: { scheduleId: schedule.id },
+    });
+    return schedule;
   }
 
   async listSchedules(dashboardId: string, userId: string) {
@@ -335,6 +434,19 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       data: {
         lastRunAt: new Date(),
         nextRunAt: this.nextRun(schedule.cron),
+      },
+    });
+    await this.live.emit({
+      baseId: dashboard.baseId,
+      actorId: schedule.createdBy ?? userId,
+      kind: 'notification.created',
+      entityId: notification.id,
+      userId: notification.userId,
+      meta: {
+        kind: 'dashboard_schedule',
+        dashboardId: dashboard.id,
+        scheduleId: schedule.id,
+        notificationId: notification.id,
       },
     });
     return { ...run, notificationId: notification.id };

@@ -26,11 +26,18 @@ import {
   syncBannerText,
 } from '../sync/message-center';
 import { collabSocket, type CollabCursor } from '../sync/collab-socket';
+import { liveBus } from '../sync/live-bus';
+import { liveSocket } from '../sync/live-socket';
 import { auth } from '../stores/auth';
 import { newId } from '../ui/id';
 import { toast } from '../ui/toast';
 import { resolveAvatarSrc } from '../utils/avatar';
-import type { MutationResult, SheetMutation, ViewQuery } from 'shared';
+import type {
+  LiveEvent,
+  MutationResult,
+  SheetMutation,
+  ViewQuery,
+} from 'shared';
 import type {
   AnalysisReportListItemDto,
   BaseDto,
@@ -1196,6 +1203,108 @@ async function createDashboard(): Promise<void> {
   }
 }
 
+async function renameDashboard(dashboard: DashboardDto): Promise<void> {
+  sheetMenuId.value = null;
+  const name = (await promptDialog('重命名仪表盘', dashboard.name))?.trim();
+  if (!name || name === dashboard.name) return;
+  try {
+    const updated = await endpoints.updateDashboard(dashboard.id, name);
+    dashboards.value = dashboards.value.map((item) =>
+      item.id === updated.id ? { ...item, ...updated } : item,
+    );
+    toast(`已重命名为「${updated.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function deleteDashboard(dashboard: DashboardDto): Promise<void> {
+  sheetMenuId.value = null;
+  const ok = await confirmDialog(
+    `删除仪表盘「${dashboard.name}」及其全部图表？此操作不可撤销。`,
+    { title: '删除仪表盘', confirmLabel: '删除' },
+  );
+  if (!ok) return;
+  try {
+    await endpoints.deleteDashboard(dashboard.id);
+    const wasActive =
+      mainView.value === 'dashboard' &&
+      activeDashboardId.value === dashboard.id;
+    dashboards.value = dashboards.value.filter((item) => item.id !== dashboard.id);
+    toast(`已删除仪表盘「${dashboard.name}」`);
+    if (!wasActive) return;
+    activeDashboardId.value = '';
+    const next = dashboards.value[0];
+    if (next) {
+      openDashboard(next.id);
+    } else if (activeSheet.value) {
+      mainView.value = isFormSheet(activeSheet.value) ? 'form' : 'grid';
+    } else {
+      mainView.value = 'grid';
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function renameAnalysisReport(
+  report: AnalysisReportListItemDto,
+): Promise<void> {
+  sheetMenuId.value = null;
+  const name = (await promptDialog('重命名分析报告', report.name))?.trim();
+  if (!name || name === report.name) return;
+  try {
+    const updated = await endpoints.updateAnalysisReport(report.id, name);
+    analysisReports.value = analysisReports.value.map((item) =>
+      item.id === updated.id
+        ? {
+            ...item,
+            name: updated.name,
+            updatedAt: updated.updatedAt,
+          }
+        : item,
+    );
+    toast(`已重命名为「${updated.name}」`);
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
+async function deleteAnalysisReport(
+  report: AnalysisReportListItemDto,
+): Promise<void> {
+  sheetMenuId.value = null;
+  const ok = await confirmDialog(
+    `删除分析报告「${report.name}」？此操作不可撤销。`,
+    { title: '删除分析报告', confirmLabel: '删除' },
+  );
+  if (!ok) return;
+  try {
+    await endpoints.deleteAnalysisReport(report.id);
+    const wasActive =
+      mainView.value === 'analysis' &&
+      activeAnalysisReportId.value === report.id;
+    analysisReports.value = analysisReports.value.filter(
+      (item) => item.id !== report.id,
+    );
+    toast(`已删除分析报告「${report.name}」`);
+    if (!wasActive) return;
+    activeAnalysisReportId.value = '';
+    const next = analysisReports.value[0];
+    if (next) {
+      openAnalysisReport(next.id);
+    } else if (activeDashboardId.value) {
+      mainView.value = 'dashboard';
+    } else if (activeSheet.value) {
+      mainView.value = isFormSheet(activeSheet.value) ? 'form' : 'grid';
+    } else {
+      mainView.value = 'grid';
+    }
+  } catch (error) {
+    toast(messageOf(error));
+  }
+}
+
 async function openComments(): Promise<void> {
   commentsOpen.value = true;
   if (!activeSheet.value) return;
@@ -1481,11 +1590,192 @@ function onGlobalKeydown(event: KeyboardEvent): void {
 }
 
 let unsubAccept: (() => void) | null = null;
+const liveUnsubs: Array<() => void> = [];
+
+async function refreshSidebarLists(): Promise<void> {
+  const id = baseId.value;
+  if (!id) return;
+  try {
+    const [sheetList, formList, dashboardList, reportList] = await Promise.all([
+      endpoints.listSheets(id),
+      endpoints.listForms(id).catch(() => [] as FormDto[]),
+      endpoints
+        .listDashboards(id, 'dashboard')
+        .catch(() => [] as DashboardDto[]),
+      endpoints
+        .listAnalysisReports(id)
+        .catch(() => [] as AnalysisReportListItemDto[]),
+    ]);
+    sheets.value = sheetList;
+    forms.value = formList;
+    dashboards.value = dashboardList;
+    analysisReports.value = reportList;
+
+    if (
+      activeSheet.value &&
+      !sheetList.some((s) => s.id === activeSheet.value?.id)
+    ) {
+      const next =
+        sheetList.find((s) => !isFormSheet(s))?.id ?? sheetList[0]?.id;
+      if (next) await selectSheet(next);
+      else {
+        activeSheet.value = null;
+        mainView.value = 'grid';
+      }
+    }
+    if (
+      activeDashboardId.value &&
+      !dashboardList.some((d) => d.id === activeDashboardId.value)
+    ) {
+      activeDashboardId.value = '';
+      if (mainView.value === 'dashboard') {
+        const fallback =
+          sheetList.find((s) => !isFormSheet(s))?.id ?? sheetList[0]?.id;
+        if (fallback) await selectSheet(fallback);
+      }
+    }
+    if (
+      activeAnalysisReportId.value &&
+      !reportList.some((r) => r.id === activeAnalysisReportId.value)
+    ) {
+      activeAnalysisReportId.value = '';
+      if (mainView.value === 'analysis') {
+        const fallback =
+          sheetList.find((s) => !isFormSheet(s))?.id ?? sheetList[0]?.id;
+        if (fallback) await selectSheet(fallback);
+      }
+    }
+  } catch {
+    /* live 刷新失败不打断编辑 */
+  }
+}
+
+function onLiveSidebar(event: LiveEvent): void {
+  void refreshSidebarLists();
+  if (
+    event.kind === 'sheet.schema_changed' &&
+    event.entityId &&
+    activeSheet.value?.id === event.entityId
+  ) {
+    void selectSheet(activeSheet.value.id, false);
+  }
+  if (
+    event.kind === 'sheet.rev_bumped' &&
+    event.entityId &&
+    activeSheet.value?.id === event.entityId
+  ) {
+    void reloadActiveRecords();
+  }
+  if (
+    event.kind === 'view.changed' &&
+    event.entityId &&
+    activeSheet.value?.id === event.entityId
+  ) {
+    void endpoints
+      .listSavedViews(event.entityId)
+      .then((list) => {
+        savedViews.value = list;
+      })
+      .catch(() => undefined);
+  }
+  if (event.kind === 'member.changed') {
+    const meta = event.meta ?? {};
+    const action = meta.action;
+    if (
+      event.entityId &&
+      (action === 'avatar' || action === 'username')
+    ) {
+      collabSocket.patchPeerProfile(event.entityId, {
+        account: typeof meta.account === 'string' ? meta.account : undefined,
+        name: typeof meta.name === 'string' ? meta.name : undefined,
+        avatarSeed:
+          typeof meta.avatarSeed === 'string' ? meta.avatarSeed : undefined,
+        avatarUrl:
+          meta.avatarUrl === null || typeof meta.avatarUrl === 'string'
+            ? meta.avatarUrl
+            : undefined,
+      });
+      if (event.entityId === auth.state.user?.id) {
+        auth.updateUser({
+          id: auth.state.user.id,
+          account:
+            typeof meta.account === 'string'
+              ? meta.account
+              : auth.state.user.account,
+          name:
+            typeof meta.name === 'string' ? meta.name : auth.state.user.name,
+          avatarSeed:
+            typeof meta.avatarSeed === 'string'
+              ? meta.avatarSeed
+              : auth.state.user.avatarSeed,
+          avatarUrl:
+            meta.avatarUrl === null || typeof meta.avatarUrl === 'string'
+              ? meta.avatarUrl
+              : (auth.state.user.avatarUrl ?? null),
+        });
+      }
+    }
+    void endpoints
+      .listMembers(workspaceId.value)
+      .then((list) => {
+        members.value = list;
+      })
+      .catch(() => undefined);
+  }
+  if (event.kind === 'permission.changed') {
+    void refreshSidebarLists();
+  }
+}
+
+function onCommentLive(event: LiveEvent): void {
+  if (!commentsOpen.value || !activeSheet.value) return;
+  if (event.meta?.sheetId !== activeSheet.value.id) return;
+  void endpoints
+    .listComments(activeSheet.value.id)
+    .then((list) => {
+      comments.value = list;
+    })
+    .catch(() => undefined);
+}
+
+function bindLiveBus(): void {
+  liveUnsubs.push(
+    liveBus.on('sheet.*', onLiveSidebar),
+    liveBus.on('form.*', onLiveSidebar),
+    liveBus.on('dashboard.*', onLiveSidebar),
+    liveBus.on('widget.changed', onLiveSidebar),
+    liveBus.on('schedule.updated', onLiveSidebar),
+    liveBus.on('analysis.*', onLiveSidebar),
+    liveBus.on('base.updated', onLiveSidebar),
+    liveBus.on('member.changed', onLiveSidebar),
+    liveBus.on('permission.changed', onLiveSidebar),
+    liveBus.on('automation.*', onLiveSidebar),
+    liveBus.on('view.changed', onLiveSidebar),
+    liveBus.on('template.changed', onLiveSidebar),
+    liveBus.on('comment.changed', onCommentLive),
+  );
+}
+
+watch(
+  [baseId, workspaceId],
+  ([bid, wid]) => {
+    if (bid) {
+      liveSocket.connect({
+        baseId: bid,
+        workspaceId: wid || undefined,
+      });
+    } else {
+      liveSocket.disconnect();
+    }
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   void bootstrap();
   void messageCenter.bootstrap();
   unsubAccept = messageCenter.onAccept(onCommitAccept);
+  bindLiveBus();
   collabSocket.setHandlers({
     onRemote: ({ mutations, commitId }) => {
       if (!messageCenter.shouldApplyRemote(commitId)) return;
@@ -1497,6 +1787,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
   unsubAccept?.();
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+  liveSocket.disconnect();
   messageCenter.attachSheet(null);
 });
 </script>
@@ -1809,6 +2101,33 @@ onBeforeUnmount(() => {
                   <span class="sheet-icon">📊</span>
                   <span class="sheet-label">{{ dashboard.name }}</span>
                 </button>
+                <button
+                  class="sheet-more"
+                  title="仪表盘操作"
+                  :data-testid="`dashboard-menu-${dashboard.name}`"
+                  @click.stop="
+                    sheetMenuId =
+                      sheetMenuId === dashboard.id ? null : dashboard.id
+                  "
+                >
+                  ⋯
+                </button>
+                <Transition name="menu-fade">
+                  <div
+                    v-if="sheetMenuId === dashboard.id"
+                    class="sheet-menu"
+                  >
+                    <button @click.stop="renameDashboard(dashboard)">
+                      重命名
+                    </button>
+                    <button
+                      class="danger"
+                      @click.stop="deleteDashboard(dashboard)"
+                    >
+                      删除仪表盘
+                    </button>
+                  </div>
+                </Transition>
               </div>
               <p v-if="!dashboards.length" class="sidebar-hint">暂无仪表盘</p>
             </template>
@@ -1858,6 +2177,29 @@ onBeforeUnmount(() => {
                   <span class="sheet-icon">📈</span>
                   <span class="sheet-label">{{ report.name }}</span>
                 </button>
+                <button
+                  class="sheet-more"
+                  title="分析报告操作"
+                  :data-testid="`report-menu-${report.name}`"
+                  @click.stop="
+                    sheetMenuId = sheetMenuId === report.id ? null : report.id
+                  "
+                >
+                  ⋯
+                </button>
+                <Transition name="menu-fade">
+                  <div v-if="sheetMenuId === report.id" class="sheet-menu">
+                    <button @click.stop="renameAnalysisReport(report)">
+                      重命名
+                    </button>
+                    <button
+                      class="danger"
+                      @click.stop="deleteAnalysisReport(report)"
+                    >
+                      删除报告
+                    </button>
+                  </div>
+                </Transition>
               </div>
               <p v-if="!analysisReports.length" class="sidebar-hint">
                 暂无分析报告

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import type { PublicFormDto, PublicFormFieldDto } from '../api/types';
 import { isFormFieldVisible } from 'shared';
 import FormFieldControl from '../components/FormFieldControl.vue';
+import { liveBus } from '../sync/live-bus';
+import { liveSocket } from '../sync/live-socket';
 
 const route = useRoute();
 const token = computed(() => String(route.params.token));
@@ -119,7 +121,39 @@ async function submit(): Promise<void> {
   }
 }
 
-onMounted(load);
+const liveUnsubs: Array<() => void> = [];
+
+watch(
+  token,
+  (value) => {
+    if (value) liveSocket.connect({ formToken: value });
+    else liveSocket.disconnect();
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  liveUnsubs.push(
+    liveBus.on('form.updated', () => {
+      if (!successHtml.value) void load();
+    }),
+    liveBus.on('form.published', () => {
+      if (!successHtml.value) void load();
+    }),
+    liveBus.on('form.deleted', () => {
+      void load();
+    }),
+    liveBus.on('sheet.schema_changed', () => {
+      if (!successHtml.value) void load();
+    }),
+  );
+  void load();
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+  liveSocket.disconnect();
+});
 </script>
 
 <template>

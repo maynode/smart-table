@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { validateAccount } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { liveBus } from '../sync/live-bus';
 import type { MemberDto } from '../api/types';
 import { confirmDialog } from '../ui/dialog';
 import { resolveAvatarSrc } from '../utils/avatar';
@@ -272,14 +273,27 @@ async function remove(member: MemberDto): Promise<void> {
   }
 }
 
+const liveUnsubs: Array<() => void> = [];
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick);
   window.addEventListener('resize', onWindowChange);
   window.addEventListener('scroll', onWindowChange, true);
   void load();
+  liveUnsubs.push(
+    liveBus.on('member.changed', (event) => {
+      const ws =
+        typeof event.meta?.workspaceId === 'string'
+          ? event.meta.workspaceId
+          : event.workspaceId;
+      if (ws && ws !== props.workspaceId) return;
+      void load();
+    }),
+  );
 });
 
 onUnmounted(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
   document.removeEventListener('click', onDocumentClick);
   window.removeEventListener('resize', onWindowChange);
   window.removeEventListener('scroll', onWindowChange, true);

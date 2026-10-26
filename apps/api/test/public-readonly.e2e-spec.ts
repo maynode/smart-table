@@ -233,6 +233,54 @@ describe('Public read-only views (e2e)', () => {
     await http().get(`/public-views/${openViewToken}`).expect(404);
   });
 
+  it('updates public view name, scope and password', async () => {
+    const created = await http()
+      .post(`/sheets/${sheetId}/public-views`)
+      .set(auth())
+      .send({
+        name: '待编辑视图',
+        sheetIds: [sheetId],
+        formSheetIds: [],
+        dashboardIds: [],
+        analysisReportIds: [],
+      })
+      .expect(201);
+
+    const updated = await http()
+      .patch(`/public-views/${created.body.id}`)
+      .set(auth())
+      .send({
+        name: '已编辑视图',
+        password: 'new-pass',
+        sheetIds: [sheetId],
+        formSheetIds: [],
+        dashboardIds: [],
+        analysisReportIds: [],
+      })
+      .expect(200);
+    expect(updated.body.name).toBe('已编辑视图');
+    expect(updated.body.passwordRequired).toBe(true);
+
+    await http().get(`/public-views/${created.body.token}`).expect(401);
+    await http()
+      .post(`/public-views/${created.body.token}/verify`)
+      .send({ password: 'new-pass' })
+      .expect(201);
+
+    const cleared = await http()
+      .patch(`/public-views/${created.body.id}`)
+      .set(auth())
+      .send({ clearPassword: true })
+      .expect(200);
+    expect(cleared.body.passwordRequired).toBe(false);
+    await http().get(`/public-views/${created.body.token}`).expect(200);
+
+    await http()
+      .delete(`/public-views/${created.body.id}`)
+      .set(auth())
+      .expect(200);
+  });
+
   it('requires editor access to manage views', async () => {
     const outsider = await http()
       .post('/auth/register')

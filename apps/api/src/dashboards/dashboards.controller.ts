@@ -45,6 +45,23 @@ export class DashboardsController {
     return this.dashboards.get(id, user.sub);
   }
 
+  @Patch('dashboards/:id')
+  update(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { name?: string },
+  ) {
+    return this.dashboards.update(id, user.sub, body ?? {});
+  }
+
+  @Delete('dashboards/:id')
+  remove(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.dashboards.delete(id, user.sub);
+  }
+
   @Get('dashboards/:id/data')
   data(
     @CurrentUser() user: JwtPayload,

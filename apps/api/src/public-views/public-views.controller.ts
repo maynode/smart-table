@@ -56,6 +56,27 @@ export class PublicViewsController {
     return this.publicViews.list(sheetId, user.sub);
   }
 
+  @Patch('public-views/:id')
+  @UseGuards(JwtAuthGuard)
+  update(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: {
+      name?: string;
+      password?: string | null;
+      clearPassword?: boolean;
+      expiresAt?: string | null;
+      enabled?: boolean;
+      sheetIds?: string[];
+      formSheetIds?: string[];
+      dashboardIds?: string[];
+      analysisReportIds?: string[];
+    },
+  ) {
+    return this.publicViews.update(id, user.sub, body ?? {});
+  }
+
   @Delete('public-views/:id')
   @UseGuards(JwtAuthGuard)
   remove(

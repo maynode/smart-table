@@ -32,6 +32,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { createRedisConnection } from '../queue/redis-connection';
 import { AutomationRunnerService } from '../automations/automation-runner.service';
+import { LiveBusService } from '../live/live-bus.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { QuotasService } from '../quotas/quotas.service';
@@ -91,6 +92,7 @@ export class FormsService implements OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly metrics: MetricsService,
     private readonly quotas: QuotasService,
+    private readonly live: LiveBusService,
   ) {
     this.publicBase = (
       this.config.get<string>('PUBLIC_FORM_BASE_URL') ??
@@ -218,6 +220,22 @@ export class FormsService implements OnModuleDestroy {
             dto.rejectDuplicatePhone ?? existing.rejectDuplicatePhone,
         },
       });
+      await this.live.emit({
+        baseId: updated.baseId,
+        actorId: userId,
+        kind: 'form.updated',
+        entityId: updated.id,
+        meta: { name: updated.name },
+      });
+      if (share.enabled) {
+        await this.live.emit({
+          baseId: updated.baseId,
+          actorId: userId,
+          kind: 'form.published',
+          entityId: updated.id,
+          meta: { name: updated.name },
+        });
+      }
       return this.toDto(updated);
     }
 
@@ -235,6 +253,22 @@ export class FormsService implements OnModuleDestroy {
         rejectDuplicatePhone: dto.rejectDuplicatePhone ?? true,
       },
     });
+    await this.live.emit({
+      baseId: created.baseId,
+      actorId: userId,
+      kind: 'form.created',
+      entityId: created.id,
+      meta: { name: created.name },
+    });
+    if (share.enabled) {
+      await this.live.emit({
+        baseId: created.baseId,
+        actorId: userId,
+        kind: 'form.published',
+        entityId: created.id,
+        meta: { name: created.name },
+      });
+    }
     return this.toDto(created);
   }
 
@@ -276,7 +310,14 @@ export class FormsService implements OnModuleDestroy {
       throw new NotFoundException('表单不存在');
     }
     await this.permissions.assertCan('form', formId, userId, 'delete');
+    const baseId = form.baseId;
     await this.prisma.form.delete({ where: { id: formId } });
+    await this.live.emit({
+      baseId,
+      actorId: userId,
+      kind: 'form.deleted',
+      entityId: formId,
+    });
     return { id: formId, deleted: true };
   }
 
@@ -305,6 +346,13 @@ export class FormsService implements OnModuleDestroy {
     const updated = await this.prisma.form.update({
       where: { id: formId },
       data: { coverUrl },
+    });
+    await this.live.emit({
+      baseId: form.baseId,
+      actorId: userId,
+      kind: 'form.updated',
+      entityId: formId,
+      meta: { coverUrl: updated.coverUrl },
     });
     return { coverUrl: updated.coverUrl };
   }
@@ -944,6 +992,30 @@ export class FormsService implements OnModuleDestroy {
           body,
           data,
         })),
+      });
+      for (const row of recipients) {
+        await this.live.emit({
+          baseId: base.id,
+          workspaceId: base.workspaceId,
+          actorId: null,
+          kind: 'notification.created',
+          entityId: submissionId,
+          userId: row.userId,
+          meta: {
+            kind: 'form_submit',
+            formId: form.id,
+            sheetId: form.sheetId,
+            submissionId,
+            recordId: outcome.recordId,
+          },
+        });
+      }
+      await this.live.emit({
+        baseId: base.id,
+        actorId: null,
+        kind: 'sheet.rev_bumped',
+        entityId: form.sheetId,
+        meta: { reason: 'form_submit', recordId: outcome.recordId },
       });
     } catch (error) {
       this.logger.warn(

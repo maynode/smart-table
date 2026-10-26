@@ -175,6 +175,43 @@ export class CollabSocket {
     }, 50);
   }
 
+  /** Live 资料变更时就地补 presence（不依赖 collab 房内重推） */
+  patchPeerProfile(
+    userId: string,
+    profile: {
+      account?: string;
+      name?: string;
+      avatarSeed?: string;
+      avatarUrl?: string | null;
+    },
+  ): void {
+    let changed = false;
+    this.peers.value = this.peers.value.map((peer) => {
+      if (peer.userId !== userId) return peer;
+      changed = true;
+      return {
+        ...peer,
+        ...(profile.account !== undefined ? { account: profile.account } : {}),
+        ...(profile.name !== undefined ? { name: profile.name } : {}),
+        ...(profile.avatarSeed !== undefined
+          ? { avatarSeed: profile.avatarSeed }
+          : {}),
+        ...(profile.avatarUrl !== undefined
+          ? { avatarUrl: profile.avatarUrl }
+          : {}),
+      };
+    });
+    if (!changed) return;
+    this.cursors.value = this.cursors.value.map((c) => {
+      if (c.userId !== userId) return c;
+      return {
+        ...c,
+        ...(profile.account !== undefined ? { account: profile.account } : {}),
+        ...(profile.name !== undefined ? { name: profile.name } : {}),
+      };
+    });
+  }
+
   /** Transform local pending against remote peers before retry. */
   transformPending(
     local: SheetMutation,

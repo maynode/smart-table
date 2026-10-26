@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Prisma, WorkspaceRole } from '@prisma/client';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const logger = new Logger('UserNotify');
@@ -47,6 +48,10 @@ export async function actorDisplayName(
   return user?.name?.trim() || user?.account || '管理员';
 }
 
+/**
+ * Persist an in-app notification and push Live Bus `notification.created`
+ * when a LiveBusService is provided.
+ */
 export async function notifyUser(
   prisma: PrismaService,
   input: {
@@ -55,9 +60,10 @@ export async function notifyUser(
     body: string;
     data?: Record<string, unknown>;
   },
+  live?: LiveBusService,
 ): Promise<void> {
   try {
-    await prisma.notification.create({
+    const row = await prisma.notification.create({
       data: {
         userId: input.userId,
         title: input.title,
@@ -65,6 +71,25 @@ export async function notifyUser(
         data: (input.data ?? {}) as Prisma.InputJsonValue,
       },
     });
+    if (live) {
+      await live.emit({
+        baseId:
+          typeof input.data?.baseId === 'string' ? input.data.baseId : null,
+        workspaceId:
+          typeof input.data?.workspaceId === 'string'
+            ? input.data.workspaceId
+            : null,
+        actorId:
+          typeof input.data?.actorId === 'string' ? input.data.actorId : null,
+        kind: 'notification.created',
+        entityId: row.id,
+        userId: input.userId,
+        meta: {
+          ...(input.data ?? {}),
+          notificationId: row.id,
+        },
+      });
+    }
   } catch (error) {
     logger.warn(
       `notify failed: ${error instanceof Error ? error.message : String(error)}`,

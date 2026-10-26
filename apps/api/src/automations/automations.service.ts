@@ -9,6 +9,7 @@ import {
   nextCronDate,
   type AutomationStep,
 } from 'shared';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -51,6 +52,7 @@ export class AutomationsService {
     private readonly runner: AutomationRunnerService,
     private readonly queue: AutomationQueueService,
     private readonly quotas: QuotasService,
+    private readonly live: LiveBusService,
   ) {}
 
   async create(userId: string, dto: CreateAutomationDto) {
@@ -70,6 +72,13 @@ export class AutomationsService {
       },
     });
 
+    await this.live.emit({
+      baseId: automation.baseId,
+      actorId: userId,
+      kind: 'automation.created',
+      entityId: automation.id,
+      meta: { name: automation.name },
+    });
     return { ...automation, monthlyRunCount: 0 };
   }
 
@@ -149,7 +158,7 @@ export class AutomationsService {
     }
     if (!nextEnabled) nextRunAt = null;
 
-    return this.prisma.automation.update({
+    const updated = await this.prisma.automation.update({
       where: { id: automationId },
       data: {
         ...(dto.name === undefined ? {} : { name: dto.name.trim() }),
@@ -171,11 +180,25 @@ export class AutomationsService {
         ...(nextRunAt === undefined ? {} : { nextRunAt }),
       },
     });
+    await this.live.emit({
+      baseId: updated.baseId,
+      actorId: userId,
+      kind: 'automation.updated',
+      entityId: updated.id,
+      meta: { name: updated.name },
+    });
+    return updated;
   }
 
   async remove(userId: string, automationId: string) {
-    await this.findAccessible(automationId, userId, 'editor');
+    const automation = await this.findAccessible(automationId, userId, 'editor');
     await this.prisma.automation.delete({ where: { id: automationId } });
+    await this.live.emit({
+      baseId: automation.baseId,
+      actorId: userId,
+      kind: 'automation.deleted',
+      entityId: automationId,
+    });
     return { deleted: true };
   }
 

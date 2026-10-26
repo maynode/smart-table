@@ -128,7 +128,8 @@ export async function api<T>(
     if (
       response.status === 401 &&
       !isAuthAttempt &&
-      !path.startsWith('/public-views/')
+      !path.startsWith('/public-views/') &&
+      !path.startsWith('/public/forms/')
     ) {
       window.dispatchEvent(new CustomEvent('st:unauthorized'));
     }

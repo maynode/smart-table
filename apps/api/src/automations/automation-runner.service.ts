@@ -33,6 +33,7 @@ import {
   type StepOutput,
   type StepValueExpression,
 } from 'shared';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   buildFilterSql,
@@ -72,6 +73,8 @@ interface ExecutionState {
   triggerUser?: string;
   stepOutputs: Map<string, InternalStepOutput>;
   flatValues: Record<string, string>;
+  /** create/modify 触及的工作表，跑完后推 sheet.rev_bumped */
+  touchedSheetIds: Set<string>;
 }
 
 interface StepExecution {
@@ -85,6 +88,7 @@ interface StepExecution {
 
 type ExecuteResult = Omit<AutomationRunResult, 'pendingDelay'> & {
   pendingDelay?: { delayMs: number; resumeContext: AutomationRunContext };
+  touchedSheetIds?: string[];
 };
 
 @Injectable()
@@ -96,6 +100,7 @@ export class AutomationRunnerService {
     @Inject(NOTIFY_ADAPTER) private readonly notify: NotifyAdapter,
     @Inject(forwardRef(() => AutomationQueueService))
     private readonly queue: AutomationQueueService,
+    private readonly live: LiveBusService,
   ) {}
 
   async runAutomation(
@@ -108,10 +113,14 @@ export class AutomationRunnerService {
     }
 
     if (outerTx) {
-      return this.toPublicResult(
-        await this.execute(automationId, context, outerTx),
+      const result = await this.execute(automationId, context, outerTx);
+      const publicResult = this.toPublicResult(result, automationId);
+      void this.emitAutomationRun(
         automationId,
+        publicResult,
+        result.touchedSheetIds,
       );
+      return publicResult;
     }
 
     try {
@@ -120,7 +129,13 @@ export class AutomationRunnerService {
         { timeout: 30_000 },
       );
       await this.maybeEnqueueDelay(result, automationId);
-      return this.toPublicResult(result, automationId);
+      const publicResult = this.toPublicResult(result, automationId);
+      void this.emitAutomationRun(
+        automationId,
+        publicResult,
+        result.touchedSheetIds,
+      );
+      return publicResult;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -177,7 +192,63 @@ export class AutomationRunnerService {
     }
 
     await this.maybeEnqueueDelay(result, automationId);
-    return this.toPublicResult(result, automationId);
+    const publicResult = this.toPublicResult(result, automationId);
+    void this.emitAutomationRun(
+      automationId,
+      publicResult,
+      result.touchedSheetIds,
+    );
+    return publicResult;
+  }
+
+  private async emitAutomationRun(
+    automationId: string,
+    result: AutomationRunResult,
+    touchedSheetIds: string[] = [],
+  ): Promise<void> {
+    try {
+      const automation = await this.prisma.automation.findUnique({
+        where: { id: automationId },
+        select: { baseId: true },
+      });
+      if (!automation) return;
+      await this.live.emit({
+        baseId: automation.baseId,
+        actorId: null,
+        kind: 'automation.run',
+        entityId: automationId,
+        meta: {
+          runId: result.runId,
+          status: result.status,
+          ...(result.pendingDelay ? { pendingDelay: true } : {}),
+        },
+      });
+      const uniqueSheets = [...new Set(touchedSheetIds.filter(Boolean))];
+      for (const sheetId of uniqueSheets) {
+        const sheet = await this.prisma.sheet.findUnique({
+          where: { id: sheetId },
+          select: { baseId: true, sheetRev: true },
+        });
+        if (!sheet) continue;
+        await this.live.emit({
+          baseId: sheet.baseId,
+          actorId: null,
+          kind: 'sheet.rev_bumped',
+          entityId: sheetId,
+          meta: {
+            reason: 'automation',
+            runId: result.runId,
+            sheetRev: sheet.sheetRev,
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `live automation.run emit failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private async maybeEnqueueDelay(
@@ -730,6 +801,7 @@ export class AutomationRunnerService {
             stepOutputs: state.flatValues,
             outputs,
             pendingDelay,
+            touchedSheetIds: [...state.touchedSheetIds],
           };
         }
         break;
@@ -760,6 +832,7 @@ export class AutomationRunnerService {
       status,
       stepOutputs: state.flatValues,
       outputs,
+      touchedSheetIds: [...state.touchedSheetIds],
       ...(errorMessage ? { error: errorMessage } : {}),
     };
   }
@@ -826,6 +899,7 @@ export class AutomationRunnerService {
       triggerUser: context.submitterUserId,
       stepOutputs: new Map(),
       flatValues,
+      touchedSheetIds: new Set(),
     };
   }
 
@@ -1048,6 +1122,7 @@ export class AutomationRunnerService {
         claimStatus: this.deriveClaimStatus(cells, fields),
       },
     });
+    state.touchedSheetIds.add(step.sheetId);
 
     return {
       output: {
@@ -1114,6 +1189,7 @@ export class AutomationRunnerService {
           },
         }),
       );
+      state.touchedSheetIds.add(record.sheetId);
     }
 
     return {
@@ -1147,9 +1223,30 @@ export class AutomationRunnerService {
     } as unknown as Prisma.InputJsonValue;
 
     for (const userId of recipients) {
-      await tx.notification.create({
+      const row = await tx.notification.create({
         data: { userId, title, body: text, data },
       });
+      // Live 在事务内发射：成功提交后对端可见；回滚时订阅方最多多一次空拉取
+      void this.live
+        .emit({
+          baseId: state.automation.baseId ?? null,
+          actorId: null,
+          kind: 'notification.created',
+          entityId: row.id,
+          userId,
+          meta: {
+            kind: 'automation_message',
+            automationId: state.automation.id,
+            notificationId: row.id,
+          },
+        })
+        .catch((error) => {
+          this.logger.warn(
+            `live notification emit failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
     }
     try {
       await this.notify.sendMessage({

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SheetsService } from '../sheets/sheets.service';
 
@@ -10,6 +11,7 @@ export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sheetsService: SheetsService,
+    private readonly live: LiveBusService,
   ) {}
 
   async create(
@@ -18,12 +20,24 @@ export class CommentsService {
     body: string,
     mentionedUserIds: string[] = [],
   ) {
-    await this.sheetsService.assertSheetAccess(sheetId, userId, 'viewer');
+    const sheet = await this.sheetsService.assertSheetAccess(
+      sheetId,
+      userId,
+      'viewer',
+    );
 
     const trimmed = body.trim();
     const comment = await this.prisma.comment.create({
       data: { sheetId, authorId: userId, body: trimmed },
       include: { author: { select: { id: true, name: true, account: true } } },
+    });
+
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: userId,
+      kind: 'comment.changed',
+      entityId: comment.id,
+      meta: { sheetId },
     });
 
     await this.notifyMentions({
@@ -33,6 +47,7 @@ export class CommentsService {
       commentId: comment.id,
       body: trimmed,
       mentionedUserIds,
+      baseId: sheet.baseId,
     });
 
     return {
@@ -69,6 +84,7 @@ export class CommentsService {
     commentId: string;
     body: string;
     mentionedUserIds: string[];
+    baseId: string;
   }): Promise<void> {
     try {
       const sheet = await this.prisma.sheet.findUnique({
@@ -131,6 +147,16 @@ export class CommentsService {
           data,
         })),
       });
+      for (const recipientId of recipients) {
+        await this.live.emit({
+          baseId: input.baseId,
+          actorId: input.authorId,
+          kind: 'notification.created',
+          entityId: input.commentId,
+          userId: recipientId,
+          meta: { kind: 'comment_mention' },
+        });
+      }
     } catch (error) {
       this.logger.warn(
         `comment mention notify failed: ${

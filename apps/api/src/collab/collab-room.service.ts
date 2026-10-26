@@ -3,6 +3,7 @@ import type { WebSocket } from 'ws';
 import type { SheetMutation } from 'shared';
 import { COMMIT_ERROR, peerColorFromUserId } from 'shared';
 import { JwtService } from '@nestjs/jwt';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SheetsService } from '../sheets/sheets.service';
 import { CommitChangesService } from '../sheets/commit-changes.service';
@@ -30,6 +31,7 @@ export class CollabRoomService {
     private readonly jwt: JwtService,
     private readonly sheets: SheetsService,
     private readonly commits: CommitChangesService,
+    private readonly live: LiveBusService,
   ) {}
 
   async acceptConnection(
@@ -95,6 +97,32 @@ export class CollabRoomService {
       sheetRev: sheet?.sheetRev ?? 0,
     });
     this.broadcastPresence(sheetId);
+  }
+
+  /** 用户改头像/用户名后刷新各表 presence，无需重连 */
+  updateUserProfile(
+    userId: string,
+    profile: {
+      account?: string;
+      name?: string;
+      avatarSeed?: string;
+      avatarUrl?: string | null;
+    },
+  ): void {
+    const touched = new Set<string>();
+    for (const [sheetId, room] of this.rooms) {
+      let changed = false;
+      for (const c of room) {
+        if (c.userId !== userId) continue;
+        if (profile.account !== undefined) c.account = profile.account;
+        if (profile.name !== undefined) c.name = profile.name;
+        if (profile.avatarSeed !== undefined) c.avatarSeed = profile.avatarSeed;
+        if (profile.avatarUrl !== undefined) c.avatarUrl = profile.avatarUrl;
+        changed = true;
+      }
+      if (changed) touched.add(sheetId);
+    }
+    for (const sheetId of touched) this.broadcastPresence(sheetId);
   }
 
   private leave(client: RoomClient): void {
@@ -339,6 +367,13 @@ export class CollabRoomService {
       noticeType: 'DIRTY_AREA_CHANGE',
       sheetRev: newRev,
     });
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: client.userId,
+      kind: 'sheet.rev_bumped',
+      entityId: client.sheetId,
+      meta: { sheetRev: newRev },
+    });
   }
 
   /**
@@ -351,13 +386,21 @@ export class CollabRoomService {
     commitId: string;
     mutations: unknown[];
   }): Promise<void> {
-    const room = this.rooms.get(params.sheetId);
-    if (!room || room.size === 0) return;
     if (!params.mutations.length) return;
     const sheet = await this.prisma.sheet.findUnique({
       where: { id: params.sheetId },
     });
-    const newRev = sheet?.sheetRev ?? 0;
+    if (!sheet) return;
+    const newRev = sheet.sheetRev ?? 0;
+    await this.live.emit({
+      baseId: sheet.baseId,
+      actorId: params.authorId,
+      kind: 'sheet.rev_bumped',
+      entityId: params.sheetId,
+      meta: { sheetRev: newRev },
+    });
+    const room = this.rooms.get(params.sheetId);
+    if (!room || room.size === 0) return;
     this.broadcast(params.sheetId, {
       type: 'new_changes',
       baseRev: Math.max(0, newRev - 1),

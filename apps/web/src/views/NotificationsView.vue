@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { endpoints } from '../api/endpoints';
 import type { NotificationDto } from '../api/types';
+import { liveBus } from '../sync/live-bus';
+import { liveSocket } from '../sync/live-socket';
 import { toast } from '../ui/toast';
 
 const router = useRouter();
@@ -73,8 +75,24 @@ function goBack(): void {
   void router.push('/');
 }
 
+const liveUnsubs: Array<() => void> = [];
+
 onMounted(() => {
+  liveSocket.connect({ userOnly: true });
+  liveUnsubs.push(
+    liveBus.on('notification.created', () => {
+      void refresh();
+    }),
+    liveBus.on('notification.read', () => {
+      void refresh();
+    }),
+  );
   void refresh();
+});
+
+onBeforeUnmount(() => {
+  while (liveUnsubs.length) liveUnsubs.pop()?.();
+  liveSocket.disconnect();
 });
 </script>
 

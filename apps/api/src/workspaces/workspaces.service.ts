@@ -12,6 +12,7 @@ import {
   notifyUser,
   workspaceRoleLabel,
 } from '../notifications/user-notify';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { roleAtLeast } from './workspace-roles';
@@ -44,6 +45,7 @@ export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly quotas: QuotasService,
+    private readonly live: LiveBusService,
   ) {}
 
   async create(userId: string, name: string): Promise<WorkspaceWithRole> {
@@ -58,6 +60,15 @@ export class WorkspacesService {
         data: { workspaceId: created.id, userId, role: 'owner' },
       });
       return created;
+    });
+    await this.live.emit({
+      baseId: null,
+      workspaceId: workspace.id,
+      actorId: userId,
+      kind: 'workspace.created',
+      entityId: workspace.id,
+      userId,
+      meta: { name: workspace.name },
     });
     return { ...workspace, role: 'owner', pinned: false, pinnedAt: null };
   }
@@ -109,6 +120,14 @@ export class WorkspacesService {
       where: { id: workspaceId },
       data: { name: trimmed },
     });
+    await this.live.emit({
+      baseId: null,
+      workspaceId,
+      actorId: userId,
+      kind: 'workspace.updated',
+      entityId: workspaceId,
+      meta: { name: trimmed },
+    });
     return this.toWorkspaceDto(workspace, membership);
   }
 
@@ -143,6 +162,14 @@ export class WorkspacesService {
       throw new NotFoundException('????????????');
     }
     await this.prisma.workspace.delete({ where: { id: workspaceId } });
+    await this.live.emit({
+      baseId: null,
+      workspaceId,
+      actorId: userId,
+      kind: 'workspace.deleted',
+      entityId: workspaceId,
+      userId,
+    });
   }
 
   async setPinned(
@@ -155,6 +182,15 @@ export class WorkspacesService {
       where: { id: membership.id },
       data: { pinnedAt: pinned ? new Date() : null },
       include: { workspace: true },
+    });
+    await this.live.emit({
+      baseId: null,
+      workspaceId,
+      actorId: userId,
+      kind: 'workspace.pinned',
+      entityId: workspaceId,
+      userId,
+      meta: { pinned },
     });
     return this.toWorkspaceDto(updated.workspace, updated);
   }
@@ -268,18 +304,31 @@ export class WorkspacesService {
           ]);
           const wsName = workspace?.name ?? '???';
           const roleName = workspaceRoleLabel(role);
-          await notifyUser(this.prisma, {
-            userId: user.id,
-            title: '?????????',
-            body: `${actorName} ?????${wsName}?????${roleName}`,
-            data: {
-              kind: 'workspace_member_added',
-              workspaceId,
-              role,
-              actorId,
+          await notifyUser(
+            this.prisma,
+            {
+              userId: user.id,
+              title: '?????????',
+              body: `${actorName} ?????${wsName}?????${roleName}`,
+              data: {
+                kind: 'workspace_member_added',
+                workspaceId,
+                role,
+                actorId,
+              },
             },
-          });
+            this.live,
+          );
         }
+        await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+          kind: 'member.changed',
+          entityId: user.id,
+          userId: user.id,
+          meta: { workspaceId, action: 'invite', role },
+        });
         return {
           userId: user.id,
           account: user.account,
@@ -316,6 +365,14 @@ export class WorkspacesService {
           role,
           invitedById: actorId,
         },
+      });
+      await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+        kind: 'member.changed',
+        entityId: invite.id,
+        meta: { workspaceId, action: 'invite_pending', role, account },
       });
       return {
         userId: '',
@@ -378,19 +435,32 @@ export class WorkspacesService {
           actorDisplayName(this.prisma, actorId),
         ]);
         const wsName = workspace?.name ?? '???';
-        await notifyUser(this.prisma, {
-          userId: targetId,
-          title: '??????????',
-          body: `${actorName} ????${wsName}?????${workspaceRoleLabel(previousRole)}???${workspaceRoleLabel(role)}`,
-          data: {
-            kind: 'workspace_member_role_changed',
-            workspaceId,
-            previousRole,
-            role,
-            actorId,
+        await notifyUser(
+          this.prisma,
+          {
+            userId: targetId,
+            title: '??????????',
+            body: `${actorName} ????${wsName}?????${workspaceRoleLabel(previousRole)}???${workspaceRoleLabel(role)}`,
+            data: {
+              kind: 'workspace_member_role_changed',
+              workspaceId,
+              previousRole,
+              role,
+              actorId,
+            },
           },
-        });
+          this.live,
+        );
       }
+      await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+        kind: 'member.changed',
+        entityId: targetId,
+        userId: targetId,
+        meta: { workspaceId, action: 'role_changed', role, previousRole },
+      });
       return {
         userId: updated.userId,
         account: user?.account ?? '',
@@ -418,6 +488,19 @@ export class WorkspacesService {
     const updatedInvite = await this.prisma.workspaceInvite.update({
       where: { id: invite.id },
       data: { role },
+    });
+    await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+      kind: 'member.changed',
+      entityId: updatedInvite.id,
+      meta: {
+        workspaceId,
+        action: 'invite_role_changed',
+        role,
+        account: updatedInvite.account,
+      },
     });
     return {
       userId: '',
@@ -457,17 +540,30 @@ export class WorkspacesService {
           actorDisplayName(this.prisma, actorId),
         ]);
         const wsName = workspace?.name ?? '???';
-        await notifyUser(this.prisma, {
-          userId: targetId,
-          title: '??????????',
-          body: `${actorName} ??????${wsName}?`,
-          data: {
-            kind: 'workspace_member_removed',
-            workspaceId,
-            actorId,
+        await notifyUser(
+          this.prisma,
+          {
+            userId: targetId,
+            title: '??????????',
+            body: `${actorName} ??????${wsName}?`,
+            data: {
+              kind: 'workspace_member_removed',
+              workspaceId,
+              actorId,
+            },
           },
-        });
+          this.live,
+        );
       }
+      await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+        kind: 'member.changed',
+        entityId: targetId,
+        userId: targetId,
+        meta: { workspaceId, action: 'remove' },
+      });
       return;
     }
 
@@ -478,6 +574,18 @@ export class WorkspacesService {
       throw new NotFoundException('????????????');
     }
     await this.prisma.workspaceInvite.delete({ where: { id: invite.id } });
+    await this.live.emit({
+          baseId: null,
+          workspaceId,
+          actorId,
+      kind: 'member.changed',
+      entityId: invite.id,
+      meta: {
+        workspaceId,
+        action: 'invite_removed',
+        account: invite.account,
+      },
+    });
   }
 
   /** ??????????????????????????????????????????????????????? */
@@ -521,17 +629,21 @@ export class WorkspacesService {
         ? await actorDisplayName(this.prisma, invite.invitedById)
         : '???';
       const wsName = workspace?.name ?? '???';
-      await notifyUser(this.prisma, {
-        userId,
-        title: '?????????',
-        body: `${actorName} ?????${wsName}?????${workspaceRoleLabel(invite.role)}`,
-        data: {
-          kind: 'workspace_member_added',
-          workspaceId: invite.workspaceId,
-          role: invite.role,
-          actorId: invite.invitedById ?? null,
+      await notifyUser(
+        this.prisma,
+        {
+          userId,
+          title: '?????????',
+          body: `${actorName} ?????${wsName}?????${workspaceRoleLabel(invite.role)}`,
+          data: {
+            kind: 'workspace_member_added',
+            workspaceId: invite.workspaceId,
+            role: invite.role,
+            actorId: invite.invitedById ?? null,
+          },
         },
-      });
+        this.live,
+      );
     }
   }
 }

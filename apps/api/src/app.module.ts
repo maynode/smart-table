@@ -22,6 +22,7 @@ import { StorageModule } from './storage/storage.module';
 import { ViewsModule } from './views/views.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { CollabModule } from './collab/collab.module';
+import { LiveModule } from './live/live.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { CollabModule } from './collab/collab.module';
     }),
     PrismaModule,
     AuthModule,
+    LiveModule,
     WorkspacesModule,
     BasesModule,
     SheetsModule,

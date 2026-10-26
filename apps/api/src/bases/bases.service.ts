@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharingService } from '../sharing/sharing.service';
@@ -15,6 +16,7 @@ export class BasesService {
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
     private readonly sharing: SharingService,
+    private readonly live: LiveBusService,
   ) {}
 
   async create(
@@ -30,13 +32,13 @@ export class BasesService {
     }
     await this.assertNameAvailable(workspaceId, trimmed);
     const desc = normalizeDescription(description);
-    return this.prisma.$transaction(async (tx) => {
+    const base = await this.prisma.$transaction(async (tx) => {
       const max = await tx.base.aggregate({
         where: { workspaceId },
         _max: { sortOrder: true },
       });
       const sortOrder = (max._max.sortOrder ?? -1) + 1;
-      const base = await tx.base.create({
+      const created = await tx.base.create({
         data: {
           workspaceId,
           name: trimmed,
@@ -45,11 +47,20 @@ export class BasesService {
         },
       });
       const sheet = await tx.sheet.create({
-        data: { baseId: base.id, name: '表格' },
+        data: { baseId: created.id, name: '表格' },
       });
       await seedBlankSheetStructure(tx, sheet.id, userId);
-      return base;
+      return created;
     });
+    await this.live.emit({
+      baseId: base.id,
+      workspaceId,
+      actorId: userId,
+      kind: 'base.created',
+      entityId: base.id,
+      meta: { name: base.name },
+    });
+    return base;
   }
 
   async list(workspaceId: string, userId: string) {
@@ -109,10 +120,19 @@ export class BasesService {
     if (!Object.keys(data).length) {
       throw new BadRequestException('没有可更新的字段');
     }
-    return this.prisma.base.update({
+    const updated = await this.prisma.base.update({
       where: { id: baseId },
       data,
     });
+    await this.live.emit({
+      baseId: updated.id,
+      workspaceId: updated.workspaceId,
+      actorId: userId,
+      kind: 'base.updated',
+      entityId: updated.id,
+      meta: { name: updated.name },
+    });
+    return updated;
   }
 
   async remove(baseId: string, userId: string) {
@@ -126,6 +146,14 @@ export class BasesService {
       'editor',
     );
     await this.prisma.base.delete({ where: { id: baseId } });
+    await this.live.emit({
+      baseId: null,
+      workspaceId: base.workspaceId,
+      actorId: userId,
+      kind: 'base.deleted',
+      entityId: baseId,
+      meta: { name: base.name },
+    });
     return { id: baseId, deleted: true };
   }
 
@@ -155,7 +183,8 @@ export class BasesService {
       moveConflict: true,
     });
 
-    return this.prisma.$transaction(async (tx) => {
+    const fromWorkspaceId = base.workspaceId;
+    const updated = await this.prisma.$transaction(async (tx) => {
       const max = await tx.base.aggregate({
         where: { workspaceId },
         _max: { sortOrder: true },
@@ -166,6 +195,23 @@ export class BasesService {
         data: { workspaceId, sortOrder },
       });
     });
+    await this.live.emit({
+      baseId: updated.id,
+      workspaceId: fromWorkspaceId,
+      actorId: userId,
+      kind: 'base.moved',
+      entityId: updated.id,
+      meta: { fromWorkspaceId, toWorkspaceId: workspaceId },
+    });
+    await this.live.emit({
+      baseId: updated.id,
+      workspaceId,
+      actorId: userId,
+      kind: 'base.moved',
+      entityId: updated.id,
+      meta: { fromWorkspaceId, toWorkspaceId: workspaceId },
+    });
+    return updated;
   }
 
   /** 同一工作区内表格名称不可重复（大小写不敏感）。 */
@@ -225,6 +271,13 @@ export class BasesService {
         }),
       ),
     );
+    await this.live.emit({
+      baseId: null,
+      workspaceId,
+      actorId: userId,
+      kind: 'base.reordered',
+      meta: { orderedIds: ids },
+    });
     return this.list(workspaceId, userId);
   }
 }
