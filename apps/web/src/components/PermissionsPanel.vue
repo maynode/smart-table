@@ -12,12 +12,22 @@ import type {
   PermissionSettingsDto,
 } from '../api/types';
 
-const props = defineProps<{ baseId: string }>();
+const props = withDefaults(
+  defineProps<{
+    baseId: string;
+    /** owner|admin 才可改内容权限；其余只读浏览 */
+    canManage?: boolean;
+  }>(),
+  { canManage: false },
+);
 const emit = defineEmits<{ close: [] }>();
 
 const objects = ref<PermissionObjectDto[]>([]);
 const selected = ref<PermissionObjectDto | null>(null);
 const settings = ref<PermissionSettingsDto | null>(null);
+const canEditPermissions = computed(
+  () => props.canManage || Boolean(settings.value?.canManage),
+);
 const fields = ref<FieldDto[]>([]);
 const loading = ref(false);
 const saving = ref(false);
@@ -112,6 +122,10 @@ async function openObject(object: PermissionObjectDto): Promise<void> {
 }
 
 async function openMemberExtra(): Promise<void> {
+  if (!canEditPermissions.value) {
+    toast('无权修改内容权限');
+    return;
+  }
   const first = objects.value[0];
   if (!first) {
     toast('暂无对象');
@@ -168,7 +182,7 @@ async function selectObject(object: PermissionObjectDto): Promise<void> {
 }
 
 function addMember(): void {
-  if (!addMemberId.value) return;
+  if (!canEditPermissions.value || !addMemberId.value) return;
   memberRows.value = [
     ...memberRows.value,
     { userId: addMemberId.value, level: addMemberLevel.value },
@@ -177,11 +191,16 @@ function addMember(): void {
 }
 
 function removeMember(userId: string): void {
+  if (!canEditPermissions.value) return;
   memberRows.value = memberRows.value.filter((row) => row.userId !== userId);
 }
 
 async function save(): Promise<void> {
   if (!selected.value || !settings.value) return;
+  if (!canEditPermissions.value) {
+    toast('无权修改内容权限');
+    return;
+  }
   if (recordMode.value === 'condition' && !conditionField.value) {
     toast('请选择记录范围的条件字段');
     return;
@@ -295,9 +314,11 @@ onBeforeUnmount(() => {
         <p v-if="!objects.length && !loading" class="empty-hint">暂无对象</p>
       </section>
       <button
+        v-if="canEditPermissions && objects.length"
         class="home-card member-extra"
         type="button"
         data-testid="permission-add-extra"
+        :disabled="loading"
         @click="openMemberExtra"
       >
         + 为指定成员添加额外权限
@@ -335,7 +356,11 @@ onBeforeUnmount(() => {
           </div>
           <label class="level-select">
             档位
-            <select v-model="level" data-testid="permission-level" :disabled="!settings.canManage">
+            <select
+              v-model="level"
+              data-testid="permission-level"
+              :disabled="!canEditPermissions"
+            >
               <option v-for="item in levels" :key="item.value" :value="item.value">
                 {{ item.label }}
               </option>
@@ -343,7 +368,7 @@ onBeforeUnmount(() => {
           </label>
         </div>
 
-        <fieldset class="rule-block">
+        <fieldset class="rule-block" :disabled="!canEditPermissions">
           <legend>记录权限（行）</legend>
           <div class="rule-row">
             <label>
@@ -383,7 +408,7 @@ onBeforeUnmount(() => {
           </div>
         </fieldset>
 
-        <fieldset class="rule-block">
+        <fieldset class="rule-block" :disabled="!canEditPermissions">
           <legend>字段权限（列）</legend>
           <label class="mode-row">
             <input
@@ -445,6 +470,7 @@ onBeforeUnmount(() => {
           class="rule-block"
           :class="{ highlight: memberFocus }"
           data-testid="permission-member-block"
+          :disabled="!canEditPermissions"
         >
           <legend>指定成员额外权限</legend>
           <div class="member-add">
@@ -497,7 +523,7 @@ onBeforeUnmount(() => {
       <button
         class="btn btn-primary"
         data-testid="permission-save"
-        :disabled="saving || !settings?.canManage"
+        :disabled="saving || !canEditPermissions"
         @click="save"
       >
         {{ saving ? '保存中…' : '保存' }}

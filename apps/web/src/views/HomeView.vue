@@ -1464,6 +1464,9 @@ onUnmounted(() => {
           :workspace-id="currentWorkspaceId"
           embedded
           embedded-title="工作区成员"
+          :can-manage="
+            currentWorkspace ? canManageWorkspace(currentWorkspace) : false
+          "
         />
 
         <div
@@ -1919,6 +1922,9 @@ onUnmounted(() => {
     >
       <PermissionsPanel
         :base-id="permissionsBaseId"
+        :can-manage="
+          currentWorkspace ? canManageWorkspace(currentWorkspace) : false
+        "
         @close="permissionsOpen = false"
       />
     </div>

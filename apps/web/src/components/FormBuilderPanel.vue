@@ -47,13 +47,22 @@ const props = withDefaults(
     embedded?: boolean;
     /** 进入时默认 Tab：编辑 / 填写 */
     initialTab?: 'design' | 'preview';
+    /** false = 只读：仅可预览填写，不能改表单设计 */
+    editable?: boolean;
   }>(),
-  { embedded: false, initialTab: undefined, workspaceId: undefined },
+  {
+    embedded: false,
+    initialTab: undefined,
+    workspaceId: undefined,
+    editable: true,
+  },
 );
 const emit = defineEmits<{
   close: [];
   /** 字段增删改后通知壳层刷新 sheet.fields */
   'sheet-updated': [sheet: SheetDto];
+  /** 首次/再次保存 Form 后通知壳层同步 forms 列表与 form ACL */
+  'form-saved': [form: FormDto];
 }>();
 
 const form = ref<FormDto | null>(null);
@@ -74,12 +83,19 @@ const conditionOwnerId = ref('');
 const addFieldId = ref('');
 /** 企微进入收集表单默认「编辑表单」；可从结果页返回时指定 */
 const previewTab = ref<'design' | 'preview'>(
-  props.initialTab ?? 'design',
+  props.editable === false ? 'preview' : (props.initialTab ?? 'design'),
+);
+watch(
+  () => props.editable,
+  (ok) => {
+    if (ok === false) previewTab.value = 'preview';
+  },
 );
 watch(
   () => props.initialTab,
   (tab) => {
-    if (tab) previewTab.value = tab;
+    if (!tab) return;
+    previewTab.value = props.editable === false ? 'preview' : tab;
   },
 );
 watch(previewTab, (tab) => {
@@ -213,6 +229,10 @@ async function loadPreviewExtras(): Promise<void> {
 }
 
 async function previewUpload(file: File) {
+  if (!props.editable) {
+    toast('当前为只读权限，无法上传附件');
+    throw new Error('只读');
+  }
   if (!props.sheet) throw new Error('未选择工作表');
   return endpoints.uploadAttachment(props.sheet.id, file);
 }
@@ -515,11 +535,16 @@ function savePayload() {
 }
 
 async function save(showToast = true): Promise<FormDto | null> {
+  if (!props.editable) {
+    if (showToast) toast('当前为只读权限，无法保存表单');
+    return form.value;
+  }
   if (!props.sheet || saving.value) return form.value;
   saving.value = true;
   error.value = '';
   try {
     form.value = await endpoints.upsertForm(formId.value, savePayload());
+    emit('form-saved', form.value);
     if (showToast) toast('表单已保存');
     return form.value;
   } catch (caught) {
@@ -531,6 +556,7 @@ async function save(showToast = true): Promise<FormDto | null> {
 }
 
 function move(index: number, direction: -1 | 1): void {
+  if (!props.editable) return;
   const target = index + direction;
   if (target < 0 || target >= items.value.length) return;
   const list = [...items.value];
@@ -539,6 +565,7 @@ function move(index: number, direction: -1 | 1): void {
 }
 
 function removeItem(index: number): void {
+  if (!props.editable) return;
   const removed = items.value[index];
   items.value = items.value.filter((_, itemIndex) => itemIndex !== index);
   if (removed?.fieldId === selectedFieldId.value) {
@@ -548,22 +575,33 @@ function removeItem(index: number): void {
 }
 
 function removeAllFields(): void {
+  if (!props.editable) return;
   items.value = [];
   selectedFieldId.value = '';
   void save(false);
 }
 
 function addAvailableField(fieldId: string): void {
+  if (!props.editable) return;
   addFieldId.value = fieldId;
   addField();
 }
 
 async function openShareDialog(): Promise<void> {
+  if (!props.editable) {
+    if (!form.value) {
+      toast('当前为只读权限，无法创建分享链接');
+      return;
+    }
+    shareDialogOpen.value = true;
+    return;
+  }
   if (!form.value) await save(false);
   shareDialogOpen.value = true;
 }
 
 function addField(): void {
+  if (!props.editable) return;
   const field = availableFields.value.find(
     (candidate) => candidate.id === addFieldId.value,
   ) ?? availableFields.value[0];
@@ -578,12 +616,20 @@ function addField(): void {
 }
 
 function openCreateFieldPicker(): void {
+  if (!props.editable) {
+    toast('当前为只读权限，无法新建字段');
+    return;
+  }
   fieldPickerMode.value = 'create';
   editingField.value = null;
   fieldPickerOpen.value = true;
 }
 
 function openEditFieldType(field: FieldDto): void {
+  if (!props.editable) {
+    toast('当前为只读权限，无法修改字段');
+    return;
+  }
   selectedFieldId.value = field.id;
   fieldPickerMode.value = 'edit';
   editingField.value = field;
@@ -613,6 +659,10 @@ async function onCreateField(payload: {
   type: FieldType;
   options?: Record<string, unknown>;
 }): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法新建字段');
+    return;
+  }
   if (!props.sheet) return;
   closeFieldPicker();
   try {
@@ -652,6 +702,10 @@ async function onUpdateFieldType(
     options?: Record<string, unknown>;
   },
 ): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法修改字段');
+    return;
+  }
   closeFieldPicker();
   const nextName = payload.name.trim() || field.name;
   const typeChanged = payload.type !== field.type;
@@ -697,11 +751,13 @@ function typeLabel(type: string): string {
 }
 
 function beginRename(field: FieldDto): void {
+  if (!props.editable) return;
   renamingFieldId.value = field.id;
   renameDraft.value = field.name;
 }
 
 async function commitRename(): Promise<void> {
+  if (!props.editable) return;
   const fieldId = renamingFieldId.value;
   const next = renameDraft.value.trim();
   renamingFieldId.value = '';
@@ -721,6 +777,10 @@ async function commitRename(): Promise<void> {
 }
 
 async function deleteFieldFromForm(index: number): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法删除字段');
+    return;
+  }
   const item = items.value[index];
   if (!item) return;
   const field = fieldById.value.get(item.fieldId);
@@ -745,6 +805,7 @@ async function deleteFieldFromForm(index: number): Promise<void> {
 }
 
 function addCondition(config: FormFieldConfigDto): void {
+  if (!props.editable) return;
   const rule = ensureDisplayRule(config);
   setDisplayRule(config, {
     ...rule,
@@ -758,6 +819,10 @@ async function uploadCover(event: Event): Promise<void> {
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
+  if (!props.editable) {
+    toast('当前为只读权限，无法上传封面');
+    return;
+  }
   uploadingCover.value = true;
   try {
     if (!form.value) {
@@ -857,6 +922,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="tabs">
         <button
+          v-if="editable"
           :class="{ active: previewTab === 'design' }"
           data-testid="form-tab-edit"
           @click="previewTab = 'design'"
@@ -873,6 +939,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="header-actions">
         <button
+          v-if="editable || form"
           class="btn btn-primary small"
           type="button"
           data-testid="form-share-open"

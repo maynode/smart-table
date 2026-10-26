@@ -13,7 +13,10 @@ import type {
   PublicViewScopeOptions,
 } from '../api/types';
 
-const props = defineProps<{ sheetId: string }>();
+const props = withDefaults(
+  defineProps<{ sheetId: string; editable?: boolean }>(),
+  { editable: true },
+);
 const emit = defineEmits<{ close: [] }>();
 
 const views = ref<PublicViewDto[]>([]);
@@ -88,7 +91,7 @@ function listOf(kind: ScopeKind) {
 }
 
 function toggleIn(kind: ScopeKind, id: string, enabled: boolean): void {
-  if (!enabled) return;
+  if (!props.editable || !enabled) return;
   const list = listOf(kind);
   if (list.value.includes(id)) {
     if (selectedCount.value <= 1) {
@@ -102,7 +105,7 @@ function toggleIn(kind: ScopeKind, id: string, enabled: boolean): void {
 }
 
 function toggleAll(): void {
-  if (!scope.value) return;
+  if (!props.editable || !scope.value) return;
   if (allSelectableSelected.value) {
     // 保留第一项有数据内容，避免空选
     const first =
@@ -182,6 +185,10 @@ function cancelEdit(): void {
 }
 
 async function save(): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法创建公开视图');
+    return;
+  }
   if (!selectedCount.value) {
     toast('请至少选择一项有数据的公开内容');
     return;
@@ -229,6 +236,10 @@ async function save(): Promise<void> {
 }
 
 async function revoke(view: PublicViewDto): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法撤销');
+    return;
+  }
   try {
     await endpoints.revokePublicView(view.id);
     if (editingId.value === view.id) resetForm();
@@ -310,6 +321,7 @@ onBeforeUnmount(() => {
         <div class="scope-head">
           <h4>公开内容范围</h4>
           <button
+            v-if="editable"
             type="button"
             class="nl-link"
             data-testid="public-view-scope-toggle-all"
@@ -331,13 +343,13 @@ onBeforeUnmount(() => {
               v-for="item in scope.sheets"
               :key="item.id"
               class="scope-row"
-              :class="{ disabled: !item.hasData }"
+              :class="{ disabled: !item.hasData || !editable }"
               :data-testid="`public-view-scope-sheet-${item.id}`"
             >
               <input
                 type="checkbox"
                 :checked="selectedSheetIds.includes(item.id)"
-                :disabled="!item.hasData"
+                :disabled="!item.hasData || !editable"
                 @change="toggleIn('sheet', item.id, item.hasData)"
               />
               <span :title="item.name">{{ item.name }}</span>
@@ -352,13 +364,13 @@ onBeforeUnmount(() => {
               v-for="item in scope.formSheets"
               :key="item.id"
               class="scope-row"
-              :class="{ disabled: !item.hasData }"
+              :class="{ disabled: !item.hasData || !editable }"
               :data-testid="`public-view-scope-form-${item.id}`"
             >
               <input
                 type="checkbox"
                 :checked="selectedFormSheetIds.includes(item.id)"
-                :disabled="!item.hasData"
+                :disabled="!item.hasData || !editable"
                 @change="toggleIn('form', item.id, item.hasData)"
               />
               <span :title="item.name">{{ item.name }}</span>
@@ -375,13 +387,13 @@ onBeforeUnmount(() => {
               v-for="item in scope.dashboards"
               :key="item.id"
               class="scope-row"
-              :class="{ disabled: !item.hasData }"
+              :class="{ disabled: !item.hasData || !editable }"
               :data-testid="`public-view-scope-dashboard-${item.id}`"
             >
               <input
                 type="checkbox"
                 :checked="selectedDashboardIds.includes(item.id)"
-                :disabled="!item.hasData"
+                :disabled="!item.hasData || !editable"
                 @change="toggleIn('dashboard', item.id, item.hasData)"
               />
               <span :title="item.name">{{ item.name }}</span>
@@ -400,13 +412,13 @@ onBeforeUnmount(() => {
               v-for="item in scope.analysisReports"
               :key="item.id"
               class="scope-row"
-              :class="{ disabled: !item.hasData }"
+              :class="{ disabled: !item.hasData || !editable }"
               :data-testid="`public-view-scope-report-${item.id}`"
             >
               <input
                 type="checkbox"
                 :checked="selectedReportIds.includes(item.id)"
-                :disabled="!item.hasData"
+                :disabled="!item.hasData || !editable"
                 @change="toggleIn('report', item.id, item.hasData)"
               />
               <span :title="item.name">{{ item.name }}</span>
@@ -423,6 +435,7 @@ onBeforeUnmount(() => {
       <div class="public-main">
         <div class="public-form">
           <h4>{{ isEditing ? '编辑链接' : '新建链接' }}</h4>
+          <fieldset :disabled="!editable" class="public-form-fields">
           <label>
             名称
             <input v-model="name" data-testid="public-view-name" />
@@ -468,7 +481,8 @@ onBeforeUnmount(() => {
               data-testid="public-view-expiry"
             />
           </label>
-          <div class="form-actions">
+          </fieldset>
+          <div v-if="editable" class="form-actions">
             <button
               class="btn btn-primary"
               data-testid="public-view-create"
@@ -487,6 +501,7 @@ onBeforeUnmount(() => {
               取消编辑
             </button>
           </div>
+          <p v-else class="empty-hint">当前为只读，仅可查看已创建的公开链接。</p>
         </div>
 
         <div class="public-list">
@@ -513,6 +528,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="row-actions">
               <button
+                v-if="editable"
                 class="btn btn-ghost"
                 data-testid="public-view-edit"
                 @click="beginEdit(view)"
@@ -527,6 +543,7 @@ onBeforeUnmount(() => {
                 复制
               </button>
               <button
+                v-if="editable"
                 class="btn btn-danger"
                 data-testid="public-view-revoke"
                 @click="revoke(view)"
@@ -602,6 +619,12 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: #1f2329;
+}
+.public-form-fields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
 }
 .scope-hint {
   margin: 0 0 4px;

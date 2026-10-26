@@ -292,10 +292,26 @@ class MessageCenter {
   ): Promise<void> {
     if (rows.length === 0) return;
     const clientBatchId = newId();
-    const mutations = await this.resolvePendingBlobs(
-      sheetId,
-      rows.map((r) => r.mutation as SheetMutation),
-    );
+    let mutations: SheetMutation[];
+    try {
+      mutations = await this.resolvePendingBlobs(
+        sheetId,
+        rows.map((r) => r.mutation as SheetMutation),
+      );
+    } catch (error) {
+      // 附件上传阶段 401/403：同样丢弃，避免卡在「待同步」
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        this.lastError.value = error.message;
+        for (const row of rows) {
+          await idbDeleteMutation(row.clientOpId);
+        }
+        await this.refreshCount();
+        return;
+      }
+      this.lastError.value =
+        error instanceof Error ? error.message : '附件上传失败';
+      return;
+    }
     let response: CommitChangesResponse | null = null;
     try {
       response = await this.flushViaWs(sheetId, clientBatchId, mutations);
@@ -314,6 +330,13 @@ class MessageCenter {
       } catch (error) {
         if (error instanceof ApiError) {
           this.lastError.value = error.message;
+          // 无权/未登录：丢弃队列，避免只读账号永久「待同步」
+          if (error.status === 401 || error.status === 403) {
+            for (const row of rows) {
+              await idbDeleteMutation(row.clientOpId);
+            }
+            await this.refreshCount();
+          }
           return;
         }
         this.status.value = 'offline';
@@ -390,12 +413,17 @@ export const messageCenter = new MessageCenter();
 export const syncBannerText = computed(() => {
   const s = messageCenter.status.value;
   const n = messageCenter.pendingCount.value;
+  const err = messageCenter.lastError.value?.trim();
   if (s === 'offline') {
     return n > 0 ? `离线 · ${n} 条待同步` : '离线';
   }
   if (s === 'syncing') return `同步中…${n ? `（${n}）` : ''}`;
-  if (s === 'conflict') return '同步冲突，请刷新后处理';
-  if (n > 0) return `${n} 条待同步`;
+  if (s === 'conflict') {
+    return err ? `同步冲突：${err}` : '同步冲突，请刷新后处理';
+  }
+  if (n > 0) {
+    return err ? `${n} 条待同步：${err}` : `${n} 条待同步`;
+  }
   return '';
 });
 

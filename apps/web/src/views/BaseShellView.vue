@@ -59,6 +59,60 @@ const workspaceId = computed(() => String(route.params.workspaceId));
 const baseId = computed(() => String(route.params.baseId));
 
 const workspace = ref<WorkspaceDto | null>(null);
+/** 工作区角色 ≥ editor：可新建对象 / 改自动化等 */
+const canEditByRole = computed(() => {
+  const role = workspace.value?.role;
+  return role === 'owner' || role === 'admin' || role === 'editor';
+});
+/** 邀请/内容权限管理：仅 owner|admin */
+const canManageMembers = computed(() => {
+  const role = workspace.value?.role;
+  return role === 'owner' || role === 'admin';
+});
+/** 当前工作表内容权限档位（everyone/成员覆盖后的 effective） */
+const sheetAclLevel = ref<'full' | 'edit' | 'view' | 'none' | null>(null);
+/** 当前仪表盘内容权限档位 */
+const dashboardAclLevel = ref<'full' | 'edit' | 'view' | 'none' | null>(null);
+/** 当前收集表单内容权限档位（按 Form 对象） */
+const formAclLevel = ref<'full' | 'edit' | 'view' | 'none' | null>(null);
+const canEditDashboard = computed(() => {
+  if (!canEditByRole.value) return false;
+  const role = workspace.value?.role;
+  if (role === 'owner' || role === 'admin') return true;
+  const level = dashboardAclLevel.value;
+  // null = 加载中/未知：先禁写，避免切换对象时沿用上一张表的 ACL
+  if (level == null) return false;
+  return level === 'full' || level === 'edit';
+});
+/**
+ * 网格/记录可写：工作区可编辑，且（所有者/管理员 或 对象 ACL ≥ edit）。
+ * 对齐后端 assertSheetAccess(editor) + 内容权限 assertCan。
+ */
+const canEditSheet = computed(() => {
+  if (!canEditByRole.value) return false;
+  const role = workspace.value?.role;
+  if (role === 'owner' || role === 'admin') return true;
+  const level = sheetAclLevel.value;
+  // null = 加载中/未知：先禁写，避免切换表时短暂可写
+  if (level == null) return false;
+  return level === 'full' || level === 'edit';
+});
+/**
+ * 表单设计可写：需可写底层 sheet（字段），且已有 Form 时还要 form ACL ≥ edit。
+ * 尚无 Form 记录时允许首次创建（后端仅校验 workspace editor）。
+ */
+const canEditForm = computed(() => {
+  if (!canEditSheet.value) return false;
+  const role = workspace.value?.role;
+  if (role === 'owner' || role === 'admin') return true;
+  const sheetId = activeSheet.value?.id;
+  if (!sheetId) return false;
+  const hasForm = forms.value.some((item) => item.sheetId === sheetId);
+  if (!hasForm) return true;
+  const level = formAclLevel.value;
+  if (level == null) return false;
+  return level === 'full' || level === 'edit';
+});
 const base = ref<BaseDto | null>(null);
 const sheets = ref<SheetDto[]>([]);
 const forms = ref<FormDto[]>([]);
@@ -76,6 +130,13 @@ const activeDashboardId = ref('');
 const mainView = ref<
   'grid' | 'form' | 'form-results' | 'dashboard' | 'analysis'
 >('grid');
+/** 顶栏「只读」：随当前主区对象权限变化，避免仪表盘可写时仍显示表只读 */
+const showReadonlyBanner = computed(() => {
+  if (mainView.value === 'dashboard') return !canEditDashboard.value;
+  if (mainView.value === 'analysis') return !canEditByRole.value;
+  if (mainView.value === 'form') return !canEditForm.value;
+  return !canEditSheet.value;
+});
 /** 从收集结果返回表单时，恢复编辑/填写 Tab */
 const formReturnTab = ref<'design' | 'preview'>('design');
 
@@ -242,6 +303,15 @@ function onFormSheetUpdated(sheet: SheetDto): void {
   );
 }
 
+function onFormSaved(form: FormDto): void {
+  const exists = forms.value.some((item) => item.id === form.id);
+  forms.value = exists
+    ? forms.value.map((item) => (item.id === form.id ? form : item))
+    : [...forms.value, form];
+  markFormSheet(form.sheetId);
+  void refreshFormAcl(form.sheetId);
+}
+
 async function openFormResults(): Promise<void> {
   if (!activeSheet.value) return;
   mainView.value = 'form-results';
@@ -262,6 +332,75 @@ function backToForm(tab: 'design' | 'preview' = 'preview'): void {
   mainView.value = 'form';
 }
 
+async function refreshObjectAcl(
+  objectType: 'sheet' | 'form' | 'dashboard',
+  objectId: string | null,
+  target: typeof sheetAclLevel,
+): Promise<void> {
+  if (!objectId || !canEditByRole.value) {
+    target.value = null;
+    return;
+  }
+  const role = workspace.value?.role;
+  if (role === 'owner' || role === 'admin') {
+    target.value = 'full';
+    return;
+  }
+  // 先清空，避免沿用上一对象档位；加载完成前 canEdit* 为 false
+  target.value = null;
+  try {
+    const detail = await endpoints.getPermissionSettings(objectType, objectId);
+    // 切换期间过期响应丢弃
+    if (objectType === 'sheet' && activeSheet.value?.id !== objectId) return;
+    if (objectType === 'dashboard' && activeDashboardId.value !== objectId) return;
+    if (objectType === 'form') {
+      const sheetId = activeSheet.value?.id;
+      const stillActive =
+        sheetId &&
+        forms.value.some(
+          (item) => item.id === objectId && item.sheetId === sheetId,
+        );
+      if (!stillActive) return;
+    }
+    target.value = detail.effective.level;
+  } catch {
+    // 拉取失败按仅浏览，禁止前端写入口（后端仍会 403）
+    if (objectType === 'sheet' && activeSheet.value?.id !== objectId) return;
+    if (objectType === 'dashboard' && activeDashboardId.value !== objectId) return;
+    if (objectType === 'form') {
+      const sheetId = activeSheet.value?.id;
+      const stillActive =
+        sheetId &&
+        forms.value.some(
+          (item) => item.id === objectId && item.sheetId === sheetId,
+        );
+      if (!stillActive) return;
+    }
+    target.value = 'view';
+  }
+}
+
+async function refreshSheetAcl(sheetId: string | null): Promise<void> {
+  await refreshObjectAcl('sheet', sheetId, sheetAclLevel);
+}
+
+async function refreshDashboardAcl(dashboardId: string | null): Promise<void> {
+  await refreshObjectAcl('dashboard', dashboardId, dashboardAclLevel);
+}
+
+async function refreshFormAcl(sheetId: string | null): Promise<void> {
+  if (!sheetId) {
+    formAclLevel.value = null;
+    return;
+  }
+  const form = forms.value.find((item) => item.sheetId === sheetId);
+  if (!form) {
+    formAclLevel.value = null;
+    return;
+  }
+  await refreshObjectAcl('form', form.id, formAclLevel);
+}
+
 async function selectSheet(sheetId: string, push = true): Promise<void> {
   if (push && route.query.sheet !== sheetId) {
     await router.replace({ query: { ...route.query, sheet: sheetId } });
@@ -277,7 +416,12 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     }
     activeDashboardId.value = '';
     activeAnalysisReportId.value = '';
+    dashboardAclLevel.value = null;
+    formAclLevel.value = null;
     activeSheet.value = detail;
+    sheetAclLevel.value = null;
+    void refreshSheetAcl(sheetId);
+    void refreshFormAcl(sheetId);
     // 企微：收集表单默认进表单 UI；提交数据在「收集结果」里看
     if (isFormSheet(detail)) {
       sectionCollapsed.value = { ...sectionCollapsed.value, forms: false };
@@ -344,6 +488,10 @@ async function insertRows(payload: {
   direction: 'above' | 'below';
   atIndex?: number;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法添加记录');
+    return;
+  }
   if (!activeSheet.value) return;
   const count = Math.min(100, Math.max(1, Math.floor(payload.count || 1)));
   const sheetId = activeSheet.value.id;
@@ -390,6 +538,10 @@ async function insertColumns(payload: {
   direction: 'left' | 'right';
   fieldId: string;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法修改字段');
+    return;
+  }
   if (!activeSheet.value) return;
   const target = (activeSheet.value.fields ?? []).find(
     (field) => field.id === payload.fieldId,
@@ -475,6 +627,10 @@ async function commitCell(payload: {
   value: unknown;
   previous?: unknown;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法编辑');
+    return;
+  }
   if (!activeSheet.value) return;
   const coerced =
     typeof payload.value === 'string'
@@ -690,6 +846,10 @@ async function applyHistoryValue(
   fieldId: string,
   value: unknown,
 ): Promise<boolean> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法撤销/重做');
+    return false;
+  }
   const record = records.value.find((item) => item.id === recordId);
   if (!record || !activeSheet.value) {
     toast('记录已不存在，无法撤销/重做');
@@ -780,6 +940,10 @@ async function toggleField(payload: {
   field: FieldDto;
   hidden: boolean;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法修改字段');
+    return;
+  }
   if (!activeSheet.value) return;
   if (activeSheet.value) {
     activeSheet.value = {
@@ -807,6 +971,10 @@ async function createField(payload: {
   type: string;
   options?: Record<string, unknown>;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法添加字段');
+    return;
+  }
   if (!activeSheet.value) return;
   const clientFieldId = newId();
   const created: FieldDto = {
@@ -850,6 +1018,10 @@ async function updateFieldMeta(payload: {
   type: string;
   options?: Record<string, unknown>;
 }): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法修改字段');
+    return;
+  }
   if (!activeSheet.value) return;
   const patch: {
     name?: string;
@@ -886,6 +1058,10 @@ async function updateFieldMeta(payload: {
 }
 
 async function deleteField(field: FieldDto): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法删除字段');
+    return;
+  }
   if (!activeSheet.value) return;
   try {
     activeSheet.value = {
@@ -910,6 +1086,10 @@ async function deleteField(field: FieldDto): Promise<void> {
 }
 
 async function deleteRecords(recordIds: string[]): Promise<void> {
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法删除记录');
+    return;
+  }
   if (!activeSheet.value || recordIds.length === 0) return;
   const sheetId = activeSheet.value.id;
   try {
@@ -930,6 +1110,10 @@ async function deleteRecords(recordIds: string[]): Promise<void> {
 
 async function uploadToSheet(file: File) {
   if (!activeSheet.value) throw new Error('no active sheet');
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法上传附件');
+    throw new Error('只读');
+  }
   if (!navigator.onLine) {
     const blobId = newId();
     const { idbPutBlob } = await import('../sync/idb-store');
@@ -951,6 +1135,10 @@ async function uploadToSheet(file: File) {
 
 async function renameSheet(sheet: SheetDto): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法重命名');
+    return;
+  }
   const name = (await promptDialog('重命名工作表', sheet.name))?.trim();
   if (!name || name === sheet.name) return;
   try {
@@ -969,6 +1157,10 @@ async function renameSheet(sheet: SheetDto): Promise<void> {
 
 async function deleteSheet(sheet: SheetDto): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法删除');
+    return;
+  }
   const ok = await confirmDialog(
     `删除工作表「${sheet.name}」及其全部记录？此操作不可撤销。`,
     { title: '删除工作表', confirmLabel: '删除' },
@@ -1014,6 +1206,10 @@ async function deleteActiveSheet(): Promise<void> {
 }
 
 async function saveCurrentView(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法保存视图');
+    return;
+  }
   if (!activeSheet.value || savingView.value) return;
   const name = savedViewName.value.trim();
   if (!name) {
@@ -1048,6 +1244,10 @@ function applySavedView(view: SavedViewDto): void {
 }
 
 async function renameSavedView(view: SavedViewDto): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法重命名视图');
+    return;
+  }
   const name = (await promptDialog('重命名视图', view.name))?.trim();
   if (!name || name === view.name) return;
   try {
@@ -1062,6 +1262,10 @@ async function renameSavedView(view: SavedViewDto): Promise<void> {
 }
 
 async function deleteSavedView(view: SavedViewDto): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法删除视图');
+    return;
+  }
   const ok = await confirmDialog(`删除视图「${view.name}」？`, {
     title: '删除视图',
     confirmLabel: '删除',
@@ -1088,6 +1292,10 @@ function onQueryChange(query: ViewQuery): void {
 }
 
 async function openOrCreateFormSheet(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法新建表单');
+    return;
+  }
   sectionCollapsed.value = { ...sectionCollapsed.value, forms: false };
   const formCount = sheets.value.filter((sheet) => isFormSheet(sheet)).length;
   const defaultName =
@@ -1141,6 +1349,10 @@ function onAnalysisReportCreated(reportId: string): void {
 }
 
 async function createAnalysisReport(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法新建分析报告');
+    return;
+  }
   sectionCollapsed.value = { ...sectionCollapsed.value, reports: false };
   const defaultName = '分析报告';
   const name = (await promptDialog('新分析报告名称', defaultName))?.trim();
@@ -1165,6 +1377,10 @@ async function createAnalysisReport(): Promise<void> {
 }
 
 async function createSheet(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法新建工作表');
+    return;
+  }
   sectionCollapsed.value = { ...sectionCollapsed.value, sheets: false };
   const name = (await promptDialog('新工作表名称', '新工作表'))?.trim();
   if (!name) return;
@@ -1183,9 +1399,15 @@ function openDashboard(dashboardId: string): void {
   activeAnalysisReportId.value = '';
   mainView.value = 'dashboard';
   sheetMenuId.value = null;
+  dashboardAclLevel.value = null;
+  void refreshDashboardAcl(dashboardId);
 }
 
 async function createDashboard(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法新建仪表盘');
+    return;
+  }
   sectionCollapsed.value = { ...sectionCollapsed.value, dashboards: false };
   const defaultName = `仪表盘 ${dashboards.value.length + 1}`;
   const name = (await promptDialog('新仪表盘名称', defaultName))?.trim();
@@ -1205,6 +1427,10 @@ async function createDashboard(): Promise<void> {
 
 async function renameDashboard(dashboard: DashboardDto): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法重命名');
+    return;
+  }
   const name = (await promptDialog('重命名仪表盘', dashboard.name))?.trim();
   if (!name || name === dashboard.name) return;
   try {
@@ -1220,6 +1446,10 @@ async function renameDashboard(dashboard: DashboardDto): Promise<void> {
 
 async function deleteDashboard(dashboard: DashboardDto): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法删除');
+    return;
+  }
   const ok = await confirmDialog(
     `删除仪表盘「${dashboard.name}」及其全部图表？此操作不可撤销。`,
     { title: '删除仪表盘', confirmLabel: '删除' },
@@ -1251,6 +1481,10 @@ async function renameAnalysisReport(
   report: AnalysisReportListItemDto,
 ): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法重命名');
+    return;
+  }
   const name = (await promptDialog('重命名分析报告', report.name))?.trim();
   if (!name || name === report.name) return;
   try {
@@ -1274,6 +1508,10 @@ async function deleteAnalysisReport(
   report: AnalysisReportListItemDto,
 ): Promise<void> {
   sheetMenuId.value = null;
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法删除');
+    return;
+  }
   const ok = await confirmDialog(
     `删除分析报告「${report.name}」？此操作不可撤销。`,
     { title: '删除分析报告', confirmLabel: '删除' },
@@ -1439,7 +1677,15 @@ const importInput = ref<HTMLInputElement | null>(null);
 function handleCreateAction(
   action: (typeof createMenuItems)[number]['action'],
 ): void {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法执行该操作');
+    return;
+  }
   if (action === 'import') {
+    if (!canEditSheet.value) {
+      toast('当前为只读权限，无法导入');
+      return;
+    }
     if (!activeSheet.value) {
       toast('请先选择一张工作表');
       return;
@@ -1457,6 +1703,10 @@ async function onImportFile(event: Event): Promise<void> {
   const file = input.files?.[0];
   input.value = '';
   if (!file || !activeSheet.value) return;
+  if (!canEditSheet.value) {
+    toast('当前为只读权限，无法导入');
+    return;
+  }
   try {
     const result = await endpoints.importSheet(activeSheet.value.id, file);
     toast(
@@ -1723,7 +1973,16 @@ function onLiveSidebar(event: LiveEvent): void {
       .catch(() => undefined);
   }
   if (event.kind === 'permission.changed') {
-    void refreshSidebarLists();
+    void (async () => {
+      await refreshSidebarLists();
+      if (activeSheet.value) {
+        await refreshSheetAcl(activeSheet.value.id);
+        await refreshFormAcl(activeSheet.value.id);
+      }
+      if (mainView.value === 'dashboard' && activeDashboardId.value) {
+        await refreshDashboardAcl(activeDashboardId.value);
+      }
+    })();
   }
 }
 
@@ -1817,6 +2076,13 @@ onBeforeUnmount(() => {
           <span class="crumb-current">{{ base?.name ?? 'Base' }}</span>
         </nav>
         <span
+          v-if="showReadonlyBanner"
+          class="sync-banner sync-banner-readonly"
+          data-testid="readonly-banner"
+        >
+          只读
+        </span>
+        <span
           v-if="syncBannerText"
           class="sync-banner"
           data-testid="sync-banner"
@@ -1867,6 +2133,7 @@ onBeforeUnmount(() => {
         </div>
         <NotificationBell />
         <button
+          v-if="canEditByRole"
           class="topbar-btn"
           data-testid="automation-open"
           @click="automationsOpen = true"
@@ -1896,6 +2163,7 @@ onBeforeUnmount(() => {
                 内容权限
               </button>
               <button
+                v-if="canEditByRole"
                 data-testid="public-view-open"
                 :disabled="!activeSheet"
                 @click="publicViewOpen = true; moreOpen = false"
@@ -1908,24 +2176,26 @@ onBeforeUnmount(() => {
               >
                 导出 Excel
               </button>
-              <div class="more-sep"></div>
-              <button @click="renameActiveSheet">重命名当前工作表</button>
-              <button
-                data-testid="more-public-view"
-                :disabled="!activeSheet"
-                @click="publicViewOpen = true; moreOpen = false"
-              >
-                公开只读视图
-              </button>
-              <div class="more-sep"></div>
-              <button
-                class="danger"
-                data-testid="more-delete-sheet"
-                :disabled="!activeSheet"
-                @click="deleteActiveSheet"
-              >
-                删除当前工作表
-              </button>
+              <template v-if="canEditByRole">
+                <div class="more-sep"></div>
+                <button @click="renameActiveSheet">重命名当前工作表</button>
+                <button
+                  data-testid="more-public-view"
+                  :disabled="!activeSheet"
+                  @click="publicViewOpen = true; moreOpen = false"
+                >
+                  公开只读视图
+                </button>
+                <div class="more-sep"></div>
+                <button
+                  class="danger"
+                  data-testid="more-delete-sheet"
+                  :disabled="!activeSheet"
+                  @click="deleteActiveSheet"
+                >
+                  删除当前工作表
+                </button>
+              </template>
             </div>
           </Transition>
         </div>
@@ -1951,6 +2221,7 @@ onBeforeUnmount(() => {
                 }}</span>
               </button>
               <button
+                v-if="canEditByRole"
                 class="icon-btn"
                 title="新建工作表"
                 data-testid="create-sheet"
@@ -1974,6 +2245,7 @@ onBeforeUnmount(() => {
                   <span class="sheet-label">{{ sheet.name }}</span>
                 </button>
                 <button
+                  v-if="canEditByRole"
                   class="sheet-more"
                   title="工作表操作"
                   :data-testid="`sheet-menu-${sheet.name}`"
@@ -1984,7 +2256,7 @@ onBeforeUnmount(() => {
                   ⋯
                 </button>
                 <Transition name="menu-fade">
-                  <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+                  <div v-if="canEditByRole && sheetMenuId === sheet.id" class="sheet-menu">
                     <button @click.stop="renameSheet(sheet)">重命名</button>
                     <button class="danger" @click.stop="deleteSheet(sheet)">
                       删除工作表
@@ -2012,6 +2284,7 @@ onBeforeUnmount(() => {
                 }}</span>
               </button>
               <button
+                v-if="canEditByRole"
                 class="icon-btn"
                 title="新建收集表单"
                 data-testid="forms-open"
@@ -2035,6 +2308,7 @@ onBeforeUnmount(() => {
                   <span class="sheet-label">{{ sheet.name }}</span>
                 </button>
                 <button
+                  v-if="canEditByRole"
                   class="sheet-more"
                   title="表单操作"
                   :data-testid="`sheet-menu-${sheet.name}`"
@@ -2045,7 +2319,7 @@ onBeforeUnmount(() => {
                   ⋯
                 </button>
                 <Transition name="menu-fade">
-                  <div v-if="sheetMenuId === sheet.id" class="sheet-menu">
+                  <div v-if="canEditByRole && sheetMenuId === sheet.id" class="sheet-menu">
                     <button @click.stop="renameSheet(sheet)">重命名</button>
                     <button class="danger" @click.stop="deleteSheet(sheet)">
                       删除表单
@@ -2073,6 +2347,7 @@ onBeforeUnmount(() => {
                 }}</span>
               </button>
               <button
+                v-if="canEditByRole"
                 class="icon-btn"
                 title="新建仪表盘"
                 data-testid="dashboard-open"
@@ -2102,6 +2377,7 @@ onBeforeUnmount(() => {
                   <span class="sheet-label">{{ dashboard.name }}</span>
                 </button>
                 <button
+                  v-if="canEditByRole"
                   class="sheet-more"
                   title="仪表盘操作"
                   :data-testid="`dashboard-menu-${dashboard.name}`"
@@ -2114,7 +2390,7 @@ onBeforeUnmount(() => {
                 </button>
                 <Transition name="menu-fade">
                   <div
-                    v-if="sheetMenuId === dashboard.id"
+                    v-if="canEditByRole && sheetMenuId === dashboard.id"
                     class="sheet-menu"
                   >
                     <button @click.stop="renameDashboard(dashboard)">
@@ -2149,6 +2425,7 @@ onBeforeUnmount(() => {
                 }}</span>
               </button>
               <button
+                v-if="canEditByRole"
                 class="icon-btn"
                 title="新建分析报告"
                 data-testid="report-open"
@@ -2178,6 +2455,7 @@ onBeforeUnmount(() => {
                   <span class="sheet-label">{{ report.name }}</span>
                 </button>
                 <button
+                  v-if="canEditByRole"
                   class="sheet-more"
                   title="分析报告操作"
                   :data-testid="`report-menu-${report.name}`"
@@ -2188,7 +2466,7 @@ onBeforeUnmount(() => {
                   ⋯
                 </button>
                 <Transition name="menu-fade">
-                  <div v-if="sheetMenuId === report.id" class="sheet-menu">
+                  <div v-if="canEditByRole && sheetMenuId === report.id" class="sheet-menu">
                     <button @click.stop="renameAnalysisReport(report)">
                       重命名
                     </button>
@@ -2208,7 +2486,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="sidebar-create" data-testid="create-menu">
+        <div v-if="canEditByRole" class="sidebar-create" data-testid="create-menu">
           <button
             v-for="item in createMenuItems"
             :key="item.action"
@@ -2234,6 +2512,7 @@ onBeforeUnmount(() => {
           :dashboard-id="activeDashboardId"
           kind="dashboard"
           :sheets="sheets"
+          :editable="canEditDashboard"
         />
         <AnalysisReportPanel
           v-else-if="mainView === 'analysis' && activeAnalysisReportId"
@@ -2242,6 +2521,7 @@ onBeforeUnmount(() => {
           :base-id="baseId"
           :sheets="sheets"
           :report-id="activeAnalysisReportId"
+          :editable="canEditByRole"
           @close="closeAnalysisReport"
           @created="onAnalysisReportCreated"
         />
@@ -2284,7 +2564,9 @@ onBeforeUnmount(() => {
             :workspace-id="workspaceId"
             :sheet="activeSheet"
             :initial-tab="formReturnTab"
+            :editable="canEditForm"
             @sheet-updated="onFormSheetUpdated"
+            @form-saved="onFormSaved"
           />
           <div v-else class="form-results-pane">
             <div class="form-results-banner">
@@ -2305,6 +2587,7 @@ onBeforeUnmount(() => {
               :records="records"
               :next-cursor="nextCursor"
               :loading="loading"
+              :editable="canEditSheet"
               :row-colors="rowColors"
               :row-height="rowHeightPx"
               :groups="viewGroups"
@@ -2363,6 +2646,7 @@ onBeforeUnmount(() => {
                   {{ view.name }}
                 </button>
                 <button
+                  v-if="canEditByRole"
                   type="button"
                   class="view-tab-action"
                   title="重命名"
@@ -2371,6 +2655,7 @@ onBeforeUnmount(() => {
                   ✎
                 </button>
                 <button
+                  v-if="canEditByRole"
                   type="button"
                   class="view-tab-action danger"
                   title="删除"
@@ -2380,7 +2665,7 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </div>
-            <div class="view-save">
+            <div v-if="canEditByRole" class="view-save">
               <input
                 v-model="savedViewName"
                 placeholder="保存为视图…"
@@ -2406,6 +2691,7 @@ onBeforeUnmount(() => {
             :records="records"
             :next-cursor="nextCursor"
             :loading="loading"
+            :editable="canEditSheet"
             :row-colors="rowColors"
             :row-height="rowHeightPx"
             :groups="viewGroups"
@@ -2434,7 +2720,12 @@ onBeforeUnmount(() => {
         <div v-else class="empty-state">
           <p class="empty-state-title">还没有工作表</p>
           <p class="empty-state-hint">点击左侧「+」或「新建」创建第一张表，开始录入数据。</p>
-          <button class="btn btn-primary" type="button" @click="createSheet">新建工作表</button>
+          <button
+            v-if="canEditByRole"
+            class="btn btn-primary"
+            type="button"
+            @click="createSheet"
+          >新建工作表</button>
         </div>
       </main>
     </div>
@@ -2507,6 +2798,7 @@ onBeforeUnmount(() => {
       <div class="modal automation-modal">
         <AutomationPanel
           :base-id="baseId"
+          :editable="canEditByRole"
           @close="automationsOpen = false"
         />
       </div>
@@ -2524,7 +2816,9 @@ onBeforeUnmount(() => {
           :base-id="baseId"
           :workspace-id="workspaceId"
           :sheet="activeSheet"
+          :editable="canEditForm"
           @close="formBuilderOpen = false"
+          @form-saved="onFormSaved"
         />
         <div v-else class="empty-state">请先选择一张工作表</div>
       </div>
@@ -2536,6 +2830,7 @@ onBeforeUnmount(() => {
     >
       <PermissionsPanel
         :base-id="baseId"
+        :can-manage="canManageMembers"
         @close="permissionsOpen = false"
       />
     </div>
@@ -2546,6 +2841,7 @@ onBeforeUnmount(() => {
     >
       <PublicViewPanel
         :sheet-id="activeSheet.id"
+        :editable="canEditByRole"
         @close="publicViewOpen = false"
       />
     </div>

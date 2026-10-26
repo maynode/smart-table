@@ -12,7 +12,10 @@ import type {
 import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 
-const props = defineProps<{ baseId: string }>();
+const props = withDefaults(
+  defineProps<{ baseId: string; editable?: boolean }>(),
+  { editable: true },
+);
 const emit = defineEmits<{ close: [] }>();
 
 const automations = ref<AutomationDto[]>([]);
@@ -141,6 +144,10 @@ function flowParts(automation: AutomationDto): SummaryPart[] {
 }
 
 function openCreate(): void {
+  if (!props.editable) {
+    toast('当前为只读权限，无法新建流程');
+    return;
+  }
   editing.value = null;
   runsViewAutomation.value = null;
   menuOpenId.value = '';
@@ -148,6 +155,10 @@ function openCreate(): void {
 }
 
 function openEdit(automation: AutomationDto): void {
+  if (!props.editable) {
+    void openRuns(automation);
+    return;
+  }
   editing.value = automation;
   runsViewAutomation.value = null;
   menuOpenId.value = '';
@@ -205,6 +216,7 @@ async function load(): Promise<void> {
 }
 
 async function toggleEnabled(automation: AutomationDto): Promise<void> {
+  if (!props.editable) return;
   try {
     const updated = await endpoints.updateAutomation(automation.id, {
       enabled: !automation.enabled,
@@ -219,6 +231,10 @@ async function toggleEnabled(automation: AutomationDto): Promise<void> {
 }
 
 async function runNow(automation: AutomationDto): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法运行');
+    return;
+  }
   runningId.value = automation.id;
   try {
     const result = await endpoints.runAutomation(automation.id);
@@ -236,6 +252,7 @@ async function runNow(automation: AutomationDto): Promise<void> {
 
 async function remove(automation: AutomationDto): Promise<void> {
   menuOpenId.value = '';
+  if (!props.editable) return;
   const ok = await confirmDialog(
     `删除自动化「${automation.name}」？历史运行记录也会删除。`,
     { title: '删除自动化', confirmLabel: '删除' },
@@ -332,6 +349,7 @@ onBeforeUnmount(() => {
               <option value="failed">运行失败</option>
             </select>
             <button
+              v-if="editable"
               class="btn ghost small"
               type="button"
               data-testid="automation-run"
@@ -423,6 +441,7 @@ onBeforeUnmount(() => {
           </template>
         </span>
         <button
+          v-if="editable"
           class="btn btn-primary"
           data-testid="automation-create"
           @click="openCreate"
@@ -444,12 +463,14 @@ onBeforeUnmount(() => {
         <h4>还没有自动化流程</h4>
         <p>例如：表单提交后自动改状态、发消息提醒相关人。</p>
         <button
+          v-if="editable"
           class="btn btn-primary"
           data-testid="automation-create-empty"
           @click="openCreate"
         >
           新建流程
         </button>
+        <p v-else class="muted">当前为只读，无法新建流程。</p>
       </div>
 
       <article
@@ -465,6 +486,7 @@ onBeforeUnmount(() => {
           </strong>
           <div class="card-actions">
             <label
+              v-if="editable"
               class="switch"
               :title="automation.enabled ? '停用' : '启用'"
               data-testid="automation-toggle"
@@ -477,6 +499,7 @@ onBeforeUnmount(() => {
               />
               <span></span>
             </label>
+            <span v-else class="muted">{{ automation.enabled ? '运行中' : '已停用' }}</span>
             <div class="more-wrap">
               <button
                 class="icon-btn"
@@ -495,6 +518,7 @@ onBeforeUnmount(() => {
                   @click.stop
                 >
                   <button
+                    v-if="editable"
                     type="button"
                     data-testid="automation-edit"
                     @click="openEdit(automation)"
@@ -509,6 +533,7 @@ onBeforeUnmount(() => {
                     运行日志
                   </button>
                   <button
+                    v-if="editable"
                     type="button"
                     data-testid="automation-run"
                     :disabled="runningId === automation.id"
@@ -517,6 +542,7 @@ onBeforeUnmount(() => {
                     {{ runningId === automation.id ? '运行中…' : '立即运行' }}
                   </button>
                   <button
+                    v-if="editable"
                     type="button"
                     class="danger"
                     data-testid="automation-delete"

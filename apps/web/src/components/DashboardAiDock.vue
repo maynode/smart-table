@@ -10,9 +10,14 @@ import type {
 import { toast } from '../ui/toast';
 import AiChatDock from './AiChatDock.vue';
 
-const props = defineProps<{
-  dashboardId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    dashboardId: string;
+    /** false 时禁止发消息/清空（内容 ACL 降级） */
+    editable?: boolean;
+  }>(),
+  { editable: true },
+);
 
 const emit = defineEmits<{
   applied: [payload: {
@@ -46,6 +51,10 @@ async function loadSession(): Promise<void> {
 }
 
 async function clearChat(): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法清空对话');
+    return;
+  }
   if (submitting.value) return;
   try {
     session.value = await endpoints.clearDashboardAiSession(props.dashboardId);
@@ -59,6 +68,10 @@ async function clearChat(): Promise<void> {
 }
 
 async function sendChat(text: string): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法使用助手');
+    return;
+  }
   if (!text.trim() || submitting.value) return;
   submitting.value = true;
   const clientMessageId = `c_${Date.now().toString(36)}_${Math.random()

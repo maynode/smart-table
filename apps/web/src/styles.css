@@ -522,6 +522,11 @@ html.auth-screen #app {
   border: 1px solid #ffd591;
   white-space: nowrap;
 }
+.sync-banner-readonly {
+  color: #595959;
+  background: #f5f5f5;
+  border-color: #d9d9d9;
+}
 .sync-banner[data-status='offline'] {
   color: #a8071a;
   background: #fff1f0;

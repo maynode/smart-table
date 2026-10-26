@@ -29,11 +29,14 @@ const props = withDefaults(
     embeddedTitle?: string;
     /** 嵌入时的一句说明 */
     embeddedHint?: string;
+    /** owner|admin 才可邀请/改角色/移除 */
+    canManage?: boolean;
   }>(),
   {
     embedded: false,
     embeddedTitle: '工作区成员',
     embeddedHint: '',
+    canManage: false,
   },
 );
 const emit = defineEmits<{
@@ -157,6 +160,7 @@ function parseInviteAccounts(raw: string): string[] {
 }
 
 async function invite(): Promise<void> {
+  if (!props.canManage) return;
   const targets = parseInviteAccounts(batchAccounts.value);
   if (targets.length === 0) {
     error.value = '请输入成员用户名';
@@ -225,6 +229,7 @@ async function changeRole(
   member: MemberDto,
   next: AssignableRole,
 ): Promise<void> {
+  if (!props.canManage) return;
   if (next === member.role) return;
   const targetId = member.registered
     ? member.userId
@@ -248,6 +253,7 @@ async function changeRole(
 }
 
 async function remove(member: MemberDto): Promise<void> {
+  if (!props.canManage) return;
   const label = member.registered ? member.name : member.account;
   const ok = await confirmDialog(
     member.registered
@@ -324,7 +330,11 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <form class="invite-form invite-form-batch" @submit.prevent="invite">
+    <form
+      v-if="canManage"
+      class="invite-form invite-form-batch"
+      @submit.prevent="invite"
+    >
       <textarea
         v-model="batchAccounts"
         class="invite-batch-input"
@@ -414,7 +424,11 @@ onUnmounted(() => {
             {{ member.account }}
           </small>
         </span>
-        <div v-if="member.role !== 'owner'" class="role-select compact" @click.stop>
+        <div
+          v-if="canManage && member.role !== 'owner'"
+          class="role-select compact"
+          @click.stop
+        >
           <button
             type="button"
             class="role-trigger"
@@ -431,7 +445,7 @@ onUnmounted(() => {
         </div>
         <span v-else class="role-badge">{{ roleLabel(member.role) }}</span>
         <button
-          v-if="member.role !== 'owner'"
+          v-if="canManage && member.role !== 'owner'"
           class="icon-btn danger"
           :title="member.registered ? '移出工作区' : '取消邀请'"
           @click="remove(member)"

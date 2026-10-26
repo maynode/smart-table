@@ -25,8 +25,9 @@ const props = withDefaults(
     kind?: 'dashboard' | 'report';
     sheets: SheetDto[];
     embedded?: boolean;
+    editable?: boolean;
   }>(),
-  { embedded: false, kind: 'dashboard' },
+  { embedded: false, kind: 'dashboard', editable: true },
 );
 
 const emit = defineEmits<{ close: [] }>();
@@ -48,6 +49,13 @@ type WidgetType =
   | 'text';
 
 const aiOpen = ref(false);
+
+watch(
+  () => props.editable,
+  (editable) => {
+    if (!editable) aiOpen.value = false;
+  },
+);
 const configTab = ref<'basic' | 'more'>('basic');
 const widgetType = ref<WidgetType>('bar');
 const stackMode = ref<'none' | 'stack' | 'percent'>('none');
@@ -186,6 +194,7 @@ async function resizeWidget(
   deltaWidth: number,
   deltaHeight: number,
 ): Promise<void> {
+  if (!props.editable) return;
   if (!active.value || busyWidgetId.value) return;
   const layout = layoutOf(widget);
   busyWidgetId.value = widget.id;
@@ -206,6 +215,7 @@ async function resizeWidget(
 }
 
 async function deleteWidget(widget: DashboardWidgetData): Promise<void> {
+  if (!props.editable) return;
   if (!active.value) return;
   const ok = await confirmDialog(`删除图表「${widget.title}」？`, {
     title: '删除图表',
@@ -222,6 +232,7 @@ async function deleteWidget(widget: DashboardWidgetData): Promise<void> {
 }
 
 function onDragStart(widget: DashboardWidgetData): void {
+  if (!props.editable) return;
   dragWidgetId.value = widget.id;
 }
 
@@ -232,6 +243,7 @@ function onDragOver(widget: DashboardWidgetData): void {
 }
 
 async function onDrop(widget: DashboardWidgetData): Promise<void> {
+  if (!props.editable) return;
   if (!active.value || !dragWidgetId.value) return;
   const list = [...(data.value?.widgets ?? [])];
   const from = list.findIndex((item) => item.id === dragWidgetId.value);
@@ -336,6 +348,10 @@ watch(widgetSheetId, (sheetId, previous) => {
 });
 
 async function addWidget(): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法添加图表');
+    return;
+  }
   if (!active.value) return;
   if (widgetType.value !== 'text' && !widgetSheetId.value) {
     toast('请选择工作表');
@@ -419,6 +435,10 @@ async function addWidget(): Promise<void> {
 }
 
 async function addSchedule(): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法添加定时推送');
+    return;
+  }
   if (!active.value) return;
   try {
     await endpoints.createDashboardSchedule(active.value.id, {
@@ -433,6 +453,10 @@ async function addSchedule(): Promise<void> {
 }
 
 async function runSchedule(schedule: DashboardScheduleDto): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法执行定时推送');
+    return;
+  }
   if (!active.value) return;
   try {
     await endpoints.runDashboardSchedule(active.value.id, schedule.id);
@@ -497,7 +521,7 @@ function onAiApplied(): void {
       </div>
       <div class="panel-header-actions">
         <button
-          v-if="active"
+          v-if="active && editable"
           type="button"
           class="btn"
           :class="{ 'btn-primary': aiOpen }"
@@ -522,7 +546,7 @@ function onAiApplied(): void {
         <p class="list-empty-hint">加载中…</p>
       </div>
       <div v-else-if="active" class="dashboard-main">
-        <section class="widget-builder chart-config">
+        <section v-if="editable" class="widget-builder chart-config">
           <div class="chart-config-main">
           <h4>添加图表</h4>
           <div class="config-tabs">
@@ -922,14 +946,14 @@ function onAiApplied(): void {
               gridColumn: `span ${layoutOf(widget).w}`,
               minHeight: `${layoutOf(widget).h * 76}px`,
             }"
-            draggable="true"
+            :draggable="editable"
             data-testid="dashboard-widget-card"
-            @dragstart="onDragStart(widget)"
-            @dragover.prevent="onDragOver(widget)"
-            @drop.prevent="onDrop(widget)"
+            @dragstart="editable && onDragStart(widget)"
+            @dragover.prevent="editable && onDragOver(widget)"
+            @drop.prevent="editable && onDrop(widget)"
             @dragend="dragWidgetId = ''; dropWidgetId = ''"
           >
-            <div class="chart-card-tools">
+            <div v-if="editable" class="chart-card-tools">
               <span class="drag-grip" title="拖动排序">⠿</span>
               <button
                 class="icon-btn"
@@ -963,7 +987,12 @@ function onAiApplied(): void {
               >
                 ⇥
               </button>
-              <button class="icon-btn danger" title="删除图表" @click="deleteWidget(widget)">
+              <button
+                v-if="editable"
+                class="icon-btn danger"
+                title="删除图表"
+                @click="deleteWidget(widget)"
+              >
                 ×
               </button>
             </div>
@@ -995,7 +1024,7 @@ function onAiApplied(): void {
           </div>
         </section>
 
-        <section class="schedule-block">
+        <section v-if="editable" class="schedule-block">
           <h4>定时推送</h4>
           <div class="schedule-form">
             <label>
@@ -1046,8 +1075,9 @@ function onAiApplied(): void {
         <p class="list-empty-hint">请从左侧工作表下方重新打开。</p>
       </div>
       <DashboardAiDock
-        v-if="aiOpen && active"
+        v-if="aiOpen && editable && active"
         :dashboard-id="active.id"
+        :editable="editable"
         @applied="onAiApplied"
       />
     </div>

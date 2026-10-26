@@ -46,8 +46,9 @@ const props = withDefaults(
     reportId?: string;
     /** 嵌入 Base 右侧主区（非弹窗） */
     embedded?: boolean;
+    editable?: boolean;
   }>(),
-  { embedded: false },
+  { embedded: false, editable: true },
 );
 
 const emit = defineEmits<{
@@ -146,6 +147,10 @@ async function openReport(id: string): Promise<void> {
 }
 
 async function startNew(): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法新建分析');
+    return;
+  }
   const name = (await promptDialog('新分析报告名称', '分析报告'))?.trim();
   if (!name) return;
   loading.value = true;
@@ -166,6 +171,10 @@ async function startNew(): Promise<void> {
 }
 
 async function enqueueFiles(files: FileList | File[]): Promise<void> {
+  if (!props.editable) {
+    toast('当前为只读权限，无法上传附件');
+    return;
+  }
   if (!active.value) return;
   const reportId = active.value.id;
   const list = Array.from(files);
@@ -239,6 +248,7 @@ function onComposerPaste(event: ClipboardEvent): void {
 }
 
 async function sendChat(): Promise<void> {
+  if (!props.editable) return;
   if (!active.value || !canSend.value) return;
   const text = draft.value.trim();
   const attachments = [...readyAttachments.value];
@@ -311,6 +321,7 @@ function startPollIfBusy(): void {
 }
 
 async function removeActive(): Promise<void> {
+  if (!props.editable) return;
   if (!active.value) return;
   const ok = await confirmDialog(`删除分析报告「${active.value.name}」？`);
   if (!ok) return;
@@ -422,11 +433,17 @@ onUnmounted(() => {
         <span class="muted">AI 对话生成</span>
       </div>
       <div class="analysis-top-actions">
-        <button class="btn" type="button" data-testid="analysis-new" @click="startNew">
+        <button
+          v-if="editable"
+          class="btn"
+          type="button"
+          data-testid="analysis-new"
+          @click="startNew"
+        >
           新建分析
         </button>
         <button
-          v-if="active"
+          v-if="editable && active"
           class="btn btn-ghost"
           type="button"
           data-testid="analysis-delete"
@@ -540,7 +557,11 @@ onUnmounted(() => {
           <div ref="chatEnd"></div>
         </div>
 
-        <footer class="chat-composer" data-testid="analysis-composer">
+        <footer
+          v-if="editable"
+          class="chat-composer"
+          data-testid="analysis-composer"
+        >
           <div
             v-if="pendingFiles.length"
             class="pending-files"

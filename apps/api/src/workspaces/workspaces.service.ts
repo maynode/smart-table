@@ -36,7 +36,7 @@ export interface MemberView {
   avatarUrl?: string | null;
   role: WorkspaceRole;
   createdAt: Date;
-  /** false = ???????????????????? */
+  /** false = 已邀请但对方尚未注册 */
   registered: boolean;
 }
 
@@ -51,7 +51,7 @@ export class WorkspacesService {
   async create(userId: string, name: string): Promise<WorkspaceWithRole> {
     const trimmed = name.trim();
     if (!trimmed) {
-      throw new BadRequestException('??????????????');
+      throw new BadRequestException('工作区名称不能为空');
     }
     await this.assertNameAvailableForUser(userId, trimmed);
     const workspace = await this.prisma.$transaction(async (tx) => {
@@ -100,7 +100,7 @@ export class WorkspacesService {
       where: { id: workspaceId },
     });
     if (!workspace) {
-      throw new NotFoundException('????????????');
+      throw new NotFoundException('工作区不存在');
     }
     return this.toWorkspaceDto(workspace, membership);
   }
@@ -113,7 +113,7 @@ export class WorkspacesService {
     const membership = await this.requireMember(workspaceId, userId, 'admin');
     const trimmed = name.trim();
     if (!trimmed) {
-      throw new BadRequestException('??????????????');
+      throw new BadRequestException('工作区名称不能为空');
     }
     await this.assertNameAvailableForUser(userId, trimmed, workspaceId);
     const workspace = await this.prisma.workspace.update({
@@ -131,7 +131,7 @@ export class WorkspacesService {
     return this.toWorkspaceDto(workspace, membership);
   }
 
-  /** ????????????????????????????????????????????????? */
+  /** 当前用户可见的工作区名称不可重复（大小写不敏感）。 */
   private async assertNameAvailableForUser(
     userId: string,
     name: string,
@@ -148,7 +148,7 @@ export class WorkspacesService {
         item.workspace.name.trim().toLowerCase() === needle,
     );
     if (clash) {
-      throw new ConflictException(`??????????????????${clash.workspace.name}???`);
+      throw new ConflictException(`已存在同名工作区「${clash.workspace.name}」`);
     }
   }
 
@@ -159,7 +159,7 @@ export class WorkspacesService {
       select: { id: true },
     });
     if (!existing) {
-      throw new NotFoundException('????????????');
+      throw new NotFoundException('工作区不存在');
     }
     await this.prisma.workspace.delete({ where: { id: workspaceId } });
     await this.live.emit({
@@ -217,10 +217,10 @@ export class WorkspacesService {
     });
 
     if (!membership) {
-      throw new ForbiddenException('????????????????');
+      throw new ForbiddenException('无权访问该工作区');
     }
     if (!roleAtLeast(membership.role, minimum)) {
-      throw new ForbiddenException('???????');
+      throw new ForbiddenException('权限不足');
     }
     return membership;
   }
@@ -273,10 +273,10 @@ export class WorkspacesService {
     const actor = await this.requireMember(workspaceId, actorId, 'admin');
 
     if (role === 'owner') {
-      throw new BadRequestException('????????????????????????');
+      throw new BadRequestException('不能直接邀请为所有者');
     }
     if (role === 'admin' && actor.role !== 'owner') {
-      throw new ForbiddenException('?????????????????????????');
+      throw new ForbiddenException('只有所有者可以邀请管理员');
     }
 
     const accountError = validateAccount(accountRaw);
@@ -302,14 +302,14 @@ export class WorkspacesService {
             }),
             actorDisplayName(this.prisma, actorId),
           ]);
-          const wsName = workspace?.name ?? '???';
+          const wsName = workspace?.name ?? '工作区';
           const roleName = workspaceRoleLabel(role);
           await notifyUser(
             this.prisma,
             {
               userId: user.id,
-              title: '?????????',
-              body: `${actorName} ?????${wsName}?????${roleName}`,
+              title: '你被邀请加入工作区',
+              body: `${actorName} 邀请你加入「${wsName}」，角色为${roleName}`,
               data: {
                 kind: 'workspace_member_added',
                 workspaceId,
@@ -344,7 +344,7 @@ export class WorkspacesService {
           error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002'
         ) {
-          throw new ConflictException('??????????????????');
+          throw new ConflictException('该成员已在工作区中');
         }
         throw error;
       }
@@ -354,7 +354,7 @@ export class WorkspacesService {
       where: { workspaceId_account: { workspaceId, account } },
     });
     if (existingInvite) {
-      throw new ConflictException('?????????????????????????');
+      throw new ConflictException('该用户名已在待加入列表中');
     }
 
     try {
@@ -388,7 +388,7 @@ export class WorkspacesService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('?????????????????????????');
+        throw new ConflictException('该用户名已在待加入列表中');
       }
       throw error;
     }
@@ -408,14 +408,14 @@ export class WorkspacesService {
     if (target) {
       if (actor.role !== 'owner') {
         if (role === 'owner' || target.role === 'owner') {
-          throw new ForbiddenException('?????????????????????????????');
+          throw new ForbiddenException('只有所有者可以调整所有者');
         }
         if (target.role === 'admin') {
-          throw new ForbiddenException('??????????????????????????');
+          throw new ForbiddenException('只有所有者可以调整管理员');
         }
       }
       if (role === 'owner' && actor.role !== 'owner') {
-        throw new ForbiddenException('??????????????????????????????????');
+        throw new ForbiddenException('只有所有者可以授予所有者角色');
       }
 
       const previousRole = target.role;
@@ -434,13 +434,13 @@ export class WorkspacesService {
           }),
           actorDisplayName(this.prisma, actorId),
         ]);
-        const wsName = workspace?.name ?? '???';
+        const wsName = workspace?.name ?? '工作区';
         await notifyUser(
           this.prisma,
           {
             userId: targetId,
-            title: '??????????',
-            body: `${actorName} ????${wsName}?????${workspaceRoleLabel(previousRole)}???${workspaceRoleLabel(role)}`,
+            title: '你的工作区角色已变更',
+            body: `${actorName} 将你在「${wsName}」的角色从${workspaceRoleLabel(previousRole)}调整为${workspaceRoleLabel(role)}`,
             data: {
               kind: 'workspace_member_role_changed',
               workspaceId,
@@ -477,13 +477,13 @@ export class WorkspacesService {
       where: { id: targetId, workspaceId },
     });
     if (!invite) {
-      throw new NotFoundException('????????????');
+      throw new NotFoundException('成员不存在');
     }
     if (role === 'owner') {
-      throw new BadRequestException('???????????????????????????????');
+      throw new BadRequestException('不能将待加入成员设为所有者');
     }
     if (role === 'admin' && actor.role !== 'owner') {
-      throw new ForbiddenException('??????????????????????????');
+      throw new ForbiddenException('只有所有者可以调整管理员');
     }
     const updatedInvite = await this.prisma.workspaceInvite.update({
       where: { id: invite.id },
@@ -525,10 +525,10 @@ export class WorkspacesService {
     });
     if (target) {
       if (target.role === 'owner') {
-        throw new BadRequestException('???????????????????????');
+        throw new BadRequestException('不能移除工作区所有者');
       }
       if (actor.role !== 'owner' && target.role === 'admin') {
-        throw new ForbiddenException('?????????????????????????');
+        throw new ForbiddenException('只有所有者可以移除管理员');
       }
       await this.prisma.workspaceMember.delete({ where: { id: target.id } });
       if (targetId !== actorId) {
@@ -539,13 +539,13 @@ export class WorkspacesService {
           }),
           actorDisplayName(this.prisma, actorId),
         ]);
-        const wsName = workspace?.name ?? '???';
+        const wsName = workspace?.name ?? '工作区';
         await notifyUser(
           this.prisma,
           {
             userId: targetId,
-            title: '??????????',
-            body: `${actorName} ??????${wsName}?`,
+            title: '你已被移出工作区',
+            body: `${actorName} 已将你移出工作区「${wsName}」`,
             data: {
               kind: 'workspace_member_removed',
               workspaceId,
@@ -571,7 +571,7 @@ export class WorkspacesService {
       where: { id: targetId, workspaceId },
     });
     if (!invite) {
-      throw new NotFoundException('????????????');
+      throw new NotFoundException('成员不存在');
     }
     await this.prisma.workspaceInvite.delete({ where: { id: invite.id } });
     await this.live.emit({
@@ -588,7 +588,7 @@ export class WorkspacesService {
     });
   }
 
-  /** ??????????????????????????????????????????????????????? */
+  /** 用户注册成功后，把针对该账号的待加入邀请转为正式成员 */
   async claimInvitesForAccount(userId: string, account: string): Promise<void> {
     const invites = await this.prisma.workspaceInvite.findMany({
       where: { account },
@@ -627,14 +627,14 @@ export class WorkspacesService {
       });
       const actorName = invite.invitedById
         ? await actorDisplayName(this.prisma, invite.invitedById)
-        : '???';
-      const wsName = workspace?.name ?? '???';
+        : '管理员';
+      const wsName = workspace?.name ?? '工作区';
       await notifyUser(
         this.prisma,
         {
           userId,
-          title: '?????????',
-          body: `${actorName} ?????${wsName}?????${workspaceRoleLabel(invite.role)}`,
+          title: '你被邀请加入工作区',
+          body: `${actorName} 邀请你加入「${wsName}」，角色为${workspaceRoleLabel(invite.role)}`,
           data: {
             kind: 'workspace_member_added',
             workspaceId: invite.workspaceId,

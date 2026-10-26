@@ -28,38 +28,43 @@ import {
   type EditHistoryEntry,
 } from '../ui/edit-history';
 
-const props = defineProps<{
-  sheetId: string;
-  sheetName: string;
-  fields: FieldDto[];
-  records: RecordDto[];
-  nextCursor: string | null;
-  loading: boolean;
-  rowColors?: Record<string, string>;
-  rowHeight?: number;
-  groups?: Array<{ fieldId: string; key: string; label: string; count: number }>;
-  members?: MemberDto[];
-  /** Other sheets in the same base (relation target picker). */
-  sheets?: SheetDto[];
-  uploadAttachment?: (file: File) => Promise<{
-    url: string;
-    name: string;
-    mimetype?: string;
-    size?: number;
-  }>;
-  peerCursors?: Array<{
-    userId: string;
-    account: string;
-    name?: string;
-    color?: string;
-    cursor: {
-      recordId?: string;
-      fieldId?: string;
-      rowIndex?: number;
-      colIndex?: number;
-    };
-  }>;
-}>();
+const props = withDefaults(
+  defineProps<{
+    sheetId: string;
+    sheetName: string;
+    fields: FieldDto[];
+    records: RecordDto[];
+    nextCursor: string | null;
+    loading: boolean;
+    /** false = 只读（工作区 viewer / 内容权限 view），禁止改格与结构变更 */
+    editable?: boolean;
+    rowColors?: Record<string, string>;
+    rowHeight?: number;
+    groups?: Array<{ fieldId: string; key: string; label: string; count: number }>;
+    members?: MemberDto[];
+    /** Other sheets in the same base (relation target picker). */
+    sheets?: SheetDto[];
+    uploadAttachment?: (file: File) => Promise<{
+      url: string;
+      name: string;
+      mimetype?: string;
+      size?: number;
+    }>;
+    peerCursors?: Array<{
+      userId: string;
+      account: string;
+      name?: string;
+      color?: string;
+      cursor: {
+        recordId?: string;
+        fieldId?: string;
+        rowIndex?: number;
+        colIndex?: number;
+      };
+    }>;
+  }>(),
+  { editable: true },
+);
 
 const emit = defineEmits<{
   addRow: [];
@@ -343,6 +348,7 @@ watch(searchQuery, () => {
 const rowDepths = computed(() => hierarchy.value.depths);
 
 function setParentField(fieldId: string): void {
+  if (!props.editable) return;
   const previous = parentField.value;
   if (previous && previous.id !== fieldId) {
     emit('updateField', {
@@ -691,6 +697,7 @@ function cellDisplayText(value: unknown): string {
 }
 
 function duplicateColumn(field: FieldDto): void {
+  if (!props.editable) return;
   const options = { ...(field.options ?? {}) } as Record<string, unknown>;
   delete options.width;
   delete options.asParentField;
@@ -703,6 +710,7 @@ function duplicateColumn(field: FieldDto): void {
 }
 
 function autoFitColumnWidth(field: FieldDto): void {
+  if (!props.editable) return;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return;
@@ -730,11 +738,13 @@ function freezeToColumn(field: FieldDto): void {
 }
 
 function hideColumn(field: FieldDto): void {
+  if (!props.editable) return;
   emit('toggleField', { field, hidden: true });
   closeColumnMenu();
 }
 
 function deleteColumn(field: FieldDto): void {
+  if (!props.editable) return;
   closeColumnMenu();
   deletingField.value = field;
 }
@@ -746,6 +756,7 @@ function sortColumn(field: FieldDto, direction: 'asc' | 'desc'): void {
 }
 
 function editColumnFromMenu(field: FieldDto): void {
+  if (!props.editable) return;
   const menu = columnMenu.value;
   closeColumnMenu();
   openFieldEditor({
@@ -815,10 +826,12 @@ function toggleHistory(): void {
 }
 
 function toggleField(field: FieldDto): void {
+  if (!props.editable) return;
   emit('toggleField', { field, hidden: !field.hidden });
 }
 
 function confirmDeleteField(): void {
+  if (!props.editable) return;
   const field = deletingField.value;
   if (!field) return;
   deletingField.value = null;
@@ -835,6 +848,7 @@ function handleViewport(stats: GridStats): void {
 function openFieldPicker(
   eventOrAnchor?: MouseEvent | { top: number; left: number },
 ): void {
+  if (!props.editable) return;
   closeOverlaysExcept('fieldPicker');
   editingField.value = null;
   fieldPickerMode.value = 'create';
@@ -857,6 +871,7 @@ function openFieldEditor(payload: {
   field: FieldDto;
   anchor: { top: number; left: number };
 }): void {
+  if (!props.editable) return;
   closeOverlaysExcept('fieldPicker');
   editingField.value = payload.field;
   fieldPickerMode.value = 'edit';
@@ -865,6 +880,7 @@ function openFieldEditor(payload: {
 }
 
 function openFieldEditorFromSettings(field: FieldDto): void {
+  if (!props.editable) return;
   // 从表格设置进字段编辑：关掉设置，只留选择器
   closeOverlaysExcept('fieldPicker');
   editingField.value = field;
@@ -878,11 +894,13 @@ function openFieldEditorFromSettings(field: FieldDto): void {
 }
 
 function openOptions(field: FieldDto): void {
+  if (!props.editable) return;
   closeOverlaysExcept('options');
   optionsField.value = field;
 }
 
 function saveOptions(options: Record<string, unknown>): void {
+  if (!props.editable) return;
   const field = optionsField.value;
   optionsField.value = null;
   if (!field) return;
@@ -905,6 +923,10 @@ function onFieldConfirm(payload: {
   type: FieldType;
   options?: Record<string, unknown>;
 }): void {
+  if (!props.editable) {
+    closeFieldPicker();
+    return;
+  }
   const editing = editingField.value;
   closeFieldPicker();
   if (editing) {
@@ -920,6 +942,7 @@ function onFieldConfirm(payload: {
 }
 
 function onColumnResize(payload: { field: FieldDto; width: number }): void {
+  if (!props.editable) return;
   emit('updateField', {
     field: payload.field,
     name: payload.field.name,
@@ -933,6 +956,7 @@ function onRowsSelected(recordIds: string[]): void {
 }
 
 function deleteSelected(): void {
+  if (!props.editable) return;
   if (selectedRecordIds.value.length === 0) return;
   emit('deleteRecords', [...selectedRecordIds.value]);
   selectedRecordIds.value = [];
@@ -955,6 +979,7 @@ async function loadAutomationButtons(): Promise<void> {
 }
 
 async function runAutomationButton(buttonKey: string): Promise<void> {
+  if (!props.editable) return;
   const recordId = selectedRecordIds.value[0];
   if (!recordId || runningButtonKey.value) return;
   runningButtonKey.value = buttonKey;
@@ -1003,10 +1028,15 @@ defineExpose({
 <template>
   <section class="grid-panel">
     <div class="grid-toolbar">
-      <button class="btn btn-primary" data-testid="add-row" @click="emit('addRow')">
+      <button
+        v-if="editable"
+        class="btn btn-primary"
+        data-testid="add-row"
+        @click="emit('addRow')"
+      >
         + 添加一行
       </button>
-      <span class="toolbar-divider" />
+      <span v-if="editable" class="toolbar-divider" />
       <button
         class="btn btn-ghost toolbar-filter"
         :class="{ 'btn-active': activePanel === 'filter' }"
@@ -1055,8 +1085,9 @@ defineExpose({
       >
         填色<em v-if="activeColorCount">{{ activeColorCount }}</em>
       </button>
-      <span class="toolbar-divider" />
+      <span v-if="editable" class="toolbar-divider" />
       <button
+        v-if="editable"
         ref="addFieldBtn"
         class="btn btn-ghost"
         data-testid="add-field"
@@ -1065,6 +1096,7 @@ defineExpose({
         + 字段
       </button>
       <button
+        v-if="editable"
         class="btn btn-ghost"
         data-testid="table-settings"
         :class="{ 'btn-active': settingsOpen }"
@@ -1112,6 +1144,7 @@ defineExpose({
           ⌕
         </button>
         <button
+          v-if="editable"
           class="btn btn-ghost icon-tool"
           title="撤销 (Ctrl+Z)"
           aria-label="撤销"
@@ -1122,6 +1155,7 @@ defineExpose({
           ↶
         </button>
         <button
+          v-if="editable"
           class="btn btn-ghost icon-tool"
           title="重做 (Ctrl+Y)"
           aria-label="重做"
@@ -1179,7 +1213,7 @@ defineExpose({
     <Transition name="selection-bar">
       <div v-if="selectedRecordIds.length" class="selection-bar">
         <strong class="selection-count">已选 {{ selectedRecordIds.length }} 行</strong>
-        <template v-if="selectedRecordIds.length === 1 && automationButtons.length">
+        <template v-if="editable && selectedRecordIds.length === 1 && automationButtons.length">
           <button
             v-for="btn in automationButtons"
             :key="btn.buttonKey"
@@ -1197,7 +1231,12 @@ defineExpose({
           </button>
         </template>
         <span class="selection-spacer" />
-        <button class="btn btn-danger small" data-testid="delete-selected" @click="deleteSelected">
+        <button
+          v-if="editable"
+          class="btn btn-danger small"
+          data-testid="delete-selected"
+          @click="deleteSelected"
+        >
           删除所选
         </button>
         <button class="btn btn-ghost small" type="button" @click="cancelSelection">取消</button>
@@ -1603,6 +1642,8 @@ defineExpose({
         ref="gridRef"
         :fields="fields"
         :records="displayRecords"
+        :editable="editable"
+        :show-add-column="editable"
         :row-height="rowHeight ?? 36"
         :freeze-column-count="freezeColumnCount"
         :row-colors="rowColors"
@@ -1610,7 +1651,7 @@ defineExpose({
         :person-names="personNames"
         :members="members"
         :sheets="sheets"
-        :upload-attachment="uploadAttachment"
+        :upload-attachment="editable ? uploadAttachment : undefined"
         :peer-cursors="peerCursors"
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
@@ -1645,7 +1686,7 @@ defineExpose({
       :style="{ top: `${columnMenu.top}px`, left: `${columnMenu.left}px` }"
       @click.stop
     >
-      <div class="column-menu-tools">
+      <div v-if="editable" class="column-menu-tools">
         <button
           type="button"
           class="column-tool"
@@ -1694,6 +1735,7 @@ defineExpose({
         </button>
       </div>
       <button
+        v-if="editable"
         type="button"
         class="column-menu-row"
         data-testid="column-menu-edit"
