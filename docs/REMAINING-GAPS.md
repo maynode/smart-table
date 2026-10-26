@@ -13,7 +13,9 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 可选 `perf:window`（缺千万行 `.perf-env.json`）。  
 **进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）。  
-**待定（成熟后再议）：** 企微登录/通讯录/真企微群；仪表盘内 AI Agent；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
+**待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
+
+**已落地（本轮）：** 仪表盘内 AI Agent（完整共编：对话 + 增删改图表/布局），见 `docs/DASHBOARD.md` §5。
 
 ---
 

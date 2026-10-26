@@ -54,3 +54,17 @@ ClickHouse 适配器有独立单测（`apps/api/src/analytics/clickhouse-analyti
 ## 4. 权限
 
 仪表盘作为内容权限对象（`object_type = dashboard`），与工作表/表单共用 `content_permissions` 档位与成员额外权限；图表查询读取工作表时还会再次校验该工作表的读权限，避免借图表绕过行/列权限。AI 分析报告按 Base 成员角色鉴权，见 ANALYSIS-REPORT.md。
+
+## 5. AI Agent（完整共编）
+
+仪表盘右侧「AI 助手」对话坞：洞察数据摘要，并可直接增 / 改 / 删图表与调整 `layout`（`{ w, h }`）。一仪表盘一会话（`dashboard_ai_sessions`）。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| `GET` | `/dashboards/:id/ai/session` | viewer | 懒创建会话 |
+| `DELETE` | `/dashboards/:id/ai/session/messages` | editor | 清空对话 |
+| `POST` | `/dashboards/:id/ai/chat` | editor | `{ text, clientMessageId? }` → 回复 + `applied` + 最新 widgets |
+
+动作由 LLM（或本地关键词兜底）以 `<<<DASHBOARD_ACTIONS>>>…<<<END_ACTIONS>>>` JSON 发出；服务端校验字段/表/widget 归属后，在同一事务内落库（`DashboardsService.applyAiActions`），成功后广播既有 `widget.changed` / `dashboard.updated`。删除需用户话含明确删除意图。`clientMessageId` 幂等防双加图。
+
+复用分析报告侧的 `SheetDigestService` 与 `ANALYSIS_LLM_*`（见 [ANALYSIS-REPORT.md](./ANALYSIS-REPORT.md)）。前端：`DashboardAiDock` + 共享 `AiChatDock`。

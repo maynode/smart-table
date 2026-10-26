@@ -346,7 +346,41 @@ export interface DashboardWidgetDto {
     showLabel?: boolean;
     legendPosition?: 'top' | 'bottom';
   };
+  layout?: { w?: number; h?: number };
   order: number;
+}
+
+export interface DashboardAiActionResultDto {
+  op: 'add_widget' | 'update_widget' | 'delete_widget';
+  widgetId?: string;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface DashboardAiMessageDto {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  kind?: 'text';
+  createdAt: string;
+  clientMessageId?: string;
+  applied?: DashboardAiActionResultDto[];
+}
+
+export interface DashboardAiSessionDto {
+  id: string;
+  dashboardId: string;
+  status: 'idle' | 'thinking' | 'failed' | string;
+  messages: DashboardAiMessageDto[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardAiChatResultDto extends DashboardAiSessionDto {
+  applied: DashboardAiActionResultDto[];
+  widgets: DashboardWidgetDto[];
+  idempotent?: boolean;
 }
 
 export interface MetricConditionalRule {

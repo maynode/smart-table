@@ -1,16 +1,11 @@
-export interface SheetDigest {
-  sheetId: string;
-  sheetName: string;
-  fieldCount: number;
-  recordCount: number;
-  fields: Array<{
-    name: string;
-    type: string;
-    nonEmpty: number;
-    empty: number;
-    topValues: Array<{ value: string; count: number }>;
-  }>;
-}
+import {
+  callOpenAiChat,
+  callOpenAiCompatible,
+  getAnalysisLlmConfig,
+} from '../ai/openai-compatible';
+import type { SheetDigest } from '../ai/sheet-digest.types';
+
+export type { SheetDigest } from '../ai/sheet-digest.types';
 
 export interface GenerateReportInput {
   baseName: string;
@@ -31,11 +26,10 @@ export interface ChatAnalysisInput {
 export async function generateAnalysisMarkdown(
   input: GenerateReportInput,
 ): Promise<string> {
-  const baseUrl = process.env.ANALYSIS_LLM_BASE_URL?.trim();
-  const apiKey = process.env.ANALYSIS_LLM_API_KEY?.trim();
-  if (baseUrl && apiKey) {
+  const llm = getAnalysisLlmConfig();
+  if (llm) {
     try {
-      const remote = await callOpenAiCompatible(baseUrl, apiKey, {
+      const remote = await callOpenAiCompatible(llm.baseUrl, llm.apiKey, {
         system: [
           '你是智能表格分析助手。根据用户对话与表格数据摘要，输出一份中文 Markdown 分析报告。',
           '结构建议：# 标题、## 数据概览、## 关键发现、## 字段口径、## 建议。不要编造摘要中不存在的数字。',
@@ -63,8 +57,7 @@ export async function generateAnalysisMarkdown(
 export async function chatAnalysisReply(
   input: ChatAnalysisInput,
 ): Promise<{ reply: string; reportMarkdown: string | null }> {
-  const baseUrl = process.env.ANALYSIS_LLM_BASE_URL?.trim();
-  const apiKey = process.env.ANALYSIS_LLM_API_KEY?.trim();
+  const llm = getAnalysisLlmConfig();
   const digestSummary = input.digests
     .map(
       (d) =>
@@ -72,7 +65,7 @@ export async function chatAnalysisReply(
     )
     .join('；');
 
-  if (baseUrl && apiKey) {
+  if (llm) {
     try {
       const system = [
         '你是智能表格里的分析助手，用中文与用户自然对话。',
@@ -95,7 +88,12 @@ export async function chatAnalysisReply(
             content: m.content,
           })),
       ];
-      const remote = await callOpenAiChat(baseUrl, apiKey, messages, 0.4);
+      const remote = await callOpenAiChat(
+        llm.baseUrl,
+        llm.apiKey,
+        messages,
+        0.4,
+      );
       const parsed = splitReportBlock(remote);
       return {
         reply: parsed.reply || remote.trim() || '我在，请继续说明你的分析需求。',
@@ -141,51 +139,6 @@ function splitReportBlock(raw: string): {
     return { reply: reply || '报告已生成，请在左侧查看。', reportMarkdown };
   }
   return { reply: raw.trim(), reportMarkdown: null };
-}
-
-async function callOpenAiCompatible(
-  baseUrl: string,
-  apiKey: string,
-  input: { system: string; userContent: string; temperature: number },
-): Promise<string> {
-  return callOpenAiChat(
-    baseUrl,
-    apiKey,
-    [
-      { role: 'system', content: input.system },
-      { role: 'user', content: input.userContent },
-    ],
-    input.temperature,
-  );
-}
-
-async function callOpenAiChat(
-  baseUrl: string,
-  apiKey: string,
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  temperature: number,
-): Promise<string> {
-  const model = process.env.ANALYSIS_LLM_MODEL?.trim() || 'gpt-4o-mini';
-  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature,
-      messages,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`LLM HTTP ${response.status}`);
-  }
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return data.choices?.[0]?.message?.content?.trim() ?? '';
 }
 
 function buildLocalReport(input: GenerateReportInput): string {

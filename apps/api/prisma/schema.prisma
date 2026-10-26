@@ -387,9 +387,27 @@ model Dashboard {
   base      Base             @relation(fields: [baseId], references: [id], onDelete: Cascade)
   widgets   DashboardWidget[]
   schedules DashboardSchedule[]
+  aiSession DashboardAiSession?
 
   @@index([baseId])
   @@map("dashboards")
+}
+
+/// 仪表盘 AI Agent 会话（一仪表盘一会话）
+model DashboardAiSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  dashboardId String   @unique @map("dashboard_id") @db.Uuid
+  /// idle | thinking | failed
+  status      String   @default("idle")
+  messages    Json     @default("[]")
+  error       String?  @db.Text
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@map("dashboard_ai_sessions")
 }
 
 /// AI 分析报告：对话 + Markdown 报告（与仪表盘分离）

@@ -23,6 +23,8 @@ import type {
   DashboardDataDto,
   DashboardScheduleDto,
   DashboardWidgetDto,
+  DashboardAiSessionDto,
+  DashboardAiChatResultDto,
   TemplateDto,
   TemplateInstantiateResult,
   PublicViewDto,
@@ -674,6 +676,24 @@ export const endpoints = {
       `/dashboards/${dashboardId}/schedules/${scheduleId}/run`,
       { method: 'POST' },
     ),
+
+  getDashboardAiSession: (dashboardId: string) =>
+    api<DashboardAiSessionDto>(`/dashboards/${dashboardId}/ai/session`),
+
+  clearDashboardAiSession: (dashboardId: string) =>
+    api<DashboardAiSessionDto>(
+      `/dashboards/${dashboardId}/ai/session/messages`,
+      { method: 'DELETE' },
+    ),
+
+  chatDashboardAi: (
+    dashboardId: string,
+    body: { text: string; clientMessageId?: string },
+  ) =>
+    api<DashboardAiChatResultDto>(`/dashboards/${dashboardId}/ai/chat`, {
+      method: 'POST',
+      body,
+    }),
 
   listTemplates: (scope: 'workspace' | 'base' = 'workspace') =>
     api<TemplateDto[]>(`/templates?scope=${scope}`),

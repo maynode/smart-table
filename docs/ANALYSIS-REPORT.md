@@ -52,3 +52,7 @@
 ## 5. 环境变量
 
 见仓库根目录 `.env.example` 中 `ANALYSIS_LLM_*`。未配置时本地 digest 报告即可用，无需外网。
+
+## 6. 与仪表盘 AI 共享
+
+`SheetDigest` 类型、OpenAI 兼容客户端（`apps/api/src/ai/openai-compatible.ts`）与带内容权限的 `SheetDigestService` 已抽出，供 [仪表盘 AI Agent](./DASHBOARD.md#5-ai-agent完整共编) 复用同一 `ANALYSIS_LLM_*` 配置；分析报告仍只产出 Markdown，不写 `dashboard_widgets`。

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -8,14 +7,13 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiveBusService } from '../live/live-bus.service';
-import { PermissionsService } from '../permissions/permissions.service';
 import { QuotasService } from '../quotas/quotas.service';
 import { StorageService } from '../storage/storage.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { SheetDigestService } from '../ai/sheet-digest.service';
 import {
   chatAnalysisReply,
   generateAnalysisMarkdown,
-  type SheetDigest,
 } from './analysis-llm.adapter';
 import {
   markAllDone,
@@ -25,8 +23,6 @@ import {
   type AnalysisMessageAttachment,
 } from './analysis-steps';
 
-const SAMPLE_LIMIT = 200;
-const TOP_VALUE_LIMIT = 5;
 const ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 
 @Injectable()
@@ -36,10 +32,10 @@ export class AnalysisReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaces: WorkspacesService,
-    private readonly permissions: PermissionsService,
     private readonly storage: StorageService,
     private readonly quotas: QuotasService,
     private readonly live: LiveBusService,
+    private readonly digests: SheetDigestService,
   ) {}
 
   async list(baseId: string, userId: string) {
@@ -64,7 +60,7 @@ export class AnalysisReportsService {
 
   async create(baseId: string, userId: string, name?: string) {
     const base = await this.requireBase(baseId, userId, 'editor');
-    const sheets = await this.listReadableSheets(baseId, userId);
+    const sheets = await this.digests.listReadableSheets(baseId, userId);
 
     const now = new Date().toISOString();
     const welcome =
@@ -156,7 +152,7 @@ export class AnalysisReportsService {
       throw new BadRequestException('当前没有可分析的工作表');
     }
 
-    const sheets = await this.listReadableSheets(report.baseId, userId);
+    const sheets = await this.digests.listReadableSheets(report.baseId, userId);
     const sheetIds =
       ((report.sheetIds as string[]) ?? []).filter((sid) =>
         sheets.some((s) => s.id === sid),
@@ -197,7 +193,7 @@ export class AnalysisReportsService {
         where: { id: report.baseId },
       });
       const digests = sheetIds.length
-        ? await this.buildDigests(sheetIds, userId)
+        ? await this.digests.buildDigests(sheetIds, userId)
         : [];
       const conversation = messages.map((m) => ({
         role: m.role,
@@ -322,7 +318,7 @@ export class AnalysisReportsService {
       throw new BadRequestException('正在生成中，请稍候');
     }
 
-    const sheets = await this.listReadableSheets(report.baseId, userId);
+    const sheets = await this.digests.listReadableSheets(report.baseId, userId);
     if (sheets.length === 0) {
       throw new BadRequestException('没有可分析的工作表');
     }
@@ -448,7 +444,7 @@ export class AnalysisReportsService {
         },
       });
 
-      const digests = await this.buildDigests(sheetIds, userId);
+      const digests = await this.digests.buildDigests(sheetIds, userId);
       if (digests.length === 0) {
         throw new Error('没有可读取的工作表数据（可能受内容权限限制）');
       }
@@ -499,133 +495,6 @@ export class AnalysisReportsService {
     }
   }
 
-  private async buildDigests(
-    sheetIds: string[],
-    userId: string,
-  ): Promise<SheetDigest[]> {
-    const digests: SheetDigest[] = [];
-    for (const sheetId of sheetIds) {
-      let decision;
-      try {
-        decision = await this.permissions.assertCan(
-          'sheet',
-          sheetId,
-          userId,
-          'read',
-        );
-      } catch (error) {
-        if (
-          error instanceof ForbiddenException ||
-          error instanceof NotFoundException
-        ) {
-          continue;
-        }
-        throw error;
-      }
-
-      const sheet = await this.prisma.sheet.findUnique({
-        where: { id: sheetId },
-        include: {
-          fields: { orderBy: { order: 'asc' } },
-        },
-      });
-      if (!sheet) continue;
-
-      const visibleFields = this.permissions.filterVisibleFields(
-        decision,
-        sheet.fields,
-      );
-
-      const canSeeAllRows =
-        decision.role === 'owner' ||
-        decision.role === 'admin' ||
-        !decision.recordRule ||
-        decision.recordRule.mode === 'all';
-
-      const rawRows = await this.prisma.recordRow.findMany({
-        where: { sheetId },
-        take: SAMPLE_LIMIT,
-        orderBy: { id: 'asc' },
-        select: { id: true, cells: true, createdBy: true },
-      });
-      const rows = this.permissions.applyReadScope(
-        decision,
-        rawRows,
-        userId,
-      );
-
-      const recordCount = canSeeAllRows
-        ? await this.prisma.recordRow.count({ where: { sheetId } })
-        : rows.length;
-
-      const fields = visibleFields.map((field) => {
-        const counts = new Map<string, number>();
-        let nonEmpty = 0;
-        let empty = 0;
-        for (const row of rows) {
-          const cells = (row.cells ?? {}) as Record<string, unknown>;
-          const raw = cells[field.id];
-          const text = cellToText(raw);
-          if (!text) {
-            empty += 1;
-            continue;
-          }
-          nonEmpty += 1;
-          counts.set(text, (counts.get(text) ?? 0) + 1);
-        }
-        const topValues = [...counts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, TOP_VALUE_LIMIT)
-          .map(([value, count]) => ({ value: value.slice(0, 40), count }));
-        const sampled = rows.length;
-        const scale =
-          canSeeAllRows && sampled > 0 && recordCount > sampled
-            ? recordCount / sampled
-            : 1;
-        return {
-          name: field.name,
-          type: field.type,
-          nonEmpty: Math.round(nonEmpty * scale),
-          empty: Math.round(empty * scale),
-          topValues,
-        };
-      });
-
-      digests.push({
-        sheetId: sheet.id,
-        sheetName: sheet.name,
-        fieldCount: visibleFields.length,
-        recordCount,
-        fields,
-      });
-    }
-    return digests;
-  }
-
-  private async listReadableSheets(baseId: string, userId: string) {
-    const sheets = await this.prisma.sheet.findMany({
-      where: { baseId },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, name: true },
-    });
-    const readable: Array<{ id: string; name: string }> = [];
-    for (const sheet of sheets) {
-      try {
-        await this.permissions.assertCan('sheet', sheet.id, userId, 'read');
-        readable.push(sheet);
-      } catch (error) {
-        if (
-          error instanceof ForbiddenException ||
-          error instanceof NotFoundException
-        ) {
-          continue;
-        }
-        throw error;
-      }
-    }
-    return readable;
-  }
-
   private async requireBase(
     baseId: string,
     userId: string,
@@ -648,33 +517,6 @@ export class AnalysisReportsService {
     if (!report) throw new NotFoundException('分析报告不存在');
     await this.requireBase(report.baseId, userId, minimum);
     return report;
-  }
-}
-
-function cellToText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        if (item && typeof item === 'object' && 'name' in item) {
-          return String((item as { name: unknown }).name ?? '');
-        }
-        return String(item ?? '');
-      })
-      .filter(Boolean)
-      .join(', ');
-  }
-  if (typeof value === 'object' && value && 'name' in value) {
-    return String((value as { name: unknown }).name ?? '');
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '';
   }
 }
 

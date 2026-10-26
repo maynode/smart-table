@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LiveEvent } from 'shared';
 import DashboardChart from './DashboardChart.vue';
+import DashboardAiDock from './DashboardAiDock.vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { liveBus } from '../sync/live-bus';
@@ -46,6 +47,7 @@ type WidgetType =
   | 'table'
   | 'text';
 
+const aiOpen = ref(false);
 const configTab = ref<'basic' | 'more'>('basic');
 const widgetType = ref<WidgetType>('bar');
 const stackMode = ref<'none' | 'stack' | 'percent'>('none');
@@ -475,6 +477,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   while (liveUnsubs.length) liveUnsubs.pop()?.();
 });
+
+function onAiApplied(): void {
+  const id = active.value?.id ?? props.dashboardId;
+  if (id) void loadDashboard(id);
+}
 </script>
 
 <template>
@@ -486,16 +493,28 @@ onBeforeUnmount(() => {
     <header class="panel-header" :class="{ embedded }">
       <div>
         <strong>{{ title }}</strong>
-        <p class="panel-subtitle">多图布局 · 定时推送</p>
+        <p class="panel-subtitle">多图布局 · 定时推送 · AI 助手</p>
       </div>
-      <button
-        v-if="!embedded"
-        class="icon-btn"
-        data-testid="dashboard-close"
-        @click="emit('close')"
-      >
-        ×
-      </button>
+      <div class="panel-header-actions">
+        <button
+          v-if="active"
+          type="button"
+          class="btn"
+          :class="{ 'btn-primary': aiOpen }"
+          data-testid="dashboard-ai-toggle"
+          @click="aiOpen = !aiOpen"
+        >
+          {{ aiOpen ? '收起助手' : 'AI 助手' }}
+        </button>
+        <button
+          v-if="!embedded"
+          class="icon-btn"
+          data-testid="dashboard-close"
+          @click="emit('close')"
+        >
+          ×
+        </button>
+      </div>
     </header>
 
     <div class="dashboard-body">
@@ -1026,6 +1045,11 @@ onBeforeUnmount(() => {
         <p class="list-empty-title">仪表盘不存在或已删除</p>
         <p class="list-empty-hint">请从左侧工作表下方重新打开。</p>
       </div>
+      <DashboardAiDock
+        v-if="aiOpen && active"
+        :dashboard-id="active.id"
+        @applied="onAiApplied"
+      />
     </div>
   </section>
 </template>
@@ -1052,9 +1076,16 @@ onBeforeUnmount(() => {
 .panel-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   padding: 18px 22px;
   border-bottom: 1px solid #e5e6eb;
   background: #fff;
+}
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .panel-header.embedded {
   padding: 14px 20px;

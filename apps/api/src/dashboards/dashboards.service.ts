@@ -134,6 +134,15 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** 供 AI Agent 等模块做 viewer/editor 门禁。 */
+  async assertAccess(
+    dashboardId: string,
+    userId: string,
+    minimum: 'viewer' | 'editor' = 'viewer',
+  ) {
+    return this.requireDashboard(dashboardId, userId, minimum);
+  }
+
   async update(
     dashboardId: string,
     userId: string,
@@ -302,6 +311,184 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
       meta: { widgetId, action: 'delete' },
     });
     return { id: widgetId, deleted: true };
+  }
+
+  /**
+   * AI Agent 批量落库：同一事务内增删改，成功后统一广播 Live。
+   * 任一步失败整批回滚，避免半应用画布。
+   */
+  async applyAiActions(
+    dashboardId: string,
+    userId: string,
+    actions: Array<{
+      op: 'add_widget' | 'update_widget' | 'delete_widget';
+      type?: string;
+      title?: string;
+      sheetId?: string;
+      widgetId?: string;
+      config?: WidgetConfig;
+      layout?: Record<string, unknown>;
+      order?: number;
+    }>,
+  ): Promise<
+    Array<{
+      op: 'add_widget' | 'update_widget' | 'delete_widget';
+      widgetId?: string;
+      ok: boolean;
+      detail?: string;
+    }>
+  > {
+    const dashboard = await this.requireDashboard(dashboardId, userId, 'editor');
+    if (!actions.length) return [];
+
+    const applied = await this.prisma.$transaction(async (tx) => {
+      const results: Array<{
+        op: 'add_widget' | 'update_widget' | 'delete_widget';
+        widgetId?: string;
+        ok: boolean;
+        detail?: string;
+      }> = [];
+      let nextOrder = await tx.dashboardWidget.count({
+        where: { dashboardId: dashboard.id },
+      });
+
+      for (const action of actions) {
+        if (action.op === 'add_widget') {
+          if (
+            !action.type ||
+            !(WIDGET_TYPES as readonly string[]).includes(action.type)
+          ) {
+            throw new BadRequestException('图表类型无效');
+          }
+          if (action.type !== 'text' && !action.sheetId) {
+            throw new BadRequestException('请选择工作表');
+          }
+          if (action.sheetId) {
+            const sheet = await tx.sheet.findUnique({
+              where: { id: action.sheetId },
+            });
+            if (!sheet || sheet.baseId !== dashboard.baseId) {
+              throw new BadRequestException('图表工作表不属于当前 Base');
+            }
+          }
+          const widget = await tx.dashboardWidget.create({
+            data: {
+              dashboardId: dashboard.id,
+              type: action.type,
+              title: (action.title ?? '未命名图表').trim(),
+              sheetId: action.sheetId,
+              config: (action.config ?? {}) as Prisma.InputJsonValue,
+              layout: (action.layout ?? {}) as Prisma.InputJsonValue,
+              order: nextOrder,
+            },
+          });
+          nextOrder += 1;
+          results.push({
+            op: 'add_widget',
+            widgetId: widget.id,
+            ok: true,
+            detail: widget.title,
+          });
+          continue;
+        }
+
+        if (action.op === 'update_widget') {
+          const widgetId = action.widgetId;
+          if (!widgetId) throw new BadRequestException('缺少 widgetId');
+          const widget = await tx.dashboardWidget.findUnique({
+            where: { id: widgetId },
+          });
+          if (!widget || widget.dashboardId !== dashboard.id) {
+            throw new NotFoundException('图表不存在');
+          }
+          if (
+            action.type !== undefined &&
+            !(WIDGET_TYPES as readonly string[]).includes(action.type)
+          ) {
+            throw new BadRequestException('图表类型无效');
+          }
+          if (action.sheetId) {
+            const sheet = await tx.sheet.findUnique({
+              where: { id: action.sheetId },
+            });
+            if (!sheet || sheet.baseId !== dashboard.baseId) {
+              throw new BadRequestException('图表工作表不属于当前 Base');
+            }
+          }
+          const updated = await tx.dashboardWidget.update({
+            where: { id: widgetId },
+            data: {
+              ...(action.title === undefined
+                ? {}
+                : { title: action.title.trim() }),
+              ...(action.type === undefined ? {} : { type: action.type }),
+              ...(action.sheetId === undefined
+                ? {}
+                : { sheetId: action.sheetId }),
+              ...(action.config === undefined
+                ? {}
+                : { config: action.config as Prisma.InputJsonValue }),
+              ...(action.layout === undefined
+                ? {}
+                : { layout: action.layout as Prisma.InputJsonValue }),
+              ...(action.order === undefined ? {} : { order: action.order }),
+            },
+          });
+          results.push({
+            op: 'update_widget',
+            widgetId: updated.id,
+            ok: true,
+            detail: updated.title,
+          });
+          continue;
+        }
+
+        if (action.op === 'delete_widget') {
+          const widgetId = action.widgetId;
+          if (!widgetId) throw new BadRequestException('缺少 widgetId');
+          const deleted = await tx.dashboardWidget.deleteMany({
+            where: { id: widgetId, dashboardId: dashboard.id },
+          });
+          if (deleted.count === 0) {
+            throw new NotFoundException('图表不存在');
+          }
+          results.push({
+            op: 'delete_widget',
+            widgetId,
+            ok: true,
+          });
+        }
+      }
+      return results;
+    });
+
+    for (const item of applied) {
+      const action =
+        item.op === 'add_widget'
+          ? 'create'
+          : item.op === 'delete_widget'
+            ? 'delete'
+            : 'update';
+      await this.live.emit({
+        baseId: dashboard.baseId,
+        actorId: userId,
+        kind: 'widget.changed',
+        entityId: dashboardId,
+        meta: {
+          widgetId: item.widgetId,
+          action,
+          ...(item.op === 'delete_widget' ? { deleted: true } : {}),
+        },
+      });
+      await this.live.emit({
+        baseId: dashboard.baseId,
+        actorId: userId,
+        kind: 'dashboard.updated',
+        entityId: dashboardId,
+        meta: { widgetId: item.widgetId, action },
+      });
+    }
+    return applied;
   }
 
   async queryWidget(dashboardId: string, widgetId: string, userId: string) {
