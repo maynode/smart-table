@@ -1831,11 +1831,16 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  height: 44px;
   min-height: 44px;
-  padding: 6px 12px;
+  max-height: 44px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: #fff;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: none;
 }
 .grid-toolbar > .btn {
   height: 30px;

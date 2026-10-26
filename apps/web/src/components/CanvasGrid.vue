@@ -282,6 +282,7 @@ const editing = ref<{
 let engine: CanvasGridEngine | null = null;
 const resizedWidths = new Map<string, number>();
 let lastViewportKey = '';
+let lastViewportRangeKey = '';
 /** 滚动时刷新协同光标叠层位置 */
 const layoutEpoch = ref(0);
 /** Same-tab clipboard for raw cell values (system clipboard carries display text / TSV). */
@@ -1248,10 +1249,15 @@ function toggleMultiChoice(choiceId: string): void {
 }
 
 function handleViewport(stats: GridStats): void {
+  // Include scroll + host size so peer overlays track without rematerializing
+  // on every identical paint; only row-range changes notify parent windowing.
+  const overlayKey = `${stats.rows.start}:${stats.rows.end}:${Math.round(stats.scrollY)}:${Math.round(stats.scrollX)}:${stats.hostWidth}x${stats.hostHeight}`;
+  if (overlayKey === lastViewportKey) return;
+  lastViewportKey = overlayKey;
   layoutEpoch.value += 1;
-  const key = `${stats.rows.start}:${stats.rows.end}`;
-  if (key === lastViewportKey) return;
-  lastViewportKey = key;
+  const rangeKey = `${stats.rows.start}:${stats.rows.end}`;
+  if (rangeKey === lastViewportRangeKey) return;
+  lastViewportRangeKey = rangeKey;
   emit('viewport', stats);
 }
 
@@ -1325,16 +1331,34 @@ function createEngine(): void {
 onMounted(createEngine);
 
 watch(
-  [() => props.fields, () => props.records, () => props.rowCount, () => props.recordOffset, () => props.recordCacheEpoch],
+  () => props.fields,
   () => {
     if (!engine) return;
     engine.setColumns(columns.value);
-    engine.setRowCount(absoluteRowCount());
-    engine.setCellProvider(renderCell);
     engine.setColumnFooterProvider(columnFooter);
     engine.invalidate();
   },
   { deep: true },
+);
+
+watch(
+  [() => props.rowCount, () => props.recordOffset],
+  () => {
+    if (!engine) return;
+    engine.setRowCount(absoluteRowCount());
+    engine.invalidate();
+  },
+);
+
+watch(
+  [() => props.records, () => props.recordCacheEpoch],
+  () => {
+    if (!engine) return;
+    // Paint via lookup/cache; avoid setColumns (rebuilds axes) on every window materialize.
+    engine.setCellProvider(renderCell);
+    engine.setColumnFooterProvider(columnFooter);
+    engine.invalidate();
+  },
 );
 
 watch(

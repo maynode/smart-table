@@ -1,6 +1,6 @@
 # 智能表格 — 剩余未完成清单（交接版）
 
-> 更新日期：2026-10-26  
+> 更新日期：2026-10-27  
 > 对照：`docs/智能表格-产品与技术方案.md`、`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
 > 原则：**不以文档勾选代替验证**。本文件只记录「代码状态 + 可复现证据 + 仍缺什么」。
 
@@ -9,13 +9,23 @@
 ## 0. 一句话现状
 
 W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.md`）已落地；相对企微网页版智能表格：**主能力已对齐**。  
-**当前主线（2026-10-26）：** 交付闭环收尾；像素级视觉对齐 mock **本轮不做**（产品指令）。  
+**当前主线（2026-10-27）：** **体验债 / 性能 / 协同观感**（见下「已知体验债」）；像素级视觉对齐 mock **本轮不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 无（`perf:window` 已于 2026-10-26 造千万行表跑通，见 `PERFORMANCE.md` §5.2）。  
-**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）。  
+**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT + 单元格短租约（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）；千万行 offset 窗口滚动（门禁过，体验未到优）。  
 **待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
 
 **已落地（本轮）：** 仪表盘内 AI Agent（完整共编：对话 + 增删改图表/布局），见 `docs/DASHBOARD.md` §5。
+
+### 已知体验债（2026-10-27 产品确认，未收工）
+
+| # | 项 | 状态 | 说明 / 复现 |
+|---|----|------|-------------|
+| 1 | **拉伸窗口表格抖动** | **仍在** | 拖浏览器窗边时网格明显抖动。已试：工具栏 `nowrap` 固定高、ResizeObserver rAF 去重、`scrollbar-gutter: stable`、视口回调拆分（叠层 vs 窗口化）、records 变更不再 `setColumns`。**问题仍在**，根因未闭合。 |
+| 2 | **大表滚动性能 / 空白观感** | **待优化** | `perf:window` / `perf:grid` 门禁已过；快滚仍可能闪空。后续优先：块对齐多窗口缓存、方向性预取、缺行骨架 / dim 旧数据（勿整屏空）。见 `docs/PERFORMANCE.md` §9。 |
+| 3 | **实时协同观感差** | **待优化** | 协议主路径已通（WS + OT + 单元格锁），但联调观感仍差（延迟、光标/锁叠层、冲突提示、双人同格等）。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
+
+**下一 AI：** 优先闭环上表三项；不要用「门禁绿了」宣称体验完成。
 
 ---
 
@@ -95,7 +105,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | 4 | **Docker 镜像与源码一致** | **已完成（2026-10-26）** | `docker compose build api web`；修 `entrypoint-api.sh` CRLF→LF；`up -d` 后 `pnpm smoke:compose` 绿（公开领取 + 自动化）；验收口 `:8080` |
 | 5 | **W6 最终报告** | **已完成（2026-10-26）** | `docs/FINAL-REPORT.md` |
 
-**下一 AI 从这里继续：** P0 交付闭环已齐（含 `perf:window`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。主线改为稳定性 / 体验（如 Dev 局域网同步路径）。
+**下一 AI 从这里继续：** P0 交付闭环已齐（含 `perf:window`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。主线见 §0「已知体验债」：窗体拉伸抖动、大表滚动观感、协同观感。
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 

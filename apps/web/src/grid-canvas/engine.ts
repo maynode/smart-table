@@ -34,6 +34,11 @@ export interface GridStats {
   rows: VisibleRange;
   columns: VisibleRange;
   usedOffscreen: boolean;
+  /** Content scroll offset (CSS px), for overlay sync without rematerializing. */
+  scrollY: number;
+  scrollX: number;
+  hostWidth: number;
+  hostHeight: number;
 }
 
 /** WeCom `WordMeasurer`: fontKey → word → width. Cleared when font changes. */
@@ -245,6 +250,9 @@ export class CanvasGridEngine {
   private dpr = 1;
   private frame = 0;
   private resizeObserver: ResizeObserver | null = null;
+  private resizeRaf = 0;
+  private lastHostWidth = 0;
+  private lastHostHeight = 0;
   private resizeState: {
     col: number;
     startX: number;
@@ -262,6 +270,10 @@ export class CanvasGridEngine {
     rows: { start: 0, end: 0 },
     columns: { start: 0, end: 0 },
     usedOffscreen: false,
+    scrollY: 0,
+    scrollX: 0,
+    hostWidth: 0,
+    hostHeight: 0,
   };
 
   readonly usingOffscreenPath: boolean;
@@ -296,6 +308,8 @@ export class CanvasGridEngine {
       position: 'absolute',
       inset: '0',
       overflow: 'auto',
+      // Avoid classic scrollbar show/hide stealing client size mid-resize.
+      scrollbarGutter: 'stable',
     });
 
     this.spacer = document.createElement('div');
@@ -349,12 +363,25 @@ export class CanvasGridEngine {
 
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
-        this.resizeCanvases();
-        this.invalidate();
+        if (this.resizeRaf !== 0) return;
+        this.resizeRaf = requestAnimationFrame(() => {
+          this.resizeRaf = 0;
+          const width = this.host.clientWidth;
+          const height = this.host.clientHeight;
+          if (width === this.lastHostWidth && height === this.lastHostHeight) {
+            return;
+          }
+          this.lastHostWidth = width;
+          this.lastHostHeight = height;
+          this.resizeCanvases();
+          this.invalidate();
+        });
       });
       this.resizeObserver.observe(host);
     }
 
+    this.lastHostWidth = host.clientWidth;
+    this.lastHostHeight = host.clientHeight;
     this.resizeCanvases();
     this.renderNow();
   }
@@ -590,12 +617,18 @@ export class CanvasGridEngine {
       rows,
       columns,
       usedOffscreen: this.usingOffscreenPath,
+      scrollY: this.scrollY,
+      scrollX: this.scrollX,
+      hostWidth: width,
+      hostHeight: height,
     };
     this.options.onViewportChange?.(this.stats);
   }
 
   destroy(): void {
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
+    if (this.resizeRaf !== 0) cancelAnimationFrame(this.resizeRaf);
+    this.resizeRaf = 0;
     this.scroller.removeEventListener('scroll', this.onScroll);
     this.host.removeEventListener('pointerdown', this.onPointerDown);
     this.host.removeEventListener('dblclick', this.onDoubleClick);
@@ -891,6 +924,8 @@ export class CanvasGridEngine {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     if (width === 0 || height === 0) return;
+    this.lastHostWidth = width;
+    this.lastHostHeight = height;
 
     const dpr = Math.min(3, window.devicePixelRatio || 1);
     this.dpr = dpr;

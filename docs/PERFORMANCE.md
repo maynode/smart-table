@@ -179,3 +179,11 @@ K8s API Deployment 已带抓取注解；无 Prometheus 时可用 `curl`.
 | 表单持续提交 | `pnpm perf:form` | 成功率≥0.99，p95≤1000ms | **通过**（30 并发） |
 | 窗口拉取 | `pnpm perf:window` | p95≤250ms（thresholds） | **通过（2026-10-26，p95≈78ms）** |
 | 领取闭环 | `serial-claim.e2e-spec.ts` | 单次与并发行为符合预期 | Playwright 9/9 |
+
+## 9. 体验债（门禁通过 ≠ 观感完成，2026-10-27）
+
+产品确认仍待优化，**不得**因 §8 绿而宣称大表体验完成：
+
+1. **拉伸窗口抖动（仍在）**：拖窗边时表格抖动；已做 toolbar 定高 / RO 去重 / 视口回调拆分等，**未修好**。
+2. **快滚空白**：缺行骨架、块缓存预取、方向性 prefetch 尚未做到优。
+3. 细节见 `docs/REMAINING-GAPS.md` §0「已知体验债」。
