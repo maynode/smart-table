@@ -16,7 +16,7 @@
 | appendEllipsis | `truncateToWidth` 二分前缀+… | **已修对齐** |
 | 测宽词缓存 | `measureCache` font→word→width | **已修对齐** |
 | 编辑浮层 | CanvasGrid 内联 editor | **对齐交互** |
-| chunk 本地 DB | 无；REST 分页/query | **架构差**（中小表可接受） |
+| chunk 本地 DB | 无；REST 块对齐窗口 + 方向预取 + skeleton（`sync/record-window.ts`） | **架构差但行窗口语义对齐**；本地 DB 仍待定 |
 
 ## 3. 偏差
 

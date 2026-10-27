@@ -557,7 +557,14 @@ function renderCell(row: number, col: number): CellRender | null {
   const field = visibleFields.value[col];
   if (!field) return null;
   const record = recordAt(row);
-  if (!record) return null;
+  if (!record) {
+    // Large-sheet window miss: skeleton bars instead of empty flash (WeCom chunk feel).
+    const virtual =
+      props.recordLookup != null &&
+      (props.rowCount ?? 0) > (props.records?.length ?? 0);
+    if (virtual) return { text: '', skeleton: true };
+    return null;
+  }
   const cell = formatCell(field, record.cells[field.id]);
   if (!cell) return null;
   // Indent first visible column for hierarchy (父记录字段).

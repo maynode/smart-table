@@ -87,6 +87,23 @@ describe('CanvasGridEngine', () => {
     engine.destroy();
   });
 
+  it('paints skeleton placeholders when getCell returns skeleton', () => {
+    const host = createHost();
+    const engine = new CanvasGridEngine(host, {
+      columns: [
+        { id: 'a', name: 'A' },
+        { id: 'b', name: 'B' },
+      ],
+      rowCount: 100,
+      getCell: (row) =>
+        row % 2 === 0 ? { text: '', skeleton: true } : { text: `R${row}` },
+    });
+
+    expect(() => engine.renderNow()).not.toThrow();
+    expect(engine.lastFrameStats.cellsDrawn).toBeGreaterThan(0);
+    engine.destroy();
+  });
+
   it('uses the OffscreenCanvas path when available', () => {
     const host = createHost();
     const offscreenContext = createFakeContext();

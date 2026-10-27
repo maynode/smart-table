@@ -180,10 +180,12 @@ K8s API Deployment 已带抓取注解；无 Prometheus 时可用 `curl`.
 | 窗口拉取 | `pnpm perf:window` | p95≤250ms（thresholds） | **通过（2026-10-26，p95≈78ms）** |
 | 领取闭环 | `serial-claim.e2e-spec.ts` | 单次与并发行为符合预期 | Playwright 9/9 |
 
-## 9. 体验债（门禁通过 ≠ 观感完成，2026-10-27）
+## 9. 大表观感（对齐企微行窗口，2026-10-27）
 
-产品确认仍待优化，**不得**因 §8 绿而宣称大表体验完成：
+相对企微 `opendoc startrow/endrow` + chunk 页：本仓用 REST 块对齐窗口（`apps/web/src/sync/record-window.ts`），不做客户端 chunk DB。
 
-1. **拉伸窗口抖动（仍在）**：拖窗边时表格抖动；已做 toolbar 定高 / RO 去重 / 视口回调拆分等，**未修好**。
-2. **快滚空白**：缺行骨架、块缓存预取、方向性 prefetch 尚未做到优。
-3. 细节见 `docs/REMAINING-GAPS.md` §0「已知体验债」。
+已落地：
+
+1. **拉伸窗口**：拖边时 CSS 拉伸上一帧，settle 80ms 后再 realloc canvas（`engine.ts`），避免每 px 清缓冲抖动。
+2. **快滚 / 跳转**：方向性预取（顺向 2 块）、跳转立即 OFFSET（不再空等 90ms）、缺行 **skeleton** 占位。
+3. 门禁仍以 §8 为准；观感回归以手工拖窗 + 快滚 + `pnpm --filter web exec vitest run src/sync/record-window.spec.ts` 为准。

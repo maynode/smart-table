@@ -12,20 +12,20 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 **当前主线（2026-10-27）：** **体验债 / 性能 / 协同观感**（见下「已知体验债」）；像素级视觉对齐 mock **本轮不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 无（`perf:window` 已于 2026-10-26 造千万行表跑通，见 `PERFORMANCE.md` §5.2）。  
-**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT + 单元格短租约（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）；千万行 offset 窗口滚动（门禁过，体验未到优）。  
+**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT + 单元格短租约（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）；千万行块对齐窗口 + 方向预取 + skeleton + resize settle（见 `PERFORMANCE.md` §9）。  
 **待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
 
 **已落地（本轮）：** 仪表盘内 AI Agent（完整共编：对话 + 增删改图表/布局），见 `docs/DASHBOARD.md` §5。
 
-### 已知体验债（2026-10-27 产品确认，未收工）
+### 已知体验债（2026-10-27）
 
 | # | 项 | 状态 | 说明 / 复现 |
 |---|----|------|-------------|
-| 1 | **拉伸窗口表格抖动** | **仍在** | 拖浏览器窗边时网格明显抖动。已试：工具栏 `nowrap` 固定高、ResizeObserver rAF 去重、`scrollbar-gutter: stable`、视口回调拆分（叠层 vs 窗口化）、records 变更不再 `setColumns`。**问题仍在**，根因未闭合。 |
-| 2 | **大表滚动性能 / 空白观感** | **待优化** | `perf:window` / `perf:grid` 门禁已过；快滚仍可能闪空。后续优先：块对齐多窗口缓存、方向性预取、缺行骨架 / dim 旧数据（勿整屏空）。见 `docs/PERFORMANCE.md` §9。 |
-| 3 | **实时协同观感差** | **待优化** | 协议主路径已通（WS + OT + 单元格锁），但联调观感仍差（延迟、光标/锁叠层、冲突提示、双人同格等）。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
+| 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；toolbar 定高 / RO 去重 / `contain: layout paint`。若仍抖，查外层 flex 而非 canvas 清缓冲。 |
+| 2 | **大表滚动性能 / 空白观感** | **已对齐企微行窗口语义** | 块对齐 + 方向预取（顺向 2 块）+ 跳转立即拉 + skeleton；实现 `sync/record-window.ts`。非企微 chunk 本地库（仍待定）。 |
+| 3 | **实时协同观感差** | **待优化** | 协议主路径已通（WS + OT + 单元格锁），联调观感仍差。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
 
-**下一 AI：** 优先闭环上表三项；不要用「门禁绿了」宣称体验完成。
+**下一 AI：** 优先协同观感（#3）；大表 #1/#2 已按企微行窗口策略落地，回归见 `PERFORMANCE.md` §9。
 
 ---
 

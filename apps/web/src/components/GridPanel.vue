@@ -2358,6 +2358,8 @@ defineExpose({
   flex: 1;
   min-height: 0;
   display: flex;
+  contain: layout;
+  overflow: hidden;
 }
 .group-chips {
   display: flex;

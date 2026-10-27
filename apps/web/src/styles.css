@@ -835,6 +835,9 @@ html.auth-screen #app {
   position: absolute;
   inset: 0;
   background: #f5f6f8;
+  /* Isolate paint/layout from toolbar reflow (avoid size containment — inset sizing). */
+  contain: layout paint;
+  overflow: hidden;
 }
 
 .cell-editor {

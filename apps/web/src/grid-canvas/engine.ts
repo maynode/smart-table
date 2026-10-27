@@ -22,6 +22,8 @@ export interface CellRender {
   pill?: boolean;
   /** Thumbnail URL for image fields (drawn from a local cache). */
   image?: string;
+  /** Placeholder while the row window is still loading (avoid blank flash). */
+  skeleton?: boolean;
 }
 
 export interface Selection {
@@ -251,8 +253,13 @@ export class CanvasGridEngine {
   private frame = 0;
   private resizeObserver: ResizeObserver | null = null;
   private resizeRaf = 0;
+  private resizeSettleTimer = 0;
   private lastHostWidth = 0;
   private lastHostHeight = 0;
+  private lastSpacerWidth = '';
+  private lastSpacerHeight = '';
+  /** While the window edge is dragged, paint without reallocating buffers every px. */
+  private resizeLive = false;
   private resizeState: {
     col: number;
     startX: number;
@@ -366,22 +373,32 @@ export class CanvasGridEngine {
         if (this.resizeRaf !== 0) return;
         this.resizeRaf = requestAnimationFrame(() => {
           this.resizeRaf = 0;
-          const width = this.host.clientWidth;
-          const height = this.host.clientHeight;
+          const width = Math.round(this.host.clientWidth);
+          const height = Math.round(this.host.clientHeight);
           if (width === this.lastHostWidth && height === this.lastHostHeight) {
             return;
           }
-          this.lastHostWidth = width;
-          this.lastHostHeight = height;
-          this.resizeCanvases();
-          this.invalidate();
+          // Live resize: keep last paint and let CSS stretch layers (no buffer clear).
+          // Realloc + full redraw only after the edge settles — kills window-drag jitter.
+          this.resizeLive = true;
+          if (this.resizeSettleTimer !== 0) {
+            window.clearTimeout(this.resizeSettleTimer);
+          }
+          this.resizeSettleTimer = window.setTimeout(() => {
+            this.resizeSettleTimer = 0;
+            this.resizeLive = false;
+            this.lastHostWidth = Math.round(this.host.clientWidth);
+            this.lastHostHeight = Math.round(this.host.clientHeight);
+            this.resizeCanvases();
+            this.invalidate();
+          }, 80);
         });
       });
       this.resizeObserver.observe(host);
     }
 
-    this.lastHostWidth = host.clientWidth;
-    this.lastHostHeight = host.clientHeight;
+    this.lastHostWidth = Math.round(host.clientWidth);
+    this.lastHostHeight = Math.round(host.clientHeight);
     this.resizeCanvases();
     this.renderNow();
   }
@@ -564,6 +581,8 @@ export class CanvasGridEngine {
   }
 
   invalidate(): void {
+    // Window-edge drag: CSS stretches the last frame; skip paint until settle.
+    if (this.resizeLive) return;
     if (this.frame !== 0) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
@@ -572,12 +591,18 @@ export class CanvasGridEngine {
   }
 
   renderNow(): void {
-    const width = this.host.clientWidth;
-    const height = this.host.clientHeight;
+    const width = Math.round(this.host.clientWidth);
+    const height = Math.round(this.host.clientHeight);
     if (width === 0 || height === 0) return;
 
     this.updateSpacer();
-    this.resizeCanvases();
+    // Only realloc backing stores when size actually changed and not mid-drag.
+    if (
+      !this.resizeLive &&
+      (width !== this.lastHostWidth || height !== this.lastHostHeight)
+    ) {
+      this.resizeCanvases();
+    }
 
     const bodyHeight = Math.max(
       0,
@@ -629,6 +654,10 @@ export class CanvasGridEngine {
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     if (this.resizeRaf !== 0) cancelAnimationFrame(this.resizeRaf);
     this.resizeRaf = 0;
+    if (this.resizeSettleTimer !== 0) {
+      window.clearTimeout(this.resizeSettleTimer);
+      this.resizeSettleTimer = 0;
+    }
     this.scroller.removeEventListener('scroll', this.onScroll);
     this.host.removeEventListener('pointerdown', this.onPointerDown);
     this.host.removeEventListener('dblclick', this.onDoubleClick);
@@ -916,13 +945,22 @@ export class CanvasGridEngine {
 
   private updateSpacer(): void {
     const scaleY = this.scrollScaleY();
-    this.spacer.style.width = `${Math.max(1, this.columnAxis.totalSize)}px`;
-    this.spacer.style.height = `${Math.max(1, this.rowAxis.totalSize * scaleY)}px`;
+    const nextW = `${Math.max(1, this.columnAxis.totalSize)}px`;
+    const nextH = `${Math.max(1, this.rowAxis.totalSize * scaleY)}px`;
+    // Avoid layout thrash: identical style writes still force reflow in some browsers.
+    if (nextW !== this.lastSpacerWidth) {
+      this.lastSpacerWidth = nextW;
+      this.spacer.style.width = nextW;
+    }
+    if (nextH !== this.lastSpacerHeight) {
+      this.lastSpacerHeight = nextH;
+      this.spacer.style.height = nextH;
+    }
   }
 
   private resizeCanvases(): void {
-    const width = this.host.clientWidth;
-    const height = this.host.clientHeight;
+    const width = Math.round(this.host.clientWidth);
+    const height = Math.round(this.host.clientHeight);
     if (width === 0 || height === 0) return;
     this.lastHostWidth = width;
     this.lastHostHeight = height;
@@ -1200,7 +1238,8 @@ export class CanvasGridEngine {
     width: number,
   ): void {
     const cell = this.getCell(row, col);
-    if (!cell || (!cell.text && !cell.image)) return;
+    if (!cell) return;
+    if (!cell.skeleton && !cell.text && !cell.image) return;
 
     const gutter = this.rowGutterWidth;
     const x = this.columnScreenX(col);
@@ -1211,6 +1250,17 @@ export class CanvasGridEngine {
     target.beginPath();
     target.rect(x + 1, y, columnWidth - 2, rowHeight);
     target.clip();
+
+    if (cell.skeleton) {
+      const barH = Math.max(6, Math.min(10, rowHeight - 16));
+      const barW = Math.min(columnWidth - 24, 96 + ((row + col) % 5) * 12);
+      target.fillStyle = '#eef0f3';
+      target.beginPath();
+      target.roundRect(x + 12, y + (rowHeight - barH) / 2, barW, barH, 4);
+      target.fill();
+      target.restore();
+      return;
+    }
 
     if (cell.image) {
       const image = this.imageFor(cell.image);

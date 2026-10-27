@@ -28,6 +28,17 @@ import {
 import { collabSocket, type CollabCursor } from '../sync/collab-socket';
 import { liveBus } from '../sync/live-bus';
 import { liveSocket } from '../sync/live-socket';
+import {
+  LARGE_SHEET_THRESHOLD,
+  MAX_INDEX_CACHE,
+  WINDOW_SIZE,
+  alignBlock,
+  clampWindowOffset,
+  detectScrollDirection,
+  pageAlreadyCached as isPageCached,
+  planWindowFetches,
+  type ScrollDirection,
+} from '../sync/record-window';
 import { auth } from '../stores/auth';
 import { newId } from '../ui/id';
 import { toast } from '../ui/toast';
@@ -157,12 +168,6 @@ const nextCursor = ref<string | null>(null);
 /** Large sheet: absolute total for virtual scrollbar (null = small/drain mode). */
 const totalRecordCount = ref<number | null>(null);
 const recordOffset = ref(0);
-const WINDOW_SIZE = 2000;
-/** Start fetch before the viewport reaches the buffer edge. */
-const WINDOW_PAD = 200;
-const PREFETCH_EDGE = 600;
-const MAX_INDEX_CACHE = 12000;
-const LARGE_SHEET_THRESHOLD = 2000;
 /** 静默续拉世代号：切表时递增，丢弃过期批次 */
 const recordsLoadGen = ref(0);
 /** Absolute row -> record (large-sheet sliding cache). */
@@ -170,7 +175,9 @@ const recordIndexCache = new Map<number, RecordDto>();
 const recordCacheEpoch = ref(0);
 const windowFetchesInFlight = new Map<number, Promise<void>>();
 let lastWindowStats: { rows: { start: number; end: number } } | null = null;
-const SCROLL_SETTLE_MS = 90;
+let lastWindowMid: number | null = null;
+let scrollDirection: ScrollDirection = 0;
+const SCROLL_SETTLE_MS = 32;
 let scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
 const loading = ref(false);
 const bootError = ref('');
@@ -956,6 +963,8 @@ function clearRecordWindowCache(): void {
   recordIndexCache.clear();
   windowFetchesInFlight.clear();
   lastWindowStats = null;
+  lastWindowMid = null;
+  scrollDirection = 0;
   if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
   scrollSettleTimer = null;
   recordCacheEpoch.value = 0;
@@ -1009,11 +1018,6 @@ function materializeRecordWindow(vStart: number, vEnd: number): void {
   recordOffset.value = start;
 }
 
-function clampWindowOffset(total: number, preferred: number): number {
-  const maxOffset = Math.max(0, total - WINDOW_SIZE);
-  return Math.max(0, Math.min(maxOffset, preferred));
-}
-
 function cacheContiguousEnd(from: number): number {
   let i = from;
   while (recordIndexCache.has(i)) i += 1;
@@ -1026,29 +1030,24 @@ function cacheContiguousStart(from: number): number {
   return recordIndexCache.has(i) ? i : from;
 }
 
-function pageAlreadyCached(offset: number): boolean {
-  let hit = 0;
-  const probe = Math.min(48, WINDOW_SIZE);
-  for (let i = 0; i < probe; i += 1) {
-    if (recordIndexCache.has(offset + i)) hit += 1;
-  }
-  return hit >= probe - 2;
-}
-
 function fetchRecordWindow(sheetId: string, offset: number, anchor: number): Promise<void> {
   if (offset < 0) return Promise.resolve();
-  if (pageAlreadyCached(offset)) return Promise.resolve();
-  const existing = windowFetchesInFlight.get(offset);
+  // Keyset from warm prev row keeps contiguous edge; else deep OFFSET on aligned block.
+  const prev = offset > 0 ? recordIndexCache.get(offset - 1) : undefined;
+  const requestOffset = prev ? offset : alignBlock(offset);
+  if (isPageCached((row) => recordIndexCache.has(row), requestOffset)) {
+    return Promise.resolve();
+  }
+  const existing = windowFetchesInFlight.get(requestOffset);
   if (existing) return existing;
   const gen = recordsLoadGen.value;
   const task = (async () => {
     try {
-      const prev = offset > 0 ? recordIndexCache.get(offset - 1) : undefined;
       const page = prev
         ? await endpoints.listRecords(sheetId, prev.id, WINDOW_SIZE)
-        : await endpoints.listRecords(sheetId, null, WINDOW_SIZE, offset);
+        : await endpoints.listRecords(sheetId, null, WINDOW_SIZE, requestOffset);
       if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) return;
-      const appliedOffset = prev ? offset : (page.offset ?? offset);
+      const appliedOffset = prev ? requestOffset : (page.offset ?? requestOffset);
       putRecordWindow(appliedOffset, page.records, anchor);
       const stats = lastWindowStats;
       if (stats) materializeRecordWindow(stats.rows.start, stats.rows.end);
@@ -1056,14 +1055,15 @@ function fetchRecordWindow(sheetId: string, offset: number, anchor: number): Pro
     } catch {
       /* keep cache */
     } finally {
-      windowFetchesInFlight.delete(offset);
+      windowFetchesInFlight.delete(requestOffset);
     }
   })();
-  windowFetchesInFlight.set(offset, task);
+  windowFetchesInFlight.set(requestOffset, task);
   return task;
 }
 
-function scheduleJumpFetch(sheetId: string, total: number): void {
+/** After a jump settle, refine around the live mid (neighbors already kicked off). */
+function scheduleJumpRefine(sheetId: string, total: number): void {
   if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
   scrollSettleTimer = setTimeout(() => {
     scrollSettleTimer = null;
@@ -1071,8 +1071,13 @@ function scheduleJumpFetch(sheetId: string, total: number): void {
     const live = lastWindowStats;
     if (!live) return;
     const mid = Math.floor((live.rows.start + live.rows.end) / 2);
-    const primary = clampWindowOffset(total, mid - Math.floor(WINDOW_SIZE / 2));
+    const primary = clampWindowOffset(
+      total,
+      alignBlock(mid - Math.floor(WINDOW_SIZE / 2)),
+    );
     void fetchRecordWindow(sheetId, primary, mid);
+    void fetchRecordWindow(sheetId, primary + WINDOW_SIZE, mid);
+    void fetchRecordWindow(sheetId, primary - WINDOW_SIZE, mid);
   }, SCROLL_SETTLE_MS);
 }
 
@@ -1086,8 +1091,10 @@ async function ensureRecordWindow(stats: { rows: { start: number; end: number } 
   const viewStart = stats.rows.start;
   const viewEnd = stats.rows.end;
   const mid = Math.floor((viewStart + viewEnd) / 2);
+  const moved = detectScrollDirection(mid, lastWindowMid);
+  if (moved !== 0) scrollDirection = moved;
+  lastWindowMid = mid;
 
-  // Contiguous loaded span intersecting viewport (or nearest below).
   let haveStart = recordOffset.value;
   let haveEnd = recordOffset.value + records.value.length;
   if (recordIndexCache.has(viewStart)) {
@@ -1098,31 +1105,28 @@ async function ensureRecordWindow(stats: { rows: { start: number; end: number } 
     haveEnd = recordOffset.value + records.value.length;
   }
 
-  const covered = haveEnd > haveStart && viewStart >= haveStart && viewEnd <= haveEnd;
   const gapAhead = viewStart > haveEnd + WINDOW_SIZE;
   const gapBehind = viewEnd < haveStart - WINDOW_SIZE;
+  const plan = planWindowFetches({
+    viewStart,
+    viewEnd,
+    total,
+    haveStart,
+    haveEnd,
+    direction: scrollDirection,
+  });
 
-  // Big scrollbar jump → one OFFSET after settle (deep skip is expensive).
+  // Jump: fire OFFSET immediately (no 90ms blank), then refine after settle.
   if (gapAhead || gapBehind) {
-    scheduleJumpFetch(sheetId, total);
+    for (const offset of plan) {
+      void fetchRecordWindow(sheetId, offset, mid);
+    }
+    scheduleJumpRefine(sheetId, total);
     return;
   }
 
-  // Continuous scroll: ALWAYS extend from the unloaded edge via keyset.
-  // Root bug was prefetching haveEnd-PAD (already cached) → never fetched ahead.
-  if (viewEnd + PREFETCH_EDGE >= haveEnd) {
-    void fetchRecordWindow(sheetId, haveEnd, mid);
-    void fetchRecordWindow(sheetId, haveEnd + WINDOW_SIZE, mid);
-  }
-  if (viewStart - PREFETCH_EDGE <= haveStart) {
-    const back = clampWindowOffset(total, haveStart - WINDOW_SIZE);
-    void fetchRecordWindow(sheetId, back, mid);
-  }
-  if (!covered) {
-    if (viewStart >= haveEnd) void fetchRecordWindow(sheetId, haveEnd, mid);
-    if (viewEnd <= haveStart) {
-      void fetchRecordWindow(sheetId, clampWindowOffset(total, haveStart - WINDOW_SIZE), mid);
-    }
+  for (const offset of plan) {
+    void fetchRecordWindow(sheetId, offset, mid);
   }
 }
 
