@@ -316,6 +316,46 @@ class MessageCenter {
     });
   }
 
+  /**
+   * Merge multiple setRecord ops on the same row into one mutation so a single
+   * batch does not trip baseVersion conflicts (second op still sees old version).
+   */
+  private coalesceMutations(mutations: SheetMutation[]): {
+    mutations: SheetMutation[];
+    /** result index → original mutation indexes (for queue bookkeeping) */
+    groups: number[][];
+  } {
+    const mutationsOut: SheetMutation[] = [];
+    const groups: number[][] = [];
+    const setRecordGroup = new Map<string, number>();
+    for (let i = 0; i < mutations.length; i += 1) {
+      const mutation = mutations[i]!;
+      if (mutation.type !== 'setRecord') {
+        groups.push([i]);
+        mutationsOut.push(mutation);
+        continue;
+      }
+      const existing = setRecordGroup.get(mutation.recordId);
+      if (existing === undefined) {
+        setRecordGroup.set(mutation.recordId, mutationsOut.length);
+        groups.push([i]);
+        mutationsOut.push({ ...mutation, cells: { ...mutation.cells } });
+        continue;
+      }
+      const merged = mutationsOut[existing]!;
+      if (merged.type !== 'setRecord') continue;
+      mutationsOut[existing] = {
+        ...merged,
+        cells: { ...merged.cells, ...mutation.cells },
+        // Keep the earliest baseVersion — it matches pre-batch server state.
+        baseVersion: merged.baseVersion ?? mutation.baseVersion,
+        clientOpId: mutation.clientOpId,
+      };
+      groups[existing]!.push(i);
+    }
+    return { mutations: mutationsOut, groups };
+  }
+
   private async flushSheet(
     sheetId: string,
     rows: QueuedMutationRow[],
@@ -342,6 +382,8 @@ class MessageCenter {
         error instanceof Error ? error.message : '附件上传失败';
       return;
     }
+    const coalesced = this.coalesceMutations(mutations);
+    mutations = coalesced.mutations;
     let response: CommitChangesResponse | null = null;
     try {
       response = await this.flushViaWs(sheetId, clientBatchId, mutations);
@@ -385,22 +427,31 @@ class MessageCenter {
     const conflicts: string[] = [];
     for (let i = 0; i < response.results.length; i += 1) {
       const result = response.results[i];
-      const row = rows[i];
-      if (!result || !row) continue;
+      const group = coalesced.groups[i] ?? [];
+      if (!result) continue;
+      const groupRows = group
+        .map((idx) => rows[idx])
+        .filter((row): row is QueuedMutationRow => !!row);
       if (result.status === 'ok' || result.status === 'duplicate') {
-        await idbDeleteMutation(row.clientOpId);
+        for (const row of groupRows) {
+          await idbDeleteMutation(row.clientOpId);
+        }
         accepted.push(result);
       } else if (result.status === 'error') {
         if (result.code === 'COMMIT_VERSION_CONFLICT') {
-          conflicts.push(row.clientOpId);
-          await idbPutMutation({ ...row, status: 'conflict' });
+          for (const row of groupRows) {
+            conflicts.push(row.clientOpId);
+            await idbPutMutation({ ...row, status: 'conflict' });
+          }
           this.lastError.value = result.message;
         } else if (
           result.code === 'COMMIT_NOT_FOUND' ||
           result.code === 'COMMIT_INVALID' ||
           result.code === 'COMMIT_FORBIDDEN'
         ) {
-          await idbDeleteMutation(row.clientOpId);
+          for (const row of groupRows) {
+            await idbDeleteMutation(row.clientOpId);
+          }
           this.lastError.value = result.message;
         } else {
           this.lastError.value = result.message;

@@ -834,8 +834,11 @@ function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): vo
     return;
   }
 
-  const record = props.records.find((item) => item.id === current.recordId);
-  if (!record) return;
+  // Prefer absolute row lookup (window cache); records[] may not contain the row.
+  const record =
+    recordAt(current.row) ??
+    props.records.find((item) => item.id === current.recordId);
+  if (!record || record.id !== current.recordId) return;
 
   let nextValue: unknown = current.value;
   if (current.field.type === 'checkbox') {

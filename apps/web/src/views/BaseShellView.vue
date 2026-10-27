@@ -759,16 +759,19 @@ async function commitCell(payload: {
     payload.previous !== undefined
       ? payload.previous
       : payload.record.cells[payload.field.id];
-  // 乐观本地应用；MessageCenter 持久化后 flush
-  records.value = records.value.map((record) =>
-    record.id === payload.record.id
-      ? {
-          ...record,
-          cells: { ...record.cells, [payload.field.id]: coerced },
-          version: record.version,
-        }
-      : record,
-  );
+  // 乐观本地应用；MessageCenter 持久化后 flush（须同步窗口 cache，否则 Canvas 会画回旧值）
+  const latest =
+    records.value.find((item) => item.id === payload.record.id) ??
+    [...recordIndexCache.values()].find(
+      (item) => item.id === payload.record.id,
+    ) ??
+    payload.record;
+  const baseVersion = latest.version;
+  patchRecordEverywhere(payload.record.id, (record) => ({
+    ...record,
+    cells: { ...record.cells, [payload.field.id]: coerced },
+    version: record.version,
+  }));
   pushEdit({
     sheetId: activeSheet.value.id,
     recordId: payload.record.id,
@@ -785,13 +788,13 @@ async function commitCell(payload: {
         type: 'setRecord',
         recordId: payload.record.id,
         cells: { [payload.field.id]: coerced },
-        baseVersion: payload.record.version,
+        baseVersion,
       },
       {
         queryFp: activeQueryFp.value,
         recordId: payload.record.id,
         cells: { [payload.field.id]: coerced },
-        version: payload.record.version,
+        version: baseVersion,
       },
     );
   } catch (error) {
@@ -804,22 +807,17 @@ function onCommitAccept(results: MutationResult[]): void {
     if (result.status !== 'ok' && result.status !== 'duplicate') continue;
     if (result.record) {
       const rec = result.record;
-      records.value = records.value.map((item) =>
-        item.id === rec.id
-          ? {
-              ...item,
-              id: rec.id,
-              cells: rec.cells,
-              version: rec.version,
-            }
-          : item,
-      );
+      // 本端未 flush 的后续编辑优先，避免先返回的 accept 整表覆盖把后改的格打回
+      patchRecordEverywhere(rec.id, (item) => ({
+        ...item,
+        id: rec.id,
+        cells: { ...rec.cells, ...item.cells },
+        version: Math.max(item.version ?? 0, rec.version ?? 0),
+      }));
     }
     if (result.recordIdMap) {
       for (const [clientId, serverId] of Object.entries(result.recordIdMap)) {
-        records.value = records.value.map((item) =>
-          item.id === clientId ? { ...item, id: serverId } : item,
-        );
+        patchRecordEverywhere(clientId, (item) => ({ ...item, id: serverId }));
       }
     }
     if (result.fieldIdMap && activeSheet.value) {
@@ -857,14 +855,11 @@ function onCommitAccept(results: MutationResult[]): void {
 function applyRemoteMutations(mutations: SheetMutation[]): void {
   for (const mutation of mutations) {
     if (mutation.type === 'setRecord') {
-      records.value = records.value.map((item) => {
-        if (item.id !== mutation.recordId) return item;
-        return {
-          ...item,
-          cells: { ...item.cells, ...mutation.cells },
-          version: item.version + 1,
-        };
-      });
+      patchRecordEverywhere(mutation.recordId, (item) => ({
+        ...item,
+        cells: { ...item.cells, ...mutation.cells },
+        version: item.version + 1,
+      }));
       continue;
     }
     if (mutation.type === 'createRecord') {
@@ -885,6 +880,7 @@ function applyRemoteMutations(mutations: SheetMutation[]): void {
     }
     if (mutation.type === 'deleteRecord') {
       records.value = records.value.filter((r) => r.id !== mutation.recordId);
+      removeCachedRecordsById([mutation.recordId]);
       continue;
     }
     if (mutation.type === 'deleteField' && activeSheet.value) {
@@ -992,16 +988,17 @@ async function applyHistoryValue(
     toast('当前为只读权限，无法撤销/重做');
     return false;
   }
-  const record = records.value.find((item) => item.id === recordId);
+  const record =
+    records.value.find((item) => item.id === recordId) ??
+    [...recordIndexCache.values()].find((item) => item.id === recordId);
   if (!record || !activeSheet.value) {
     toast('记录已不存在，无法撤销/重做');
     return false;
   }
-  records.value = records.value.map((item) =>
-    item.id === recordId
-      ? { ...item, cells: { ...item.cells, [fieldId]: value } }
-      : item,
-  );
+  patchRecordEverywhere(recordId, (item) => ({
+    ...item,
+    cells: { ...item.cells, [fieldId]: value },
+  }));
   try {
     await messageCenter.enqueue(
       activeSheet.value.id,
@@ -1074,6 +1071,35 @@ function lookupRecord(row: number): RecordDto | undefined {
   return recordIndexCache.get(row);
 }
 
+/** Canvas paints via recordLookup(cache) first — keep cache + records[] in sync. */
+function patchRecordEverywhere(
+  recordId: string,
+  updater: (prev: RecordDto) => RecordDto,
+): void {
+  records.value = records.value.map((item) =>
+    item.id === recordId ? updater(item) : item,
+  );
+  let touched = false;
+  for (const [row, rec] of recordIndexCache) {
+    if (rec.id !== recordId) continue;
+    recordIndexCache.set(row, updater(rec));
+    touched = true;
+  }
+  if (touched) recordCacheEpoch.value += 1;
+}
+
+function removeCachedRecordsById(recordIds: readonly string[]): void {
+  if (recordIds.length === 0) return;
+  const drop = new Set(recordIds);
+  let touched = false;
+  for (const [row, rec] of recordIndexCache) {
+    if (!drop.has(rec.id)) continue;
+    recordIndexCache.delete(row);
+    touched = true;
+  }
+  if (touched) recordCacheEpoch.value += 1;
+}
+
 function trimRecordIndexCache(anchor: number): void {
   if (recordIndexCache.size <= MAX_INDEX_CACHE) return;
   const ranked = [...recordIndexCache.keys()].sort(
@@ -1087,7 +1113,26 @@ function trimRecordIndexCache(anchor: number): void {
 
 function putRecordWindow(offset: number, list: RecordDto[], anchor: number): void {
   for (let i = 0; i < list.length; i += 1) {
-    recordIndexCache.set(offset + i, list[i]!);
+    const row = offset + i;
+    const incoming = list[i]!;
+    const existing = recordIndexCache.get(row);
+    // In-flight fetch must not clobber a newer/optimistic local copy.
+    if (
+      existing &&
+      existing.id === incoming.id &&
+      (existing.version ?? 0) > (incoming.version ?? 0)
+    ) {
+      continue;
+    }
+    if (
+      existing &&
+      existing.id === incoming.id &&
+      (existing.version ?? 0) === (incoming.version ?? 0)
+    ) {
+      recordIndexCache.set(row, existing);
+      continue;
+    }
+    recordIndexCache.set(row, incoming);
   }
   trimRecordIndexCache(anchor);
   recordCacheEpoch.value += 1;
@@ -1211,10 +1256,17 @@ function fetchRecordWindow(sheetId: string, offset: number, anchor: number): Pro
           ? requestOffset
           : (page.offset ?? requestOffset);
         putRecordWindow(appliedOffset, page.records, anchor);
+        // Persist merged cache rows (not raw network) so optimistic edits survive hydrate.
+        const mergedForLocal: RecordDto[] = [];
+        for (let i = 0; i < page.records.length; i += 1) {
+          mergedForLocal.push(
+            recordIndexCache.get(appliedOffset + i) ?? page.records[i]!,
+          );
+        }
         persistRecordsToLocal(
           sheetId,
           appliedOffset,
-          page.records,
+          mergedForLocal,
           page.total ?? totalRecordCount.value ?? page.records.length,
         );
         const stats = lastWindowStats;
@@ -1457,11 +1509,16 @@ async function deleteField(field: FieldDto): Promise<void> {
         (item) => item.id !== field.id,
       ),
     };
-    records.value = records.value.map((record) => {
+    const dropField = (record: RecordDto): RecordDto => {
       const cells = { ...record.cells };
       delete cells[field.id];
       return { ...record, cells };
-    });
+    };
+    records.value = records.value.map(dropField);
+    for (const [row, rec] of recordIndexCache) {
+      recordIndexCache.set(row, dropField(rec));
+    }
+    if (recordIndexCache.size > 0) recordCacheEpoch.value += 1;
     await messageCenter.enqueue(activeSheet.value.id, {
       type: 'deleteField',
       fieldId: field.id,
@@ -1483,6 +1540,7 @@ async function deleteRecords(recordIds: string[]): Promise<void> {
     records.value = records.value.filter(
       (record) => !recordIds.includes(record.id),
     );
+    removeCachedRecordsById(recordIds);
     for (const recordId of recordIds) {
       await messageCenter.enqueue(sheetId, {
         type: 'deleteRecord',
