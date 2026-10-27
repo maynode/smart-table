@@ -37,7 +37,7 @@ export interface CollabCellLock {
 }
 
 export type CellLockAcquireResult =
-  | { ok: true }
+  | { ok: true; degraded?: boolean }
   | { ok: false; holderName: string; holderUserId?: string };
 
 type ServerMsg = {
@@ -228,15 +228,18 @@ export class CollabSocket {
     const existing = this.lockWaiters.get(key);
     if (existing) {
       clearTimeout(existing.timer);
-      existing.resolve({ ok: false, holderName: '等待中' });
+      existing.resolve({
+        ok: false,
+        holderName: '上一请求未完成，请稍后再试',
+      });
       this.lockWaiters.delete(key);
     }
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.lockWaiters.delete(key);
-        // 服务端未及时回执时降级放行（对齐无 WS / 离线），避免编辑永久卡住
-        resolve({ ok: true });
-      }, 4_000);
+        // 服务端未及时回执：静默降级放行（对齐无 WS），避免编辑卡住
+        resolve({ ok: true, degraded: true });
+      }, 800);
       this.lockWaiters.set(key, { resolve, timer });
       this.send({ type: 'cell_lock_acquire', recordId, fieldId });
     });

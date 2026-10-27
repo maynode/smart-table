@@ -1191,7 +1191,7 @@ onBeforeUnmount(() => {
               <span class="section-title">成功页</span>
             </div>
             <p class="setting-hint" data-testid="form-success-hint">
-              提交后展示自动化「发送消息」步骤的内容（变量已替换）。请在自动化里配置文案。
+              提交成功页优先展示自动化「发送消息」的文案；未配置时显示默认「提交成功」。
             </p>
           </section>
 
@@ -1363,7 +1363,7 @@ onBeforeUnmount(() => {
           </div>
           <button class="preview-submit" type="button" disabled>提交</button>
           <p class="setting-hint fill-success-hint" data-testid="form-success-preview">
-            提交成功后展示自动化「发送消息」中的文案。
+            提交成功后优先展示自动化「发送消息」文案；未配置时显示默认「提交成功」。
           </p>
         </div>
       </div>

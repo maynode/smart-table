@@ -185,17 +185,12 @@ test.describe('Canvas grid + enterprise shell', () => {
     const pos = { x: hit!.x, y: hit!.y };
     await grid.click({ position: pos });
     await grid.click({ position: pos }); // WeCom：同格再点进编辑
-    let editor = page.locator('[data-testid="cell-editor"]');
-    if (!(await editor.isVisible().catch(() => false))) {
-      await grid.dblclick({ position: pos });
-      editor = page.locator('[data-testid="cell-editor"]');
-    }
+    const editor = page.locator('[data-testid="cell-editor"]');
     if (!(await editor.isVisible().catch(() => false))) {
       await page.locator('[data-testid="canvas-grid-wrap"]').focus();
       await page.keyboard.press('Enter');
-      editor = page.locator('[data-testid="cell-editor"]');
     }
-    await expect(editor).toBeVisible({ timeout: 15_000 });
+    await expect(editor).toBeVisible({ timeout: 10_000 });
     await editor.fill('SN-002');
     await editor.press('Enter');
 

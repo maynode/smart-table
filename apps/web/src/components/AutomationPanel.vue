@@ -834,18 +834,23 @@ onBeforeUnmount(() => {
   display: inline-flex;
   width: 34px;
   height: 20px;
+  flex-shrink: 0;
 }
+/* 原生 checkbox 铺满开关区域（透明），保证可点、可测、可聚焦 */
 .switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
   opacity: 0;
-  width: 0;
-  height: 0;
+  cursor: pointer;
 }
 .switch span {
   position: absolute;
   inset: 0;
   border-radius: 999px;
   background: #d0d5dd;
-  cursor: pointer;
+  pointer-events: none;
   transition: background 0.15s;
 }
 .switch span::after {

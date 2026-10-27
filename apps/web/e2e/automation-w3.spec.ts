@@ -169,9 +169,8 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   expect(automation.steps[2].content.text).toBe('领取成功 {{第2步.序列号}}');
 
   // Enable/disable round-trips through the real API.
-  // Switch CSS parks the native checkbox off-screen — use evaluate click.
   const toggle = page.getByTestId('automation-toggle-input').first();
-  await toggle.evaluate((el) => (el as HTMLInputElement).click());
+  await toggle.click();
   await expect
     .poll(
       async () => {
@@ -186,7 +185,7 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
     )
     .toBe(false);
   await expect(toggle).not.toBeChecked();
-  await toggle.evaluate((el) => (el as HTMLInputElement).click());
+  await toggle.click();
   await expect
     .poll(
       async () => {

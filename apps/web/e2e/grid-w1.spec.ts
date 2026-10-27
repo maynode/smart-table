@@ -202,17 +202,12 @@ test.describe('W1 grid parity features', () => {
     const personPos = { x: personHit!.x, y: personHit!.y };
     await canvas.click({ position: personPos });
     await canvas.click({ position: personPos });
-    let personEditor = page.getByTestId('cell-editor');
-    if (!(await personEditor.isVisible().catch(() => false))) {
-      await canvas.dblclick({ position: personPos });
-      personEditor = page.getByTestId('cell-editor');
-    }
+    const personEditor = page.getByTestId('cell-editor');
     if (!(await personEditor.isVisible().catch(() => false))) {
       await page.getByTestId('canvas-grid-wrap').focus();
       await page.keyboard.press('Enter');
-      personEditor = page.getByTestId('cell-editor');
     }
-    await expect(personEditor).toBeVisible({ timeout: 15_000 });
+    await expect(personEditor).toBeVisible({ timeout: 10_000 });
     const memberLabel = session.user.name ?? session.user.account ?? account;
     await expect(personEditor.locator('option')).toContainText([
       '未指定成员',

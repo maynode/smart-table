@@ -1048,10 +1048,12 @@ export class FormsService implements OnModuleDestroy {
       formCells: formCellsByName,
       stepOutputs,
     });
-    return renderSuccessTemplate(
-      form.successTemplate || '',
+    const rendered = renderSuccessTemplate(
+      form.successTemplate || '提交成功',
       successValues,
-    );
+    ).trim();
+    // 空模板 / 仅空白时给明确成功态，避免公开页「点了提交没反应」
+    return rendered || '<p>提交成功</p>';
   }
 
   async previewSuccess(

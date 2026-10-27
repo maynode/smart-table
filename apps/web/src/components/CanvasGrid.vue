@@ -625,24 +625,6 @@ async function beginEdit(row: number, col: number): Promise<void> {
   if (!record || !field) return;
   emitPeerCursorAt(row, col);
 
-  if (props.acquireCellLock) {
-    if (
-      editing.value &&
-      (editing.value.recordId !== record.id ||
-        editing.value.field.id !== field.id)
-    ) {
-      props.releaseCellLock?.(
-        editing.value.recordId,
-        editing.value.field.id,
-      );
-    }
-    const lock = await props.acquireCellLock(record.id, field.id);
-    if (!lock.ok) {
-      toast(`${lock.holderName} 正在编辑此单元格`);
-      return;
-    }
-  }
-
   // System / computed fields are display-only in the grid.
   if (
     field.type === 'formula' ||
@@ -656,6 +638,29 @@ async function beginEdit(row: number, col: number): Promise<void> {
     field.type === 'groupChat'
   ) {
     return;
+  }
+
+  if (props.acquireCellLock) {
+    if (
+      editing.value &&
+      (editing.value.recordId !== record.id ||
+        editing.value.field.id !== field.id)
+    ) {
+      props.releaseCellLock?.(
+        editing.value.recordId,
+        editing.value.field.id,
+      );
+    }
+    // 先抢锁再出编辑框；超时由 collab 侧 degraded 放行，避免空白等待感
+    const lock = await props.acquireCellLock(record.id, field.id);
+    if (!lock.ok) {
+      toast(
+        lock.holderName.includes('请稍后再试')
+          ? lock.holderName
+          : `${lock.holderName} 正在编辑此单元格`,
+      );
+      return;
+    }
   }
 
   if (field.type === 'image' || field.type === 'file') {
@@ -763,7 +768,11 @@ async function toggleCheckbox(row: number, col: number): Promise<void> {
   if (props.acquireCellLock) {
     const lock = await props.acquireCellLock(record.id, field.id);
     if (!lock.ok) {
-      toast(`${lock.holderName} 正在编辑此单元格`);
+      toast(
+        lock.holderName.includes('请稍后再试')
+          ? lock.holderName
+          : `${lock.holderName} 正在编辑此单元格`,
+      );
       return;
     }
   }
@@ -2071,22 +2080,25 @@ defineExpose({
   pointer-events: none;
   box-sizing: border-box;
   border: 2px solid var(--peer-color, #5b8ff9);
-  background: color-mix(in srgb, var(--peer-color, #5b8ff9) 12%, transparent);
+  background: color-mix(in srgb, var(--peer-color, #5b8ff9) 14%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--peer-color, #5b8ff9) 35%, transparent);
   z-index: 3;
 }
 .peer-cell-lock-label {
   position: absolute;
-  left: 0;
-  top: -18px;
-  max-width: 160px;
+  left: -1px;
+  top: -20px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  line-height: 16px;
-  padding: 0 6px;
-  border-radius: 3px;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 3px 3px 3px 0;
   color: #fff;
   background: var(--peer-color, #5b8ff9);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
 }
 </style>

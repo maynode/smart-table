@@ -62,6 +62,7 @@ const stackMode = ref<'none' | 'stack' | 'percent'>('none');
 const widgetTitle = ref('按区域统计');
 const widgetText = ref('');
 const widgetSheetId = ref('');
+const addingWidget = ref(false);
 const dimensionField = ref('');
 const metricField = ref('');
 const aggregation = ref<'sum' | 'count' | 'avg' | 'min' | 'max'>('count');
@@ -449,7 +450,7 @@ async function addWidget(): Promise<void> {
     toast('当前为只读权限，无法添加图表');
     return;
   }
-  if (!active.value) return;
+  if (!active.value || addingWidget.value) return;
   if (widgetType.value !== 'text' && !widgetSheetId.value) {
     toast('请选择工作表');
     return;
@@ -462,6 +463,7 @@ async function addWidget(): Promise<void> {
     toast('请选择工作表和维度字段');
     return;
   }
+  addingWidget.value = true;
   try {
     await endpoints.addDashboardWidget(active.value.id, {
       type: widgetType.value,
@@ -528,6 +530,8 @@ async function addWidget(): Promise<void> {
     toast('图表已添加');
   } catch (error) {
     toast(messageOf(error));
+  } finally {
+    addingWidget.value = false;
   }
 }
 
@@ -1025,9 +1029,10 @@ function onAiApplied(): void {
               <button
                 class="btn btn-primary"
                 data-testid="dashboard-widget-add"
+                :disabled="addingWidget"
                 @click="addWidget"
               >
-                添加
+                {{ addingWidget ? '添加中…' : '添加' }}
               </button>
             </div>
           </aside>
