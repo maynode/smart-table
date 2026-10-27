@@ -87,8 +87,9 @@ Collab 与 Offline 共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等�
 
 - 租约：`CELL_LOCK_TTL_MS`（45s），`heart_beat` 续租；用户离房释放其全部锁。
 - 每用户每表同时只持一把编辑锁；换格时旧锁自动释放并广播。
-- 实现：`CellLockRegistry`（进程内；多 API 副本后续换共享存储，语义不变）。
-- 客户端：进编辑前 `acquireCellLock`；失败 toast「xxx 正在编辑此单元格」；他人格显示「编辑中」叠层。
+- 实现：`CellLockRegistry`（有 `REDIS_URL` 时 Redis `SET`+TTL 共享；否则进程内）。语义不变。
+- 部署：多 API 副本时 `/collab`+`/live` 需 LB **会话粘滞**；锁跨副本靠 Redis。
+- 客户端：进编辑前 `acquireCellLock`；失败 toast「xxx 正在编辑此单元格」；锁超时 degraded 短 toast；他人格显示「编辑中」叠层；光标名牌短时常显。
 
 ## 7. 实现索引
 
@@ -104,8 +105,7 @@ Collab 与 Offline 共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等�
 
 > 千人同表扇出 / 每表 Actor 串行合入：见规模方案，未包含在本切片。
 
-## 9. 体验债（2026-10-28）
+## 9. 私有化量产状态（2026-10-28）
 
-协议与单元格短租约已落地，但**同步观感仍差**（延迟、双人同编流畅度等）。
-已小步：锁回执超时 2s 降级放行并轻提示；占用格叠层标签加强对比。
-**勿**将本节前的「已完成」理解成协同体验收工；跟踪见 `docs/REMAINING-GAPS.md` §0。
+协议 + 单元格短租约 + 观感收口已达**私有化量产**可用：Accept 2s/短熔断、冲突人话 + OT rebase、锁拒绝/降级 toast、光标/占用叠层可扫读、Redis 共享锁。
+规模项（千人同表 Actor 串行合入）仍见规模方案，不挡交付。跟踪见 `docs/REMAINING-GAPS.md` §0 #3。

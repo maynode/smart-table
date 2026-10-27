@@ -108,7 +108,7 @@ spec:
                   key: OTEL_EXPORTER_OTLP_ENDPOINT
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: http
             initialDelaySeconds: 10
             periodSeconds: 5

@@ -23,7 +23,7 @@ docker compose exec api pnpm --filter api seed:serial-claim
 ```
 
 - Web：<http://127.0.0.1:8080>
-- API 健康检查：<http://127.0.0.1:3000/health>
+- API 存活：<http://127.0.0.1:3000/health>；就绪（DB+Redis）：<http://127.0.0.1:3000/ready>
 - 演示账号：`demo@smart-table.local` / `Passw0rd!123`
 - 种子命令会输出分享链接，形如 `http://127.0.0.1:8080/fill/<token>`
 
@@ -42,7 +42,9 @@ pnpm smoke:compose
 | `DATABASE_URL` | 6432 + `pgbouncer=true` | 运行期连接池地址 |
 | `DIRECT_DATABASE_URL` | 5432 | Prisma 迁移/DDL 直连，绝不能走 PgBouncer |
 | `REDIS_URL` | `redis://redis:6379` | BullMQ |
-| `JWT_SECRET` | 开发占位 | 生产必须替换为 32+ 字节随机值 |
+| `JWT_SECRET` | 开发占位 | **生产拒启弱密钥**：长度 ≥32 且不得含 `dev-only`；Compose 默认仅为本机演示密钥，上线前必须替换 |
+| `METRICS_TOKEN` | 空 | 生产必填；`/metrics` 需 Bearer / `x-metrics-token` / `?token=` |
+| `STRICT_ENV` | 空 | 设为 `1` 时即使非 production 也启用 JWT/metrics 门禁 |
 | `PUBLIC_FORM_BASE_URL` | `http://127.0.0.1:8080` | 分享链接/二维码的站点根地址 |
 | `PUBLIC_SUBMIT_RATE_LIMIT` | `30` | 每个分享 token + IP 每 60 秒提交上限 |
 | `S3_DRIVER` | `filesystem` | `filesystem` 本地目录；`minio` 走 S3 |
@@ -90,10 +92,12 @@ docker compose start api claim-worker
 
 ## 6. 扩容
 
-- API 无状态（JWT，无粘滞会话），可水平扩容：`docker compose up -d --scale api=3`（需前面加负载均衡）。
-- `claim-worker` 可独立扩容；占码使用 `FOR UPDATE SKIP LOCKED`，多 worker 并发安全。
+- **HTTP API / claim-worker** 可水平扩：worker 占码用 `FOR UPDATE SKIP LOCKED`，公开表单限流与单元格锁走 Redis，多副本一致。
+- **协同 WebSocket 必须会话粘滞**：负载均衡对 `/collab` 与 `/live`（含 Upgrade）按连接粘滞到同一 API 副本；房间扇出为进程内，无跨副本 Socket adapter。单元格锁已 Redis 共享，即使用户落到不同 HTTP 副本，锁仍正确。
+- Compose 示例里 `api` / `web` 写了 `container_name`，**不能**直接 `docker compose up --scale api=N`（名字冲突）。扩容请去掉 `container_name`，或在前面加 sticky LB / k8s Service（见 `deploy/k8s/`）。
 - PgBouncer `DEFAULT_POOL_SIZE` 与 API 的 `connection_limit` 需按数据库连接上限调优。
 - 千万行表格渲染在浏览器完成（多图层 Canvas + 视口裁剪），不随 API 扩容线性增加带宽。
+- 探针：liveness → `/health`；readiness → `/ready`（DB + Redis）。
 
 ## 7. 升级
 

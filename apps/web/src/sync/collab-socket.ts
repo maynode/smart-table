@@ -86,6 +86,8 @@ export class CollabSocket {
   private cursorTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCursor: CollabCursor['cursor'] | null = null;
   private heldLock: { recordId: string; fieldId: string } | null = null;
+  /** Recent remote mutations for OT rebase after VERSION_CONFLICT */
+  private recentPeerMutations: SheetMutation[] = [];
   private lockWaiters = new Map<
     string,
     {
@@ -93,6 +95,7 @@ export class CollabSocket {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  private lastDegradedToastAt = 0;
   private onAccept:
     | ((payload: {
         results: unknown[];
@@ -237,12 +240,35 @@ export class CollabSocket {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.lockWaiters.delete(key);
-        // 服务端未及时回执：静默降级放行（对齐无 WS），避免编辑卡住
+        // 服务端未及时回执：降级放行，由 UI 短 toast 提示（防抖）
         resolve({ ok: true, degraded: true });
       }, 800);
       this.lockWaiters.set(key, { resolve, timer });
       this.send({ type: 'cell_lock_acquire', recordId, fieldId });
     });
+  }
+
+  /** Whether a degraded-lock toast should show (at most once / 4s). */
+  shouldToastDegradedLock(): boolean {
+    const now = Date.now();
+    if (now - this.lastDegradedToastAt < 4_000) return false;
+    this.lastDegradedToastAt = now;
+    return true;
+  }
+
+  /** Drain buffered peer mutations for OT rebase (clears buffer). */
+  drainRecentPeerMutations(): SheetMutation[] {
+    const out = this.recentPeerMutations;
+    this.recentPeerMutations = [];
+    return out;
+  }
+
+  private rememberPeerMutations(mutations: SheetMutation[]): void {
+    if (!mutations.length) return;
+    this.recentPeerMutations = [
+      ...this.recentPeerMutations,
+      ...mutations,
+    ].slice(-200);
   }
 
   releaseCellLock(recordId?: string, fieldId?: string): void {
@@ -441,6 +467,7 @@ export class CollabSocket {
         break;
       case 'new_changes':
         this.sheetRev.value = msg.newRev ?? this.sheetRev.value;
+        this.rememberPeerMutations(msg.mutations ?? []);
         this.onRemote?.({
           mutations: msg.mutations ?? [],
           authorId: msg.authorId ?? '',
@@ -461,6 +488,7 @@ export class CollabSocket {
         break;
       case 'changes':
         for (const cs of msg.changesets ?? []) {
+          this.rememberPeerMutations(cs.mutations);
           this.onRemote?.({
             mutations: cs.mutations,
             authorId: cs.authorId ?? '',
@@ -476,3 +504,9 @@ export class CollabSocket {
 }
 
 export const collabSocket = new CollabSocket();
+
+if (typeof window !== 'undefined') {
+  (
+    window as unknown as { __stCollab?: CollabSocket }
+  ).__stCollab = collabSocket;
+}

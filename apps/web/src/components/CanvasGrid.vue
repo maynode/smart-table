@@ -19,9 +19,10 @@ import { endpoints } from '../api/endpoints';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
 import { toast } from '../ui/toast';
-import type {
-  CellLockAcquireResult,
-  CollabCellLock,
+import {
+  collabSocket,
+  type CellLockAcquireResult,
+  type CollabCellLock,
 } from '../sync/collab-socket';
 
 const props = withDefaults(
@@ -661,6 +662,9 @@ async function beginEdit(row: number, col: number): Promise<void> {
       );
       return;
     }
+    if (lock.degraded && collabSocket.shouldToastDegradedLock()) {
+      toast('协同锁暂无响应，已允许编辑（可能与他人冲突）');
+    }
   }
 
   if (field.type === 'image' || field.type === 'file') {
@@ -774,6 +778,9 @@ async function toggleCheckbox(row: number, col: number): Promise<void> {
           : `${lock.holderName} 正在编辑此单元格`,
       );
       return;
+    }
+    if (lock.degraded && collabSocket.shouldToastDegradedLock()) {
+      toast('协同锁暂无响应，已允许编辑（可能与他人冲突）');
     }
   }
   const previous = record.cells[field.id];
@@ -1450,12 +1457,17 @@ const peerCursorOverlays = computed(() => {
   const hostH = host.value?.clientHeight ?? 0;
   const hostW = host.value?.clientWidth ?? 0;
   const CARET_HIT = 10;
+  const offset = props.recordOffset ?? 0;
   return props.peerCursors
     .map((peer) => {
       let row = peer.cursor.rowIndex;
       let col = peer.cursor.colIndex;
-      if (row === undefined && peer.cursor.recordId) {
-        row = props.records.findIndex((r) => r.id === peer.cursor.recordId);
+      // 与锁叠层一致：优先 recordId → 窗口内 local + recordOffset
+      if (peer.cursor.recordId) {
+        const local = props.records.findIndex(
+          (r) => r.id === peer.cursor.recordId,
+        );
+        if (local >= 0) row = local + offset;
       }
       if (col === undefined && peer.cursor.fieldId) {
         col = fields.findIndex((f) => f.id === peer.cursor.fieldId);
@@ -1911,13 +1923,13 @@ defineExpose({
   height: 100%;
   min-height: 0;
 }
-/* 企微文档风：竖线光标；用户名仅 hover 光标条时出现 */
+/* 竖线光标 + 短时常显名牌（可扫读） */
 .peer-cursor {
   position: absolute;
   z-index: 6;
   width: 10px;
   margin-left: -4px;
-  pointer-events: auto;
+  pointer-events: none;
   cursor: default;
 }
 .peer-cursor-caret {
@@ -1947,17 +1959,10 @@ defineExpose({
   font-size: 12px;
   font-weight: 500;
   line-height: 20px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(2px);
-  transition: opacity 0.12s ease, visibility 0.12s ease, transform 0.12s ease;
-  pointer-events: none;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 16%);
-}
-.peer-cursor:hover .peer-cursor-label {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 16%);
 }
 .hidden-upload {
   display: none;

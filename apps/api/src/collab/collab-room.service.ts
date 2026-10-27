@@ -1,10 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { WebSocket } from 'ws';
+import type IORedis from 'ioredis';
 import type { SheetMutation } from 'shared';
 import { COMMIT_ERROR, peerColorFromUserId } from 'shared';
 import { JwtService } from '@nestjs/jwt';
 import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { createRedisConnection } from '../queue/redis-connection';
 import { SheetsService } from '../sheets/sheets.service';
 import { CommitChangesService } from '../sheets/commit-changes.service';
 import type { CollabClientMsg, CollabServerMsg } from './collab.types';
@@ -23,10 +26,11 @@ interface RoomClient {
 }
 
 @Injectable()
-export class CollabRoomService {
+export class CollabRoomService implements OnModuleDestroy {
   private readonly logger = new Logger(CollabRoomService.name);
   private readonly rooms = new Map<string, Set<RoomClient>>();
-  private readonly cellLocks = new CellLockRegistry();
+  private readonly cellLocks: CellLockRegistry;
+  private readonly lockRedis: IORedis | null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -34,7 +38,43 @@ export class CollabRoomService {
     private readonly sheets: SheetsService,
     private readonly commits: CommitChangesService,
     private readonly live: LiveBusService,
-  ) {}
+    config: ConfigService,
+  ) {
+    const url = config.get<string>('REDIS_URL');
+    if (url) {
+      try {
+        this.lockRedis = createRedisConnection(url, {
+          maxRetriesPerRequest: 1,
+          enableOfflineQueue: false,
+          connectTimeoutMs: 3_000,
+        });
+        this.lockRedis.on('error', (error) => {
+          this.logger.warn(`CellLock Redis error: ${String(error)}`);
+        });
+        this.cellLocks = new CellLockRegistry(this.lockRedis);
+        this.logger.log('CellLockRegistry using Redis');
+      } catch (error) {
+        this.logger.warn(
+          `CellLock Redis unavailable, memory-only: ${String(error)}`,
+        );
+        this.lockRedis = null;
+        this.cellLocks = new CellLockRegistry();
+      }
+    } else {
+      this.lockRedis = null;
+      this.cellLocks = new CellLockRegistry();
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.lockRedis) {
+      try {
+        await this.lockRedis.quit();
+      } catch {
+        this.lockRedis.disconnect();
+      }
+    }
+  }
 
   async acceptConnection(
     socket: WebSocket,
@@ -90,8 +130,12 @@ export class CollabRoomService {
     socket.on('message', (raw) => {
       void this.onMessage(client, raw.toString());
     });
-    socket.on('close', () => this.leave(client));
-    socket.on('error', () => this.leave(client));
+    socket.on('close', () => {
+      void this.leave(client);
+    });
+    socket.on('error', () => {
+      void this.leave(client);
+    });
 
     const sheet = await this.prisma.sheet.findUnique({ where: { id: sheetId } });
     this.send(socket, {
@@ -99,7 +143,7 @@ export class CollabRoomService {
       sheetRev: sheet?.sheetRev ?? 0,
     });
     this.broadcastPresence(sheetId);
-    this.sendCellLocksSnapshot(client);
+    await this.sendCellLocksSnapshot(client);
   }
 
   /** 用户改头像/用户名后刷新各表 presence，无需重连 */
@@ -128,13 +172,13 @@ export class CollabRoomService {
     for (const sheetId of touched) this.broadcastPresence(sheetId);
   }
 
-  private leave(client: RoomClient): void {
+  private async leave(client: RoomClient): Promise<void> {
     const room = this.rooms.get(client.sheetId);
     if (!room) return;
     room.delete(client);
     const stillPresent = [...room].some((c) => c.userId === client.userId);
     if (!stillPresent) {
-      const freed = this.cellLocks.releaseAllForUser(
+      const freed = await this.cellLocks.releaseAllForUser(
         client.sheetId,
         client.userId,
       );
@@ -223,11 +267,11 @@ export class CollabRoomService {
           sheetRev: sheet?.sheetRev ?? 0,
         });
         this.broadcastPresence(client.sheetId);
-        this.sendCellLocksSnapshot(client);
+        await this.sendCellLocksSnapshot(client);
         return;
       }
       case 'heart_beat':
-        this.cellLocks.renewForUser(client.sheetId, client.userId);
+        await this.cellLocks.renewForUser(client.sheetId, client.userId);
         this.send(client.socket, { type: 'heart_beat', ok: true });
         return;
       case 'cursor_message':
@@ -245,10 +289,10 @@ export class CollabRoomService {
         );
         return;
       case 'cell_lock_acquire':
-        this.handleCellLockAcquire(client, msg.recordId, msg.fieldId);
+        await this.handleCellLockAcquire(client, msg.recordId, msg.fieldId);
         return;
       case 'cell_lock_release':
-        this.handleCellLockRelease(client, msg.recordId, msg.fieldId);
+        await this.handleCellLockRelease(client, msg.recordId, msg.fieldId);
         return;
       case 'get_changes':
         await this.sendChanges(client, msg.fromRev);
@@ -446,10 +490,11 @@ export class CollabRoomService {
     });
   }
 
-  private sendCellLocksSnapshot(client: RoomClient): void {
+  private async sendCellLocksSnapshot(client: RoomClient): Promise<void> {
+    const locks = await this.cellLocks.listForSheet(client.sheetId);
     this.send(client.socket, {
       type: 'cell_locks_snapshot',
-      locks: this.cellLocks.listForSheet(client.sheetId).map((lock) => ({
+      locks: locks.map((lock) => ({
         recordId: lock.recordId,
         fieldId: lock.fieldId,
         userId: lock.userId,
@@ -461,11 +506,11 @@ export class CollabRoomService {
     });
   }
 
-  private handleCellLockAcquire(
+  private async handleCellLockAcquire(
     client: RoomClient,
     recordId: string,
     fieldId: string,
-  ): void {
+  ): Promise<void> {
     if (!recordId || !fieldId) {
       this.send(client.socket, {
         type: 'error',
@@ -474,7 +519,7 @@ export class CollabRoomService {
       });
       return;
     }
-    const result = this.cellLocks.tryAcquire({
+    const result = await this.cellLocks.tryAcquire({
       sheetId: client.sheetId,
       recordId,
       fieldId,
@@ -517,13 +562,13 @@ export class CollabRoomService {
     }
   }
 
-  private handleCellLockRelease(
+  private async handleCellLockRelease(
     client: RoomClient,
     recordId: string,
     fieldId: string,
-  ): void {
+  ): Promise<void> {
     if (!recordId || !fieldId) return;
-    const freed = this.cellLocks.release(
+    const freed = await this.cellLocks.release(
       client.sheetId,
       recordId,
       fieldId,

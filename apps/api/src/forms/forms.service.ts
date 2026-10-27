@@ -74,6 +74,8 @@ export class FormsService implements OnModuleDestroy {
   private readonly worker: Worker | null = null;
   private readonly queueConnection: IORedis | null = null;
   private readonly workerConnection: IORedis | null = null;
+  /** Shared rate-limit client (multi-replica). Falls back to process Map. */
+  private readonly rateLimitRedis: IORedis | null = null;
   /**
    * Admission control: a single API replica must not push every simultaneous
    * HTTP submit into Prisma at once. Queued requests are still accepted and
@@ -108,11 +110,28 @@ export class FormsService implements OnModuleDestroy {
       Number(this.config.get<string>('SUBMIT_MAX_CONCURRENCY') ?? 64),
     );
 
+    const redisUrl = this.config.get<string>('REDIS_URL');
+    if (redisUrl) {
+      try {
+        this.rateLimitRedis = createRedisConnection(redisUrl, {
+          maxRetriesPerRequest: 1,
+          enableOfflineQueue: false,
+          connectTimeoutMs: 3_000,
+        });
+        this.rateLimitRedis.on('error', (error) => {
+          this.logger.warn(`form rate-limit Redis error: ${String(error)}`);
+        });
+      } catch (error) {
+        this.logger.warn(
+          `form rate-limit Redis unavailable, memory-only: ${String(error)}`,
+        );
+      }
+    }
+
     if (this.submitMode === 'queue') {
-      const url = this.config.get<string>(
-        'REDIS_URL',
-        'redis://127.0.0.1:6379',
-      );
+      const url =
+        redisUrl ??
+        this.config.get<string>('REDIS_URL', 'redis://127.0.0.1:6379');
       this.queueConnection = createRedisConnection(url);
       this.workerConnection = createRedisConnection(url);
       this.queue = new Queue(SUBMISSION_QUEUE, {
@@ -583,7 +602,7 @@ export class FormsService implements OnModuleDestroy {
     ip: string,
     submitterUserId?: string,
   ) {
-    this.assertRateLimit(shareToken, ip);
+    await this.assertRateLimit(shareToken, ip);
 
     const form = await this.prisma.form.findUnique({
       where: { shareToken },
@@ -1082,6 +1101,13 @@ export class FormsService implements OnModuleDestroy {
     await this.queue?.close();
     await this.workerConnection?.quit();
     await this.queueConnection?.quit();
+    if (this.rateLimitRedis) {
+      try {
+        await this.rateLimitRedis.quit();
+      } catch {
+        this.rateLimitRedis.disconnect();
+      }
+    }
   }
 
   private async requireBaseEditor(baseId: string, userId: string) {
@@ -1159,10 +1185,42 @@ export class FormsService implements OnModuleDestroy {
     }
   }
 
-  private assertRateLimit(shareToken: string, ip: string): void {
+  private async assertRateLimit(
+    shareToken: string,
+    ip: string,
+  ): Promise<void> {
     const key = `${shareToken}:${ip}`;
     const now = Date.now();
     const windowMs = 60_000;
+
+    if (this.rateLimitRedis) {
+      try {
+        const redisKey = `st:form:submit:${key}`;
+        // Sliding window via sorted set
+        const member = `${now}:${Math.random().toString(36).slice(2, 10)}`;
+        const pipe = this.rateLimitRedis.multi();
+        pipe.zremrangebyscore(redisKey, 0, now - windowMs);
+        pipe.zadd(redisKey, now, member);
+        pipe.zcard(redisKey);
+        pipe.pexpire(redisKey, windowMs);
+        const results = await pipe.exec();
+        const count = Number(results?.[2]?.[1] ?? 0);
+        if (count > this.submitLimit) {
+          await this.rateLimitRedis.zrem(redisKey, member);
+          throw new HttpException(
+            '提交过于频繁，请稍后再试',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+        return;
+      } catch (error) {
+        if (error instanceof HttpException) throw error;
+        this.logger.warn(
+          `form rate-limit Redis failed, memory fallback: ${String(error)}`,
+        );
+      }
+    }
+
     const hits = (this.submitHits.get(key) ?? []).filter(
       (timestamp) => now - timestamp < windowMs,
     );
