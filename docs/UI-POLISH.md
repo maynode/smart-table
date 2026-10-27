@@ -18,7 +18,7 @@
 - **讨论态度：** 有问题/更好方案要直说，不盲从；真好才定稿。
 - **有理有据：** 建议须可核对——现网行为、`design-refs/wecom` 企微材料，或点名业界对标（企微智能表、飞书多维表格、Notion Database、Airtable 等）的**具体交互**；禁止无出处臆造「最佳实践」。引用时说清学哪一点、为何适合本产品。
 - **底线**：保留产品语义与主路径（表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等）。
-- **阶段（2026-10-26）：** 打磨体验至成熟；**断网/离线**（`docs/OFFLINE.md`）与 **实时协同**（`docs/COLLAB.md`）已落地；跨端深化 / 企微登录等仍见 §10 与 `REMAINING-GAPS`。
+- **阶段（2026-10-27）：** UI 清单已勾完；**断网/PWA/离线**（`docs/OFFLINE.md`）与协同**协议**（`docs/COLLAB.md`）已落地；**体验主线仅剩协同观感**；跨端深化 / 企微登录等仍见 §10 与 `REMAINING-GAPS`。
 - **壳层（2026-10-24）：** **维持双路由**；成员贴工作区语境。示意 [`product-shell/`](design-refs/product-shell/README.md)；定稿 [`approved/`](design-refs/product-shell/approved/README.md)。
 - **设计画板：** 示意与定稿以 **1920 × 1080** 为基准（见 `product-shell/README`）。
 
