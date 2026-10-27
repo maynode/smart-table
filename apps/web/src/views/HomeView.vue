@@ -340,6 +340,8 @@ async function loadWorkspaces(): Promise<void> {
   loading.value = true;
   try {
     workspaces.value = await endpoints.listWorkspaces();
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache('hub:workspaces', 'hub', workspaces.value);
     const fromQuery = String(route.query.ws ?? '');
     const fromStorage = (() => {
       try {
@@ -361,7 +363,30 @@ async function loadWorkspaces(): Promise<void> {
       bases.value = [];
     }
   } catch (error) {
-    toast(messageOf(error) || '加载工作区失败');
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache('hub:workspaces')) as
+        | WorkspaceDto[]
+        | null;
+      if (cached?.length) {
+        workspaces.value = cached;
+        const preferred =
+          workspaces.value.find(
+            (item) => item.id === String(route.query.ws ?? ''),
+          )?.id ??
+          workspaces.value[0]?.id ??
+          '';
+        if (preferred) {
+          persistWorkspaceId(preferred);
+          await loadBases();
+        }
+        toast('已从离线缓存打开工作区列表');
+      } else {
+        toast(messageOf(error) || '加载工作区失败');
+      }
+    } catch {
+      toast(messageOf(error) || '加载工作区失败');
+    }
   } finally {
     loading.value = false;
   }
@@ -370,10 +395,24 @@ async function loadWorkspaces(): Promise<void> {
 async function loadBases(): Promise<void> {
   if (!currentWorkspaceId.value) return;
   basesLoading.value = true;
+  const cacheKey = `hub:bases:${currentWorkspaceId.value}`;
   try {
     bases.value = await endpoints.listBases(currentWorkspaceId.value);
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'hub', bases.value);
   } catch (error) {
-    toast(messageOf(error) || '加载智能表格失败');
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache(cacheKey)) as BaseDto[] | null;
+      if (cached?.length) {
+        bases.value = cached;
+        toast('已从离线缓存打开表格列表');
+      } else {
+        toast(messageOf(error) || '加载智能表格失败');
+      }
+    } catch {
+      toast(messageOf(error) || '加载智能表格失败');
+    }
   } finally {
     basesLoading.value = false;
   }

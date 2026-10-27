@@ -166,6 +166,7 @@ async function load(withPassword?: string): Promise<void> {
   }
   loading.value = true;
   error.value = '';
+  const cacheKey = `public-view:${token}`;
   try {
     data.value = await endpoints.getPublicView(
       token,
@@ -173,6 +174,10 @@ async function load(withPassword?: string): Promise<void> {
     );
     needPassword.value = false;
     liveSocket.connectPublic(token);
+    if (!submitted) {
+      const { localDb } = await import('../sync/local-db-client');
+      void localDb.putObjectCache(cacheKey, 'public-view', data.value);
+    }
   } catch (caught) {
     if (caught instanceof ApiError && caught.status === 401) {
       needPassword.value = true;
@@ -181,7 +186,19 @@ async function load(withPassword?: string): Promise<void> {
       needPassword.value = true;
       error.value = messageOf(caught) || '访问密码错误';
     } else {
-      error.value = messageOf(caught);
+      try {
+        const { localDb } = await import('../sync/local-db-client');
+        const cached = await localDb.getObjectCache(cacheKey);
+        if (cached) {
+          data.value = cached as typeof data.value;
+          needPassword.value = false;
+          error.value = '';
+        } else {
+          error.value = messageOf(caught);
+        }
+      } catch {
+        error.value = messageOf(caught);
+      }
     }
   } finally {
     loading.value = false;

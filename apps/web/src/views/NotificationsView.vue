@@ -18,11 +18,27 @@ const unreadCount = computed(
 
 async function refresh(): Promise<void> {
   loading.value = true;
+  const cacheKey = 'notifications:list';
   try {
     const result = await endpoints.listNotifications(100);
     items.value = result.notifications;
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'notifications', items.value);
   } catch (error) {
-    toast(error instanceof Error ? error.message : '加载消息失败');
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache(cacheKey)) as
+        | NotificationDto[]
+        | null;
+      if (cached?.length) {
+        items.value = cached;
+        toast('已从离线缓存打开消息');
+      } else {
+        toast(error instanceof Error ? error.message : '加载消息失败');
+      }
+    } catch {
+      toast(error instanceof Error ? error.message : '加载消息失败');
+    }
   } finally {
     loading.value = false;
   }
@@ -31,6 +47,19 @@ async function refresh(): Promise<void> {
 async function markRead(row: NotificationDto): Promise<void> {
   if (row.readAt) return;
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { localDb } = await import('../sync/local-db-client');
+      row.readAt = new Date().toISOString();
+      await enqueueObjectMutation({
+        type: 'notification.read',
+        notificationId: row.id,
+      });
+      void localDb.putObjectCache('notifications:list', 'notifications', [
+        ...items.value,
+      ]);
+      return;
+    }
     await endpoints.markNotificationRead(row.id);
     row.readAt = new Date().toISOString();
   } catch (error) {
@@ -42,8 +71,23 @@ async function markAllRead(): Promise<void> {
   if (unreadCount.value === 0 || markingAll.value) return;
   markingAll.value = true;
   try {
-    await endpoints.markAllNotificationsRead();
     const now = new Date().toISOString();
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { localDb } = await import('../sync/local-db-client');
+      items.value = items.value.map((row) =>
+        row.readAt ? row : { ...row, readAt: now },
+      );
+      await enqueueObjectMutation({ type: 'notification.readAll' });
+      void localDb.putObjectCache(
+        'notifications:list',
+        'notifications',
+        items.value,
+      );
+      toast('离线已全部标为已读，联网后同步');
+      return;
+    }
+    await endpoints.markAllNotificationsRead();
     items.value = items.value.map((row) =>
       row.readAt ? row : { ...row, readAt: now },
     );

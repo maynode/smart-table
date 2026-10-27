@@ -13,7 +13,8 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
 **P0 仍缺：** 无（`perf:window` 已于 2026-10-26 造千万行表跑通，见 `PERFORMANCE.md` §5.2）。  
 **进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT + 单元格短租约（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）；千万行块对齐窗口 + 方向预取 + skeleton + resize settle（见 `PERFORMANCE.md` §9）。  
-**待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；大表 chunk 本地库；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。
+**待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。  
+**已落地（2026-10-27）：** 完整 PWA 壳 + 大表 chunk 本地库（Worker / cell-budget / 冷启动缓存）；见 `docs/OFFLINE.md` §0。
 
 **已落地（本轮）：** 仪表盘内 AI Agent（完整共编：对话 + 增删改图表/布局），见 `docs/DASHBOARD.md` §5。
 
@@ -22,7 +23,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | # | 项 | 状态 | 说明 / 复现 |
 |---|----|------|-------------|
 | 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；toolbar 定高 / RO 去重 / `contain: layout paint`。若仍抖，查外层 flex 而非 canvas 清缓冲。 |
-| 2 | **大表滚动性能 / 空白观感** | **已对齐企微行窗口语义** | 块对齐 + 方向预取（顺向 2 块）+ 跳转立即拉 + skeleton；实现 `sync/record-window.ts`。非企微 chunk 本地库（仍待定）。 |
+| 2 | **大表滚动性能 / 空白观感** | **已对齐企微行窗口语义 + chunk 本地库** | 块对齐 + 方向预取 + skeleton + 持久化 chunk（`local-db-*`）；见 `OFFLINE.md` §0。 |
 | 3 | **实时协同观感差** | **待优化** | 协议主路径已通（WS + OT + 单元格锁），联调观感仍差。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
 
 **下一 AI：** 优先协同观感（#3）；大表 #1/#2 已按企微行窗口策略落地，回归见 `PERFORMANCE.md` §9。
@@ -147,7 +148,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 | 真企微群聊 | **待定** | 自动化群聊走 Local fallback / `wecomChatId`；真企微群 API 不强制 |
 | AI BI（仪表盘 Agent / 智能分析） | **已完成（2026-10-26）** | 分析报告：对话 + digest/LLM Markdown（`docs/ANALYSIS-REPORT.md`）；仪表盘内 Agent：对话 + 增删改图表/布局，事务落库 + Live（`docs/DASHBOARD.md` §5）。不做企微 `smartsheet-bi` 协议孪生 |
 | `USER_C` 字段 | **待定** | 材料语义不清；主类人员用 `person`（USER） |
-| 大表 chunk 本地库 | **待定** | 客户端分块本地库；性价比低，ROI 不足暂不做 |
+| 大表 chunk 本地库 | **已完成（2026-10-27）** | IDB v2 `record_chunks` + Sync Worker + cell-budget；见 `OFFLINE.md` §0 |
 
 ### 产品目标与边界（2026-10-22 对齐；2026-10-24 补阶段）
 

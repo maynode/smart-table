@@ -4,6 +4,21 @@
 > 在线实时单元格：见 [COLLAB.md](./COLLAB.md)；Base 对象自动更新：见 [LIVE.md](./LIVE.md)。  
 > 离线 / WS 不可用时 MessageCenter 降级 **HTTP `commitchanges`**。
 
+## 0. PWA + Chunk 本地库（2026-10-27）
+
+| 层 | 实现 | 说明 |
+|----|------|------|
+| 可安装壳 | `vite-plugin-pwa` + Workbox | precache SPA/静态资产；**禁止**缓存 `/api` `/files` `/collab` `/live` |
+| 本地库 | `smart-table-sync` IDB v2 + Sync Worker | `record_chunks`（fflate + crc32）、`shell_meta`、`object_cache`；队列仍走 `pending_mutations` |
+| 分块 | `chunk-math.ts` `CELL_BUDGET=15000` | 网络窗 `WINDOW_SIZE=2000`；落库按单元格预算切子块 |
+| 写穿 | `localDb.persistWindowAsync` | 先上屏，idle/coalesce 再落库；主线程不 await put |
+| 崩溃安全 | `enqueueAndPatch` | `setRecord` 入队与 chunk 乐观 patch **同一 IDB 事务** |
+| 动作门闸 | `offline-capability.ts` | `allow` / `queue` / `block`（AI / 自动化 Run / ACL 写等离线硬阻断） |
+| 对象 Outbox | `object-outbox.ts` | 仪表盘布局/删图、自动化启停/保存/删除、通知已读；联网 REST flush |
+
+冷启动：有 token + 已访问过的 Base/表 → 断网 reload 可读缓存窗并可继续改格入队。  
+对象面缓存：Hub、仪表盘 detail+聚合、分析列表/报告、自动化列表、公开视图、通知列表。
+
 ## 1. 客户端流水线
 
 ```
@@ -74,3 +89,8 @@ prepareUserChange → pendingChanges → persistChanges（IndexedDB）
 - [x] 附件 `pending-blob:` → flush 前 upload 再 commit
 - [x] 自动化仅在服务端 accept 后触发（mutation 走既有 SheetsService 写路径）
 - [x] API e2e + Playwright `setOffline`
+- [x] PWA 壳（manifest + SW 仅静态资产）
+- [x] chunk 本地库冷启动（`e2e/offline-sync.spec.ts` cold reload）
+- [x] `offline-capability` 单测；cell-budget / queryFp 单测
+- [x] 对象 Outbox：仪表盘布局、自动化定义、通知已读（`object-outbox.ts`）
+- [x] 仪表盘/分析/自动化/公开视图/通知离线读缓存

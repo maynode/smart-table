@@ -1001,6 +1001,13 @@ async function loadAutomationButtons(): Promise<void> {
 
 async function runAutomationButton(buttonKey: string): Promise<void> {
   if (!props.editable) return;
+  const { offlineDecision, offlineBlockMessage } = await import(
+    '../sync/offline-capability'
+  );
+  if (offlineDecision('automation.run') === 'block') {
+    toast(offlineBlockMessage('automation.run'));
+    return;
+  }
   const recordId = selectedRecordIds.value[0];
   if (!recordId || runningButtonKey.value) return;
   runningButtonKey.value = buttonKey;

@@ -115,3 +115,90 @@ test('offline cell edit persists and flushes after online', async ({
     )
     .toBe('离线改写');
 });
+
+test('offline cold reload serves cached sheet window', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(120_000);
+  const stamp = Date.now();
+  const account = `pwa${String(stamp).slice(-8)}`;
+  const password = 'Ab12_cd34';
+  const api = await apiRequest.newContext({ baseURL: API });
+  const ownerRes = await api.post('/auth/register', {
+    data: {
+      account,
+      password,
+      securityQuestion: '你小学就读的学校名称是？',
+      securityAnswer: 'demo',
+    },
+  });
+  expect(ownerRes.ok()).toBeTruthy();
+  const owner = await ownerRes.json();
+  const headers = { Authorization: `Bearer ${owner.accessToken}` };
+  const workspace = await (
+    await api.post('/workspaces', {
+      headers,
+      data: { name: `PWA工作区${stamp}` },
+    })
+  ).json();
+  const base = await (
+    await api.post(`/workspaces/${workspace.id}/bases`, {
+      headers,
+      data: { name: 'PWA Base' },
+    })
+  ).json();
+  const sheets = await (
+    await api.get(`/bases/${base.id}/sheets`, { headers })
+  ).json();
+  const sheet = sheets[0] as { id: string };
+  const field = await (
+    await api.post(`/sheets/${sheet.id}/fields`, {
+      headers,
+      data: { name: '缓存列', type: 'text' },
+    })
+  ).json();
+  await api.post(`/sheets/${sheet.id}/records`, {
+    headers,
+    data: { cells: { [field.id]: '冷启动缓存值' } },
+  });
+
+  await page.addInitScript(
+    ({ token, user }) => {
+      localStorage.setItem('st.token', token);
+      localStorage.setItem('st.user', JSON.stringify(user));
+    },
+    { token: owner.accessToken, user: owner.user },
+  );
+
+  await page.goto(
+    `/workspaces/${workspace.id}/bases/${base.id}?sheet=${sheet.id}`,
+  );
+  await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  // Allow async IDB persist coalesce.
+  await page.waitForTimeout(800);
+
+  await context.setOffline(true);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const rows = (
+            window as unknown as {
+              __stRecordsProbe?: Array<{ cells?: Record<string, unknown> }>;
+            }
+          ).__stRecordsProbe;
+          return rows?.some((r) =>
+            Object.values(r.cells ?? {}).includes('冷启动缓存值'),
+          );
+        }),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+});

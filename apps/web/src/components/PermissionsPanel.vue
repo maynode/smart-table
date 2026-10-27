@@ -201,6 +201,13 @@ async function save(): Promise<void> {
     toast('无权修改内容权限');
     return;
   }
+  const { offlineDecision, offlineBlockMessage } = await import(
+    '../sync/offline-capability'
+  );
+  if (offlineDecision('acl.write') === 'block') {
+    toast(offlineBlockMessage('acl.write'));
+    return;
+  }
   if (recordMode.value === 'condition' && !conditionField.value) {
     toast('请选择记录范围的条件字段');
     return;

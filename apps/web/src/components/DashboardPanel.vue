@@ -198,13 +198,39 @@ async function resizeWidget(
   if (!active.value || busyWidgetId.value) return;
   const layout = layoutOf(widget);
   busyWidgetId.value = widget.id;
+  const nextLayout = {
+    ...(widget.layout ?? {}),
+    w: Math.min(12, Math.max(3, layout.w + deltaWidth)),
+    h: Math.min(6, Math.max(2, layout.h + deltaHeight)),
+  };
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { localDb } = await import('../sync/local-db-client');
+      if (data.value) {
+        data.value = {
+          ...data.value,
+          widgets: data.value.widgets.map((item) =>
+            item.id === widget.id ? { ...item, layout: nextLayout } : item,
+          ),
+        };
+        void localDb.putObjectCache(`dashboard:${active.value.id}`, 'dashboard', {
+          detail: active.value,
+          data: data.value,
+          schedules: schedules.value,
+        });
+      }
+      await enqueueObjectMutation({
+        type: 'dashboard.widget',
+        dashboardId: active.value.id,
+        widgetId: widget.id,
+        patch: { layout: nextLayout },
+      });
+      toast('离线已保存布局，联网后同步');
+      return;
+    }
     await endpoints.updateDashboardWidget(active.value.id, widget.id, {
-      layout: {
-        ...(widget.layout ?? {}),
-        w: Math.min(12, Math.max(3, layout.w + deltaWidth)),
-        h: Math.min(6, Math.max(2, layout.h + deltaHeight)),
-      },
+      layout: nextLayout,
     });
     data.value = await endpoints.getDashboardData(active.value.id);
   } catch (error) {
@@ -223,6 +249,28 @@ async function deleteWidget(widget: DashboardWidgetData): Promise<void> {
   });
   if (!ok) return;
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { localDb } = await import('../sync/local-db-client');
+      if (data.value) {
+        data.value = {
+          ...data.value,
+          widgets: data.value.widgets.filter((item) => item.id !== widget.id),
+        };
+        void localDb.putObjectCache(`dashboard:${active.value.id}`, 'dashboard', {
+          detail: active.value,
+          data: data.value,
+          schedules: schedules.value,
+        });
+      }
+      await enqueueObjectMutation({
+        type: 'dashboard.widgetDelete',
+        dashboardId: active.value.id,
+        widgetId: widget.id,
+      });
+      toast('离线已删除，联网后同步');
+      return;
+    }
     await endpoints.deleteDashboardWidget(active.value.id, widget.id);
     data.value = await endpoints.getDashboardData(active.value.id);
     toast('图表已删除');
@@ -254,6 +302,28 @@ async function onDrop(widget: DashboardWidgetData): Promise<void> {
   const [moved] = list.splice(from, 1);
   list.splice(to, 0, moved);
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { localDb } = await import('../sync/local-db-client');
+      if (data.value) {
+        data.value = { ...data.value, widgets: list };
+        void localDb.putObjectCache(`dashboard:${active.value.id}`, 'dashboard', {
+          detail: active.value,
+          data: data.value,
+          schedules: schedules.value,
+        });
+      }
+      for (let index = 0; index < list.length; index += 1) {
+        await enqueueObjectMutation({
+          type: 'dashboard.widget',
+          dashboardId: active.value.id,
+          widgetId: list[index]!.id,
+          patch: { order: index },
+        });
+      }
+      toast('离线已保存顺序，联网后同步');
+      return;
+    }
     await Promise.all(
       list.map((item, index) =>
         endpoints.updateDashboardWidget(active.value!.id, item.id, {
@@ -286,6 +356,7 @@ async function loadDashboard(dashboardId: string): Promise<void> {
     return;
   }
   loading.value = true;
+  const cacheKey = `dashboard:${dashboardId}`;
   try {
     const [detail, dashboardData, scheduleList] = await Promise.all([
       endpoints.getDashboard(dashboardId),
@@ -295,6 +366,12 @@ async function loadDashboard(dashboardId: string): Promise<void> {
     active.value = detail;
     data.value = dashboardData;
     schedules.value = scheduleList;
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'dashboard', {
+      detail,
+      data: dashboardData,
+      schedules: scheduleList,
+    });
     const firstWidget = (
       detail as unknown as { widgets?: Array<{ sheetId?: string }> }
     ).widgets?.[0];
@@ -306,10 +383,30 @@ async function loadDashboard(dashboardId: string): Promise<void> {
       await loadFields(props.sheets[0].id);
     }
   } catch (error) {
-    toast(messageOf(error));
-    active.value = null;
-    data.value = null;
-    schedules.value = [];
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache(cacheKey)) as {
+        detail?: typeof active.value;
+        data?: typeof data.value;
+        schedules?: typeof schedules.value;
+      } | null;
+      if (cached?.detail && cached.data) {
+        active.value = cached.detail;
+        data.value = cached.data;
+        schedules.value = cached.schedules ?? [];
+        toast('已从离线缓存打开仪表盘');
+      } else {
+        toast(messageOf(error));
+        active.value = null;
+        data.value = null;
+        schedules.value = [];
+      }
+    } catch {
+      toast(messageOf(error));
+      active.value = null;
+      data.value = null;
+      schedules.value = [];
+    }
   } finally {
     loading.value = false;
   }

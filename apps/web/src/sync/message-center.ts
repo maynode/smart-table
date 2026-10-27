@@ -15,7 +15,15 @@ import {
   idbPutMutation,
   type QueuedMutationRow,
 } from './idb-store';
+import { localDb } from './local-db-client';
 import { collabSocket } from './collab-socket';
+
+export type EnqueueChunkContext = {
+  queryFp: string;
+  recordId: string;
+  cells: Record<string, unknown>;
+  version?: number;
+};
 
 export type SyncStatus = 'online' | 'offline' | 'syncing' | 'conflict';
 
@@ -69,7 +77,12 @@ class MessageCenter {
       this.status.value = 'offline';
     });
     collabSocket.setHandlers({
-      onAccept: (payload) => {
+      onAccept: (payload: {
+        results: unknown[];
+        newRev: number;
+        clientBatchId?: string;
+        mutations: SheetMutation[];
+      }) => {
         const batchId =
           payload.clientBatchId ??
           [...this.wsWaiters.keys()][0];
@@ -123,11 +136,13 @@ class MessageCenter {
   }
 
   /**
-   * prepareUserChange → pending → persist → schedule flush
+   * prepareUserChange → pending → persist → schedule flush.
+   * When chunkCtx is set, mutation + chunk patch share one IDB transaction.
    */
   async enqueue(
     sheetId: string,
     mutation: Omit<SheetMutation, 'clientOpId'> & { clientOpId?: string },
+    chunkCtx?: EnqueueChunkContext,
   ): Promise<string> {
     await this.bootstrap();
     const clientOpId = mutation.clientOpId ?? newId();
@@ -139,7 +154,18 @@ class MessageCenter {
       createdAt: Date.now(),
       status: 'pending',
     };
-    await idbPutMutation(row);
+    if (chunkCtx) {
+      await localDb.enqueueAndPatch({
+        row,
+        sheetId,
+        queryFp: chunkCtx.queryFp,
+        recordId: chunkCtx.recordId,
+        cells: chunkCtx.cells,
+        version: chunkCtx.version,
+      });
+    } else {
+      await idbPutMutation(row);
+    }
     await this.refreshCount();
     this.channel?.postMessage({ type: 'queue-changed' });
     if (navigator.onLine) {

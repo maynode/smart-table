@@ -182,10 +182,11 @@ K8s API Deployment 已带抓取注解；无 Prometheus 时可用 `curl`.
 
 ## 9. 大表观感（对齐企微行窗口，2026-10-27）
 
-相对企微 `opendoc startrow/endrow` + chunk 页：本仓用 REST 块对齐窗口（`apps/web/src/sync/record-window.ts`），不做客户端 chunk DB。
+相对企微 `opendoc startrow/endrow` + chunk 页：本仓用 REST 块对齐窗口（`apps/web/src/sync/record-window.ts`）+ **客户端 chunk 本地库**（`local-db-*` / `chunk-math.ts`，`CELL_BUDGET=15000`）。
 
 已落地：
 
 1. **拉伸窗口**：拖边时 CSS 拉伸上一帧，settle 80ms 后再 realloc canvas（`engine.ts`），避免每 px 清缓冲抖动。
 2. **快滚 / 跳转**：方向性预取（顺向 2 块）、跳转立即 OFFSET（不再空等 90ms）、缺行 **skeleton** 占位。
-3. 门禁仍以 §8 为准；观感回归以手工拖窗 + 快滚 + `pnpm --filter web exec vitest run src/sync/record-window.spec.ts` 为准。
+3. **Chunk 本地库**：Worker + fflate 压缩落库；网络返回先上屏再 idle coalesce 持久化；离线冷启动读缓存窗（见 `docs/OFFLINE.md` §0）。
+4. 门禁仍以 §8 为准；本地库回归：`vitest` `chunk-math` / `offline-capability` + Playwright `e2e/offline-sync.spec.ts`（含 cold reload）。

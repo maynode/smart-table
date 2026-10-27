@@ -59,6 +59,7 @@ function initialValue(field: PublicFormFieldDto): unknown {
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
+  const cacheKey = `public-form:${token.value}`;
   try {
     const result = await endpoints.getPublicForm(token.value);
     form.value = result;
@@ -66,9 +67,27 @@ async function load(): Promise<void> {
     for (const field of result.fields) {
       answers[field.fieldId] = initialValue(field);
     }
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'public-form', result);
   } catch (caught) {
-    error.value =
-      caught instanceof ApiError ? caught.message : '表单加载失败，请稍后再试';
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = await localDb.getObjectCache(cacheKey);
+      if (cached && typeof cached === 'object') {
+        form.value = cached as typeof form.value;
+        for (const key of Object.keys(answers)) delete answers[key];
+        for (const field of (form.value?.fields ?? [])) {
+          answers[field.fieldId] = initialValue(field);
+        }
+        error.value = '';
+      } else {
+        error.value =
+          caught instanceof ApiError ? caught.message : '表单加载失败，请稍后再试';
+      }
+    } catch {
+      error.value =
+        caught instanceof ApiError ? caught.message : '表单加载失败，请稍后再试';
+    }
   } finally {
     loading.value = false;
   }

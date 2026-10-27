@@ -127,20 +127,55 @@ async function scrollChat(): Promise<void> {
 }
 
 async function loadList(): Promise<void> {
-  list.value = await endpoints.listAnalysisReports(props.baseId);
+  const cacheKey = `analysis-list:${props.baseId}`;
+  try {
+    list.value = await endpoints.listAnalysisReports(props.baseId);
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'analysis', list.value);
+  } catch (error) {
+    const { localDb } = await import('../sync/local-db-client');
+    const cached = (await localDb.getObjectCache(cacheKey)) as
+      | AnalysisReportListItemDto[]
+      | null;
+    if (cached?.length) {
+      list.value = cached;
+      toast('已从离线缓存打开分析列表');
+    } else {
+      throw error;
+    }
+  }
 }
 
 async function openReport(id: string): Promise<void> {
   loading.value = true;
+  const cacheKey = `analysis-report:${id}`;
   try {
     active.value = await endpoints.getAnalysisReport(id);
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'analysis', active.value);
     draft.value = '';
     clearPendingFiles();
     await scrollChat();
     await nextTick();
     inputRef.value?.focus();
   } catch (error) {
-    toast(messageOf(error));
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache(cacheKey)) as
+        | AnalysisReportDto
+        | null;
+      if (cached) {
+        active.value = cached;
+        draft.value = '';
+        clearPendingFiles();
+        toast('已从离线缓存打开分析报告（只读历史）');
+        await scrollChat();
+      } else {
+        toast(messageOf(error));
+      }
+    } catch {
+      toast(messageOf(error));
+    }
   } finally {
     loading.value = false;
   }
@@ -250,6 +285,13 @@ function onComposerPaste(event: ClipboardEvent): void {
 async function sendChat(): Promise<void> {
   if (!props.editable) return;
   if (!active.value || !canSend.value) return;
+  const { offlineDecision, offlineBlockMessage } = await import(
+    '../sync/offline-capability'
+  );
+  if (offlineDecision('analysis.generate') === 'block') {
+    toast(offlineBlockMessage('analysis.generate'));
+    return;
+  }
   const text = draft.value.trim();
   const attachments = [...readyAttachments.value];
   const snapshotPending = [...pendingFiles.value];

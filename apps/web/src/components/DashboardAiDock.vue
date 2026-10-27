@@ -72,6 +72,13 @@ async function sendChat(text: string): Promise<void> {
     toast('当前为只读权限，无法使用助手');
     return;
   }
+  const { offlineDecision, offlineBlockMessage } = await import(
+    '../sync/offline-capability'
+  );
+  if (offlineDecision('dashboard.ai') === 'block') {
+    toast(offlineBlockMessage('dashboard.ai'));
+    return;
+  }
   if (!text.trim() || submitting.value) return;
   submitting.value = true;
   const clientMessageId = `c_${Date.now().toString(36)}_${Math.random()

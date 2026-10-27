@@ -1057,6 +1057,46 @@ async function save(mode: 'draft' | 'enable' = 'draft'): Promise<void> {
       onFindEmpty: onFindEmpty.value,
       monthlyQuota: monthlyQuota.value,
     };
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      const { offlineDecision, offlineBlockMessage } = await import(
+        '../sync/offline-capability'
+      );
+      if (offlineDecision('automation.edit') === 'block') {
+        error.value = offlineBlockMessage('automation.edit');
+        return;
+      }
+      await enqueueObjectMutation({
+        type: 'automation.upsert',
+        automationId: props.automation?.id,
+        baseId: props.baseId,
+        body,
+      });
+      const now = new Date().toISOString();
+      const localSaved: AutomationDto = {
+        ...(props.automation ?? {
+          id: `offline-${Date.now()}`,
+          baseId: props.baseId,
+          name: body.name,
+          enabled: body.enabled ?? false,
+          trigger: body.trigger,
+          steps: body.steps as unknown[],
+          onFindEmpty: body.onFindEmpty ?? 'continue',
+          monthlyQuota: body.monthlyQuota ?? null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+        name: body.name,
+        enabled: body.enabled ?? false,
+        trigger: body.trigger,
+        steps: body.steps as unknown[],
+        onFindEmpty: body.onFindEmpty ?? 'continue',
+        monthlyQuota: body.monthlyQuota ?? null,
+        updatedAt: now,
+      };
+      emit('saved', localSaved);
+      return;
+    }
     const saved = props.automation
       ? await endpoints.updateAutomation(props.automation.id, body)
       : await endpoints.createAutomation({

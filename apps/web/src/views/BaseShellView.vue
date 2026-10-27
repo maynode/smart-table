@@ -39,6 +39,8 @@ import {
   planWindowFetches,
   type ScrollDirection,
 } from '../sync/record-window';
+import { localDb } from '../sync/local-db-client';
+import { queryFingerprint } from '../sync/chunk-math';
 import { auth } from '../stores/auth';
 import { newId } from '../ui/id';
 import { toast } from '../ui/toast';
@@ -191,6 +193,15 @@ const savedViews = ref<SavedViewDto[]>([]);
 const savedViewName = ref('');
 const currentViewId = ref('');
 const currentQuery = ref<ViewQuery>({});
+const activeQueryFp = computed(() =>
+  queryFingerprint({
+    viewId: currentViewId.value || null,
+    filter: currentQuery.value.filters,
+    sort: currentQuery.value.sorts,
+    group: currentQuery.value.groups,
+    search: currentQuery.value.search,
+  }),
+);
 const savingView = ref(false);
 const applyingSavedView = ref(false);
 const sheetMenuId = ref<string | null>(null);
@@ -291,6 +302,16 @@ async function bootstrap(): Promise<void> {
     forms.value = formList;
     dashboards.value = dashboardList;
     analysisReports.value = reportList;
+    void localDb.putShellMeta(`base:${baseId.value}`, {
+      workspace: ws,
+      base: baseDetail,
+      sheets: sheetList,
+      members: memberList,
+      forms: formList,
+      dashboards: dashboardList,
+      analysisReports: reportList,
+      savedAt: Date.now(),
+    });
     if (dashboardList.length > 4) {
       sectionCollapsed.value = {
         ...sectionCollapsed.value,
@@ -315,7 +336,35 @@ async function bootstrap(): Promise<void> {
       await selectSheet(preferred, false);
     }
   } catch (error) {
-    bootError.value = messageOf(error);
+    const cached = (await localDb.getShellMeta(`base:${baseId.value}`)) as {
+      workspace?: typeof workspace.value;
+      base?: typeof base.value;
+      sheets?: typeof sheets.value;
+      members?: typeof members.value;
+      forms?: typeof forms.value;
+      dashboards?: typeof dashboards.value;
+      analysisReports?: typeof analysisReports.value;
+    } | null;
+    if (cached?.base && cached.sheets?.length) {
+      workspace.value = cached.workspace ?? null;
+      base.value = cached.base;
+      sheets.value = cached.sheets;
+      members.value = cached.members ?? [];
+      forms.value = cached.forms ?? [];
+      dashboards.value = cached.dashboards ?? [];
+      analysisReports.value = cached.analysisReports ?? [];
+      bootError.value = '';
+      const requested =
+        typeof route.query.sheet === 'string' ? route.query.sheet : null;
+      const preferred =
+        requested ??
+        cached.sheets.find((sheet) => !isFormSheet(sheet))?.id ??
+        cached.sheets[0]?.id;
+      if (preferred) await selectSheet(preferred, false);
+      toast('已从离线缓存打开（部分数据可能不是最新）');
+    } else {
+      bootError.value = messageOf(error);
+    }
   }
 }
 
@@ -473,8 +522,37 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     rowColors.value = {};
     viewGroups.value = [];
     recordsLoadGen.value += 1;
-    const page = await endpoints.listRecords(sheetId, null, WINDOW_SIZE, 0);
     clearRecordWindowCache();
+    const fieldCount = Math.max(1, (detail.fields ?? []).length);
+    let page: {
+      records: RecordDto[];
+      nextCursor: string | null;
+      total?: number;
+      offset?: number;
+    } | null = null;
+    try {
+      page = await endpoints.listRecords(sheetId, null, WINDOW_SIZE, 0);
+    } catch (netErr) {
+      const chunks = await localDb.getChunksCovering({
+        sheetId,
+        queryFp: activeQueryFp.value,
+        startRow: 0,
+        endRow: WINDOW_SIZE - 1,
+        fieldCount,
+      });
+      if (chunks.length === 0) throw netErr;
+      const merged = chunks
+        .slice()
+        .sort((a, b) => a.blockStartRow - b.blockStartRow)
+        .flatMap((c) => c.records as RecordDto[]);
+      page = {
+        records: merged,
+        nextCursor: null,
+        total: chunks[0]?.total ?? merged.length,
+        offset: 0,
+      };
+      toast('已加载离线缓存的表格数据');
+    }
     records.value = page.records;
     recordOffset.value = 0;
     const total = page.total ?? page.records.length;
@@ -485,8 +563,12 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     } else {
       totalRecordCount.value = null;
       nextCursor.value = page.nextCursor;
-      void drainRecordsInBackground(sheetId);
+      putRecordWindow(0, page.records, 0);
+      if (navigator.onLine) void drainRecordsInBackground(sheetId);
     }
+    persistRecordsToLocal(sheetId, 0, page.records, total);
+    void localDb.putObjectCache(`sheet:${sheetId}`, 'sheet', detail);
+    void localDb.putObjectCache(`views:${sheetId}`, 'views', views);
     messageCenter.attachSheet(sheetId);
   } catch (error) {
     toast(messageOf(error));
@@ -697,12 +779,21 @@ async function commitCell(payload: {
     label: `${payload.field.name}: ${formatHistoryValue(previous)} → ${formatHistoryValue(coerced)}`,
   });
   try {
-    await messageCenter.enqueue(activeSheet.value.id, {
-      type: 'setRecord',
-      recordId: payload.record.id,
-      cells: { [payload.field.id]: coerced },
-      baseVersion: payload.record.version,
-    });
+    await messageCenter.enqueue(
+      activeSheet.value.id,
+      {
+        type: 'setRecord',
+        recordId: payload.record.id,
+        cells: { [payload.field.id]: coerced },
+        baseVersion: payload.record.version,
+      },
+      {
+        queryFp: activeQueryFp.value,
+        recordId: payload.record.id,
+        cells: { [payload.field.id]: coerced },
+        version: payload.record.version,
+      },
+    );
   } catch (error) {
     toast(messageOf(error));
   }
@@ -912,12 +1003,21 @@ async function applyHistoryValue(
       : item,
   );
   try {
-    await messageCenter.enqueue(activeSheet.value.id, {
-      type: 'setRecord',
-      recordId,
-      cells: { [fieldId]: value },
-      baseVersion: record.version,
-    });
+    await messageCenter.enqueue(
+      activeSheet.value.id,
+      {
+        type: 'setRecord',
+        recordId,
+        cells: { [fieldId]: value },
+        baseVersion: record.version,
+      },
+      {
+        queryFp: activeQueryFp.value,
+        recordId,
+        cells: { [fieldId]: value },
+        version: record.version,
+      },
+    );
     return true;
   } catch (error) {
     toast(messageOf(error));
@@ -993,6 +1093,24 @@ function putRecordWindow(offset: number, list: RecordDto[], anchor: number): voi
   recordCacheEpoch.value += 1;
 }
 
+function persistRecordsToLocal(
+  sheetId: string,
+  networkOffset: number,
+  list: RecordDto[],
+  total: number,
+): void {
+  const fieldCount = Math.max(1, (activeSheet.value?.fields ?? []).length);
+  localDb.persistWindowAsync({
+    sheetId,
+    queryFp: activeQueryFp.value,
+    networkOffset,
+    records: list,
+    total,
+    sheetRev: null,
+    fieldCount,
+  });
+}
+
 /** Contiguous dense window for selection/edit; paint prefers lookupRecord. */
 function materializeRecordWindow(vStart: number, vEnd: number): void {
   if (recordIndexCache.size === 0) return;
@@ -1041,19 +1159,70 @@ function fetchRecordWindow(sheetId: string, offset: number, anchor: number): Pro
   const existing = windowFetchesInFlight.get(requestOffset);
   if (existing) return existing;
   const gen = recordsLoadGen.value;
+  const fieldCount = Math.max(1, (activeSheet.value?.fields ?? []).length);
   const task = (async () => {
     try {
-      const page = prev
-        ? await endpoints.listRecords(sheetId, prev.id, WINDOW_SIZE)
-        : await endpoints.listRecords(sheetId, null, WINDOW_SIZE, requestOffset);
-      if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) return;
-      const appliedOffset = prev ? requestOffset : (page.offset ?? requestOffset);
-      putRecordWindow(appliedOffset, page.records, anchor);
-      const stats = lastWindowStats;
-      if (stats) materializeRecordWindow(stats.rows.start, stats.rows.end);
-      else materializeRecordWindow(anchor, anchor + 1);
-    } catch {
-      /* keep cache */
+      const hydrateFromLocal = async (): Promise<boolean> => {
+        const chunks = await localDb.getChunksCovering({
+          sheetId,
+          queryFp: activeQueryFp.value,
+          startRow: requestOffset,
+          endRow: requestOffset + WINDOW_SIZE - 1,
+          fieldCount,
+        });
+        if (chunks.length === 0) return false;
+        if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) {
+          return true;
+        }
+        for (const chunk of chunks) {
+          putRecordWindow(
+            chunk.blockStartRow,
+            chunk.records as RecordDto[],
+            anchor,
+          );
+        }
+        if (chunks[0]?.total != null) {
+          totalRecordCount.value = chunks[0].total;
+        }
+        const stats = lastWindowStats;
+        if (stats) materializeRecordWindow(stats.rows.start, stats.rows.end);
+        else materializeRecordWindow(anchor, anchor + 1);
+        return true;
+      };
+
+      if (!navigator.onLine) {
+        await hydrateFromLocal();
+        return;
+      }
+
+      try {
+        const page = prev
+          ? await endpoints.listRecords(sheetId, prev.id, WINDOW_SIZE)
+          : await endpoints.listRecords(
+              sheetId,
+              null,
+              WINDOW_SIZE,
+              requestOffset,
+            );
+        if (gen !== recordsLoadGen.value || activeSheet.value?.id !== sheetId) {
+          return;
+        }
+        const appliedOffset = prev
+          ? requestOffset
+          : (page.offset ?? requestOffset);
+        putRecordWindow(appliedOffset, page.records, anchor);
+        persistRecordsToLocal(
+          sheetId,
+          appliedOffset,
+          page.records,
+          page.total ?? totalRecordCount.value ?? page.records.length,
+        );
+        const stats = lastWindowStats;
+        if (stats) materializeRecordWindow(stats.rows.start, stats.rows.end);
+        else materializeRecordWindow(anchor, anchor + 1);
+      } catch {
+        await hydrateFromLocal();
+      }
     } finally {
       windowFetchesInFlight.delete(requestOffset);
     }

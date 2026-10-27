@@ -193,6 +193,7 @@ function toggleMenu(id: string): void {
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
+  const cacheKey = `automations:${props.baseId}`;
   try {
     const [list, sheetList] = await Promise.all([
       endpoints.listAutomations(props.baseId),
@@ -207,9 +208,34 @@ async function load(): Promise<void> {
       }),
     );
     runs.value = Object.fromEntries(entries);
+    const { localDb } = await import('../sync/local-db-client');
+    void localDb.putObjectCache(cacheKey, 'automation', {
+      list,
+      sheets: sheetList,
+      runs: runs.value,
+    });
   } catch (caught) {
-    error.value =
-      caught instanceof ApiError ? caught.message : '自动化加载失败';
+    try {
+      const { localDb } = await import('../sync/local-db-client');
+      const cached = (await localDb.getObjectCache(cacheKey)) as {
+        list?: typeof automations.value;
+        sheets?: typeof sheets.value;
+        runs?: typeof runs.value;
+      } | null;
+      if (cached?.list) {
+        automations.value = cached.list;
+        sheets.value = cached.sheets ?? [];
+        runs.value = cached.runs ?? {};
+        error.value = '';
+        toast('已从离线缓存打开自动化');
+      } else {
+        error.value =
+          caught instanceof ApiError ? caught.message : '自动化加载失败';
+      }
+    } catch {
+      error.value =
+        caught instanceof ApiError ? caught.message : '自动化加载失败';
+    }
   } finally {
     loading.value = false;
   }
@@ -217,9 +243,23 @@ async function load(): Promise<void> {
 
 async function toggleEnabled(automation: AutomationDto): Promise<void> {
   if (!props.editable) return;
+  const nextEnabled = !automation.enabled;
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      automations.value = automations.value.map((item) =>
+        item.id === automation.id ? { ...item, enabled: nextEnabled } : item,
+      );
+      await enqueueObjectMutation({
+        type: 'automation.toggle',
+        automationId: automation.id,
+        enabled: nextEnabled,
+      });
+      toast(nextEnabled ? '离线已启用，联网后同步' : '离线已停用，联网后同步');
+      return;
+    }
     const updated = await endpoints.updateAutomation(automation.id, {
-      enabled: !automation.enabled,
+      enabled: nextEnabled,
     });
     automations.value = automations.value.map((item) =>
       item.id === updated.id ? updated : item,
@@ -233,6 +273,13 @@ async function toggleEnabled(automation: AutomationDto): Promise<void> {
 async function runNow(automation: AutomationDto): Promise<void> {
   if (!props.editable) {
     toast('当前为只读权限，无法运行');
+    return;
+  }
+  const { offlineDecision, offlineBlockMessage } = await import(
+    '../sync/offline-capability'
+  );
+  if (offlineDecision('automation.run') === 'block') {
+    toast(offlineBlockMessage('automation.run'));
     return;
   }
   runningId.value = automation.id;
@@ -259,6 +306,18 @@ async function remove(automation: AutomationDto): Promise<void> {
   );
   if (!ok) return;
   try {
+    if (!navigator.onLine) {
+      const { enqueueObjectMutation } = await import('../sync/object-outbox');
+      automations.value = automations.value.filter(
+        (item) => item.id !== automation.id,
+      );
+      await enqueueObjectMutation({
+        type: 'automation.delete',
+        automationId: automation.id,
+      });
+      toast('离线已删除，联网后同步');
+      return;
+    }
     await endpoints.deleteAutomation(automation.id);
     automations.value = automations.value.filter(
       (item) => item.id !== automation.id,
