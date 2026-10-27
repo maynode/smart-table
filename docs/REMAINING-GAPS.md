@@ -8,25 +8,22 @@
 
 ## 0. 一句话现状
 
-W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.md`）已落地；相对企微网页版智能表格：**主能力已对齐**。  
-**当前主线（2026-10-27）：** **体验债 / 性能 / 协同观感**（见下「已知体验债」）；像素级视觉对齐 mock **本轮不做**（产品指令）。  
-**P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测写回 `PERFORMANCE.md`；网格服务端搜索；模板占位隐藏；CH analytics filters；form/dashboard ACL e2e；分析报告 Playwright；W6 报告见 `docs/FINAL-REPORT.md`。  
-**P0 仍缺：** 无（`perf:window` 已于 2026-10-26 造千万行表跑通，见 `PERFORMANCE.md` §5.2）。  
-**进行中 / 已落地：** 断网/离线 MessageCenter + HTTP `commitchanges`（见 `docs/OFFLINE.md`）；多人实时协同 Nest WS `/collab` + `sheet_rev` + OT + 单元格短租约（见 `docs/COLLAB.md`）；**Base Live Bus** `/live` 全功能自动更新 + **P4 多 Tab 镜像**（见 `docs/LIVE.md`）；千万行块对齐窗口 + 方向预取 + skeleton + resize settle（见 `PERFORMANCE.md` §9）。  
-**待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；双人 `NEW_CHANGES` 实帧补抓（当前按 SDK 推断建模）。  
-**已落地（2026-10-27）：** 完整 PWA 壳 + 大表 chunk 本地库（Worker / cell-budget / 冷启动缓存）；见 `docs/OFFLINE.md` §0。
-
-**已落地（本轮）：** 仪表盘内 AI Agent（完整共编：对话 + 增删改图表/布局），见 `docs/DASHBOARD.md` §5。
+W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落地；相对企微网页版智能表格：**主能力已对齐**。  
+**当前主线（2026-10-27 晚）：** **仅余实时协同观感**（协议已通，联调体验未收工）；**不要再扫造功能**；像素级视觉对齐 mock **不做**（产品指令）。  
+**P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测、`perf:window` 千万行；W6 见 `docs/FINAL-REPORT.md`。  
+**已落地（同步/离线）：** MessageCenter + `commitchanges`；Nest `/collab` OT + 单元格短租约；`/live` + 多 Tab 镜像；千万行窗口 + skeleton + resize settle。  
+**已落地（2026-10-27 PWA）：** 可安装壳 + chunk 本地库（Worker / cell-budget / 冷启动）+ 对象 Outbox（仪表盘布局/自动化定义/通知已读）+ 多面离线读缓存；见 `docs/OFFLINE.md` §0。提交 `558eb11`。  
+**待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；双人企微 `NEW_CHANGES` 实帧补抓（本仓按 SDK 推断建模）。
 
 ### 已知体验债（2026-10-27）
 
 | # | 项 | 状态 | 说明 / 复现 |
 |---|----|------|-------------|
-| 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；toolbar 定高 / RO 去重 / `contain: layout paint`。若仍抖，查外层 flex 而非 canvas 清缓冲。 |
-| 2 | **大表滚动性能 / 空白观感** | **已对齐企微行窗口语义 + chunk 本地库** | 块对齐 + 方向预取 + skeleton + 持久化 chunk（`local-db-*`）；见 `OFFLINE.md` §0。 |
-| 3 | **实时协同观感差** | **待优化** | 协议主路径已通（WS + OT + 单元格锁），联调观感仍差。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
+| 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；若仍抖，查外层 flex。 |
+| 2 | **大表滚动 / 空白观感** | **已对齐 + chunk 本地库** | 块对齐预取 + skeleton + 持久化 chunk；见 `OFFLINE.md` §0 / `PERFORMANCE.md` §9。 |
+| 3 | **实时协同观感差** | **待优化（唯一主线）** | WS + OT + 锁已通；延迟/叠层/冲突提示/双人同编流畅度仍差。勿标「协同体验完成」。见 `docs/COLLAB.md` §9。 |
 
-**下一 AI：** 优先协同观感（#3）；大表 #1/#2 已按企微行窗口策略落地，回归见 `PERFORMANCE.md` §9。
+**下一 AI：** 只做协同观感（#3）+ 必要回归；PWA/离线冷启动 e2e 可在起本机 API+web 后补跑 `e2e/offline-sync.spec.ts`。
 
 ---
 
@@ -94,19 +91,29 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 ## 2. 下一步要做（下一 AI 从这里继续）
 
-> 功能主路径 + P1 体验弱差已对齐企微；**不要再扫一遍造功能**。按顺序做：**P0 交付闭环**。
+> 功能主路径 + P0/P1 + PWA/离线已齐；**不要再扫一遍造功能**。
 
-### P0 交付闭环
+### 当前唯一主线：协同观感
+
+| # | 项 | 状态 | 说明 |
+|---|----|------|------|
+| 1 | **双人同编流畅度** | **待做** | 延迟、接受回执、远端 `new_changes` 上屏节奏；对照 `COLLAB.md` |
+| 2 | **冲突 / 锁提示** | **待做** | 单元格短租约失败、`COMMIT_VERSION_CONFLICT` 表面化文案与恢复 |
+| 3 | **光标 / 在线叠层** | **待做** | 少遮挡、可扫读；勿为装饰加重绘 |
+| 4 | **回归** | **必做** | 改协同后跑相关 API/Playwright；勿静默降级离线 flush |
+
+可选补证据：本机起 API `:3000` + web `:5173` 后 `pnpm --filter web exec playwright test e2e/offline-sync.spec.ts`（含 cold reload）。
+
+### P0 交付闭环（已归档）
 
 | # | 项 | 状态 | 说明 |
 |---|----|------|------|
 | 1 | **全量 API e2e** | **已完成（2026-10-23）** | 20/20 套件、47/47；需 Redis `:6380`；建表 `seed: false` |
-| 2 | **前端回归** | **已完成（2026-10-23）** | `vue-tsc`；vitest 9/9；Playwright 9/9（e2e 对齐收集表单 sheet / 列菜单 / 分享对话框 / 模板确认） |
-| 3 | **新鲜压测报告** | **已完成（2026-10-26）** | 领码 / grid / form（10-23）+ `perf:window` 千万行窗口拉取 p95≈78ms（10-26）；造数 `pnpm perf:seed-10m` |
-| 4 | **Docker 镜像与源码一致** | **已完成（2026-10-26）** | `docker compose build api web`；修 `entrypoint-api.sh` CRLF→LF；`up -d` 后 `pnpm smoke:compose` 绿（公开领取 + 自动化）；验收口 `:8080` |
+| 2 | **前端回归** | **已完成（2026-10-23）** | `vue-tsc`；vitest；Playwright 9/9 |
+| 3 | **新鲜压测报告** | **已完成（2026-10-26）** | 领码 / grid / form + `perf:window` p95≈78ms |
+| 4 | **Docker 镜像与源码一致** | **已完成（2026-10-26）** | `docker compose build` + `smoke:compose` |
 | 5 | **W6 最终报告** | **已完成（2026-10-26）** | `docs/FINAL-REPORT.md` |
-
-**下一 AI 从这里继续：** P0 交付闭环已齐（含 `perf:window`）。**不要再扫造功能**；视觉像素对齐按产品指令不做。主线见 §0「已知体验债」：窗体拉伸抖动、大表滚动观感、协同观感。
+| 6 | **PWA + chunk 本地库** | **已完成（2026-10-27）** | `558eb11`；见 `OFFLINE.md` §0 |
 
 ### P1 体验弱差 — 已完成（2026-10-22）
 
@@ -154,7 +161,7 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 **目标：** 功能上**完全复刻企业微信网页版智能表格**（工作表 / 表单 / 视图 / 自动化 / 仪表盘 / 权限等），登录用本系统自有账号；在此之上可做更强能力（例：提交后用户页可见消息通知）。
 
-**阶段：** 当前以 **UI/体验打磨 + 稳定性** 为主（见 `docs/UI-POLISH.md`）。断网/离线与实时协同已按 `OFFLINE.md` / `COLLAB.md` 落地。
+**阶段：** UI 打磨清单已勾完；断网/PWA/离线与协同**协议**已按 `OFFLINE.md` / `COLLAB.md` 落地；**体验主线仅剩协同观感**。
 
 **其它产品边界（亦待定，非本期）：** 可编辑公网外链、多区域多活、短信验证码；不以飞书/Airtable 为对标。
 
@@ -178,15 +185,13 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨清单（`docs/UI-POLISH.m
 
 | 命令 | 结果 |
 |------|------|
-| `pnpm --filter web exec vue-tsc --noEmit` | **passed（2026-10-23）** |
-| `pnpm --filter web exec vitest run` | **9/9 passed（2026-10-23）** |
-| `pnpm --filter api test:e2e --runInBand` | **20/20 suites、47/47 passed（2026-10-23）**；前置：`docker start smart-table-redis`（`:6380`）；修复：e2e 建表补 `seed: false`；`forms-public` 断言改为公开接口返回全部配置字段 |
-| 全量 `pnpm --filter web exec playwright test` | **9/9 passed（2026-10-23）**：W1–W4、serial-claim、grid-canvas、grid-perf；e2e 对齐嵌入分享对话框、列头菜单编辑、模板 `app-dialog` 确认、文本字段 textarea |
-| `claim-load.smoke` / `perf:grid` / `perf:form` | **通过（2026-10-23）** — 见 `docs/PERFORMANCE.md` |
-| `pnpm perf:window` | **通过（2026-10-26）** — p95≈78ms / 门禁 250ms；见 `PERFORMANCE.md` §5.2 |
-| `pnpm --filter shared test` | 18/18 passed（cron parser；历史） |
-| `pnpm --filter api build` | passed (`nest build`；历史) |
-| `charts.e2e-spec.ts`（含 NUMBER） | 含于全量 API e2e |
+| `pnpm --filter web exec vitest run` | **30/30 passed（2026-10-27）** — 含 `chunk-math` / `offline-capability` / `record-window` |
+| `pnpm --filter web exec vite build` | **passed（2026-10-27）** — 含 PWA `sw.js` / precache |
+| `pnpm --filter web exec vue-tsc --noEmit` | **passed（2026-10-23）**（历史；PWA 切片未清掉既有非本切片 TS 债） |
+| `pnpm --filter api test:e2e --runInBand` | **20/20 suites、47/47 passed（2026-10-23）** |
+| 全量 Playwright | **9/9 passed（2026-10-23）**；`offline-sync` 含 cold reload 用例，**需本机 API+web 再跑** |
+| `claim-load` / `perf:grid` / `perf:form` / `perf:window` | 见 `PERFORMANCE.md`（window 2026-10-26 p95≈78ms） |
+| `pnpm --filter shared test` | 18/18（cron；历史） |
 
 ---
 

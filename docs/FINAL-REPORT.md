@@ -1,6 +1,7 @@
 # W6 最终报告（2026-10-26）
 
-> 交接用。对照 `docs/REMAINING-GAPS.md`、企微智能表格对齐方案。第 6 条（像素级视觉对齐 mock）本轮按产品指令不做。
+> 交接用。对照 `docs/REMAINING-GAPS.md`、企微智能表格对齐方案。第 6 条（像素级视觉对齐 mock）本轮按产品指令不做。  
+> **补记（2026-10-27）：** PWA + chunk 本地库 + 对象 Outbox 已落地并推远程 `558eb11`；详见下文 §5 与 `docs/OFFLINE.md` §0。当前产品主线仅余**协同观感**。
 
 ## 1. 变更摘要
 
@@ -65,7 +66,21 @@ docker compose --profile analytics up -d clickhouse
 
 ## 4. 剩余客观限制
 
-1. **视觉像素对齐（原第 6 条）**：本轮明确不做。
-2. **`perf:window`**：无预置千万行环境文件，无法出窗口拉取压测数。
-3. **企微真群/真通讯录**：`WECOM_ENABLED=false` 时 Local fallback，非生产企微凭证验收。
-4. **Docker 镜像**：本轮已 rebuild + smoke 绿；Windows 检出需保证 `deploy/*.sh` 为 LF（见 `.gitattributes` 若后续补）。
+1. **视觉像素对齐（原第 6 条）**：明确不做。
+2. **企微真群/真通讯录**：`WECOM_ENABLED=false` 时 Local fallback，非生产企微凭证验收。
+3. **协同观感**：协议已通，体验未收工 — 见 `docs/COLLAB.md` §9 / `REMAINING-GAPS` §0。
+4. **Docker / Windows**：`deploy/*.sh` 须 LF；compose smoke 以当时环境为准。
+
+## 5. PWA / Chunk 本地库补记（2026-10-27）
+
+| 项 | 内容 |
+|----|------|
+| 提交 | `558eb11` |
+| 壳 | `vite-plugin-pwa`；SW 只 precache 静态资产，不缓存业务 API |
+| 数据 | IDB v2 + Sync Worker；`CELL_BUDGET=15000` 分块；fflate + crc32；`enqueueAndPatch` 同事务 |
+| 对象面 | `object-outbox.ts`：仪表盘布局、自动化定义、通知已读；Hub/表单/分析/公开页/通知读缓存 |
+| 门闸 | `offline-capability.ts`：AI / 自动化 Run / ACL 写离线硬阻断 |
+| 验证 | web vitest 30/30；`vite build` 出 `sw.js`；Playwright `offline-sync`（含 cold reload）待本机联跑 |
+| 文档 | `docs/OFFLINE.md` §0；`PERFORMANCE.md` §9；`REMAINING-GAPS` 已更新 |
+
+下一任：优先协同观感，勿再扫造功能。

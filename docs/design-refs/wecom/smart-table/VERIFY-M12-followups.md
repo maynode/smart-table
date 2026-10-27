@@ -50,7 +50,7 @@
 | 断网重连 / 离线编辑 / 跨端同步 | **已完成** | 见 `docs/OFFLINE.md` / `REMAINING-GAPS` |
 | AI BI Agent | **已完成（2026-10-26）** | 分析报告 + 仪表盘 Agent 完整共编；见 `docs/DASHBOARD.md` §5；非企微 `smartsheet-bi` 孪生 |
 | `USER_C` | **待定** | 材料语义不清；主类用 `person` |
-| 大表 chunk 本地库 | **待定** | 性价比低 |
+| 大表 chunk 本地库 | **已完成（2026-10-27）** | IDB Worker + cell-budget；见 `docs/OFFLINE.md` §0 |
 | 多人实时协同 OT/WS | **已完成** | 见 `docs/COLLAB.md` / `REMAINING-GAPS` |
 | 企微登录 / 通讯录 / 真企微群 | **待定** | 非本系统账号生态强绑定 |
 

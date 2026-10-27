@@ -22,5 +22,5 @@
 
 首轮抽样 VERIFY-01…05 仍有效；M* 为加深/补齐。
 
-**下一步（非源码校验，交付/体验）：** 见 [`docs/REMAINING-GAPS.md`](../../../REMAINING-GAPS.md)。  
-**待定（未排期）：** 同文档「待定」表 — 企微登录/通讯录/真企微群、`USER_C`、chunk 本地库、双人 `NEW_CHANGES` 实帧补抓。
+**下一步（非源码校验，交付/体验）：** 见 [`docs/REMAINING-GAPS.md`](../../../REMAINING-GAPS.md) — **主线仅协同观感**；PWA/chunk 本地库已落地（`OFFLINE.md` §0）。  
+**待定（未排期）：** 企微登录/通讯录/真企微群、`USER_C`、双人企微 `NEW_CHANGES` 实帧补抓。
