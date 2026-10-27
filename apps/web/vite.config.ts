@@ -50,8 +50,10 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        // Keep SW off in Vite HMR; e2e uses preview/build.
-        enabled: false,
+        // HMR 默认关 SW；Playwright / 离线冷启动验收设 VITE_PWA_DEV=1。
+        enabled: process.env.VITE_PWA_DEV === '1',
+        type: 'module',
+        navigateFallback: 'index.html',
       },
     }),
   ],

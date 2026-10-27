@@ -7,25 +7,31 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
 }) => {
   test.setTimeout(120_000);
   const stamp = Date.now();
+  const password = 'Ab12_cd34';
+  const ownerAccount = `w4o${String(stamp).slice(-8)}`;
+  const guestAccountName = `w4g${String(stamp).slice(-8)}`;
   const api = await apiRequest.newContext({ baseURL: API });
   const owner = await (
     await api.post('/auth/register', {
       data: {
-        email: `w4-owner-${stamp}@example.com`,
-        password: 'Passw0rd!123',
-        name: 'W4 拥有者',
+        account: ownerAccount,
+        password,
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
       },
     })
   ).json();
   const guest = await (
     await api.post('/auth/register', {
       data: {
-        email: `w4-guest-${stamp}@example.com`,
-        password: 'Passw0rd!123',
-        name: 'W4 受邀者',
+        account: guestAccountName,
+        password,
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
       },
     })
   ).json();
+  expect(owner.accessToken).toBeTruthy();
   const headers = { Authorization: `Bearer ${owner.accessToken}` };
   const workspace = await (
     await api.post('/workspaces', { headers, data: { name: 'W4 UI 工作区' } })
@@ -95,7 +101,7 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
     .getByTestId('invite-role-menu')
     .locator('button')
     .filter({ hasText: '只读' })
-    .click();
+    .click({ force: true });
   await expect
     .poll(async () => {
       const members = await (
@@ -126,8 +132,12 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
 
   // Dashboard: add two different chart types, resize, and run a scheduled push.
   await page.getByTestId('dashboard-open').click();
+  await expect(page.getByTestId('app-dialog')).toBeVisible();
+  await page.getByTestId('app-dialog-input').fill('W4 看板');
   await page.getByTestId('app-dialog-confirm').click();
-  await expect(page.getByTestId('dashboard-panel')).toBeVisible();
+  await expect(page.getByTestId('dashboard-panel')).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.getByTestId('dashboard-row').first()).toBeVisible();
 
   async function addWidget(
@@ -163,9 +173,12 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
       }
     }
     await page.getByTestId('dashboard-widget-add').click();
-    await expect(page.getByTestId('dashboard-widget-card')).toHaveCount(
-      opts.expectCount,
-    );
+    await expect
+      .poll(
+        async () => page.getByTestId('dashboard-widget-card').count(),
+        { timeout: 20_000 },
+      )
+      .toBe(opts.expectCount);
   }
   await addWidget('pie', '阶段分布', { expectCount: 1 });
   await addWidget('horizontalBar', '阶段条形', { expectCount: 2 });

@@ -8,16 +8,20 @@ test.describe('W1 grid parity features', () => {
   }) => {
     test.setTimeout(120_000);
     const stamp = Date.now();
+    const account = `w1g${String(stamp).slice(-8)}`;
+    const password = 'Ab12_cd34';
     const api = await apiRequest.newContext({ baseURL: API });
     const session = await (
       await api.post('/auth/register', {
         data: {
-          email: `w1-grid-${stamp}@example.com`,
-          password: 'Passw0rd!123',
-          name: 'W1 网格员',
+          account,
+          password,
+          securityQuestion: '你小学就读的学校名称是？',
+          securityAnswer: 'demo',
         },
       })
     ).json();
+    expect(session.accessToken).toBeTruthy();
     const headers = { Authorization: `Bearer ${session.accessToken}` };
     const workspace = await (
       await api.post('/workspaces', { headers, data: { name: 'W1 工作区' } })
@@ -175,11 +179,45 @@ test.describe('W1 grid parity features', () => {
       await sortPanel.locator('.icon-btn').first().click();
     }
     await page.getByTestId('clear-view').click();
+    await expect(page.getByTestId('record-count')).toContainText('2');
+    await expect(page.locator('.group-chip')).toHaveCount(0);
     await page.waitForTimeout(300);
-    await canvas.dblclick({ position: { x: 480, y: 58 } });
-    const personEditor = page.getByTestId('cell-editor');
-    await expect(personEditor).toBeVisible();
-    await expect(personEditor.locator('option')).toContainText(['未指定成员', 'W1 网格员']);
+    // 人员列：用引擎 cellRect 定位首行（清分组后 row0 才是数据行）
+    await page.waitForFunction(
+      () =>
+        Boolean(window.__gridEngine) &&
+        ((window as unknown as { __stRecordsProbe?: unknown[] }).__stRecordsProbe
+          ?.length ?? 0) > 0,
+      { timeout: 15_000 },
+    );
+    const personHit = await page.evaluate((fieldId) => {
+      const engine = window.__gridEngine;
+      if (!engine) return null;
+      const col = engine.columns.findIndex((c) => c.id === fieldId);
+      if (col < 0) return null;
+      const cell = engine.cellRect(0, col);
+      return { x: cell.x + cell.width / 2, y: cell.y + cell.height / 2 };
+    }, ownerField.id);
+    expect(personHit).toBeTruthy();
+    const personPos = { x: personHit!.x, y: personHit!.y };
+    await canvas.click({ position: personPos });
+    await canvas.click({ position: personPos });
+    let personEditor = page.getByTestId('cell-editor');
+    if (!(await personEditor.isVisible().catch(() => false))) {
+      await canvas.dblclick({ position: personPos });
+      personEditor = page.getByTestId('cell-editor');
+    }
+    if (!(await personEditor.isVisible().catch(() => false))) {
+      await page.getByTestId('canvas-grid-wrap').focus();
+      await page.keyboard.press('Enter');
+      personEditor = page.getByTestId('cell-editor');
+    }
+    await expect(personEditor).toBeVisible({ timeout: 15_000 });
+    const memberLabel = session.user.name ?? session.user.account ?? account;
+    await expect(personEditor.locator('option')).toContainText([
+      '未指定成员',
+      memberLabel,
+    ]);
     await personEditor.selectOption(session.user.id);
     await expect
       .poll(async () => {
@@ -244,16 +282,20 @@ test.describe('W1 grid parity features', () => {
     page,
   }) => {
     const stamp = Date.now();
+    const account = `w1s${String(stamp).slice(-8)}`;
+    const password = 'Ab12_cd34';
     const api = await apiRequest.newContext({ baseURL: API });
     const session = await (
       await api.post('/auth/register', {
         data: {
-          email: `w1-sheet-${stamp}@example.com`,
-          password: 'Passw0rd!123',
-          name: 'W1 表管',
+          account,
+          password,
+          securityQuestion: '你小学就读的学校名称是？',
+          securityAnswer: 'demo',
         },
       })
     ).json();
+    expect(session.accessToken).toBeTruthy();
     const headers = { Authorization: `Bearer ${session.accessToken}` };
     const workspace = await (
       await api.post('/workspaces', { headers, data: { name: 'W1 Sheet WS' } })

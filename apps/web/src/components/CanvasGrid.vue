@@ -305,6 +305,32 @@ const columns = computed<GridColumn[]>(() => {
   return cols;
 });
 
+function editorMinWidth(fieldType: string): number {
+  if (fieldType === 'location') return 200;
+  if (fieldType === 'relation') return 180;
+  if (fieldType === 'person') return 140;
+  return 120;
+}
+
+function styleForEditorCell(row: number, col: number, fieldType: string): Record<string, string> {
+  if (!engine) return {};
+  const rect = engine.cellRect(row, col);
+  return {
+    left: `${rect.x}px`,
+    top: `${rect.y}px`,
+    width: `${Math.max(rect.width, editorMinWidth(fieldType))}px`,
+    height: `${rect.height}px`,
+  };
+}
+
+/** Follow cellRect on scroll (editing.style alone is snapshotted at beginEdit). */
+const liveEditorStyle = computed(() => {
+  void layoutEpoch.value;
+  const current = editing.value;
+  if (!current || !engine) return current?.style ?? {};
+  return styleForEditorCell(current.row, current.col, current.field.type);
+});
+
 const editorKind = computed(() => {
   const type = editing.value?.field.type;
   if (!type) return 'text';
@@ -644,19 +670,13 @@ async function beginEdit(row: number, col: number): Promise<void> {
       ? String(current[0] ?? '')
       : String(current ?? '');
     engine.ensureCellVisible(row, col);
-    const personRect = engine.cellRect(row, col);
     editing.value = {
       recordId: record.id,
       row,
       col,
       field,
       value,
-      style: {
-        left: `${personRect.x}px`,
-        top: `${personRect.y}px`,
-        width: `${Math.max(personRect.width, 140)}px`,
-        height: `${personRect.height}px`,
-      },
+      style: styleForEditorCell(row, col, field.type),
     };
     nextTick(() => editorInput.value?.focus());
     return;
@@ -669,19 +689,13 @@ async function beginEdit(row: number, col: number): Promise<void> {
       ? String(current[0] ?? '')
       : String(current ?? '');
     engine.ensureCellVisible(row, col);
-    const relRect = engine.cellRect(row, col);
     editing.value = {
       recordId: record.id,
       row,
       col,
       field,
       value,
-      style: {
-        left: `${relRect.x}px`,
-        top: `${relRect.y}px`,
-        width: `${Math.max(relRect.width, 180)}px`,
-        height: `${relRect.height}px`,
-      },
+      style: styleForEditorCell(row, col, field.type),
     };
     nextTick(() => editorInput.value?.focus());
     return;
@@ -696,26 +710,19 @@ async function beginEdit(row: number, col: number): Promise<void> {
       value = textOf(current);
     }
     engine.ensureCellVisible(row, col);
-    const locRect = engine.cellRect(row, col);
     editing.value = {
       recordId: record.id,
       row,
       col,
       field,
       value,
-      style: {
-        left: `${locRect.x}px`,
-        top: `${locRect.y}px`,
-        width: `${Math.max(locRect.width, 200)}px`,
-        height: `${locRect.height}px`,
-      },
+      style: styleForEditorCell(row, col, field.type),
     };
     nextTick(() => editorInput.value?.focus());
     return;
   }
 
   engine.ensureCellVisible(row, col);
-  const rect = engine.cellRect(row, col);
   let value = textOf(record.cells[field.id]);
   if (field.type === 'checkbox') {
     value =
@@ -737,12 +744,7 @@ async function beginEdit(row: number, col: number): Promise<void> {
     col,
     field,
     value,
-    style: {
-      left: `${rect.x}px`,
-      top: `${rect.y}px`,
-      width: `${Math.max(rect.width, 120)}px`,
-      height: `${rect.height}px`,
-    },
+    style: styleForEditorCell(row, col, field.type),
   };
 
   nextTick(() => {
@@ -776,7 +778,13 @@ async function toggleCheckbox(row: number, col: number): Promise<void> {
   props.releaseCellLock?.(record.id, field.id);
 }
 
-/** WeCom: first click selects; second click on same cell enters edit. */
+/**
+ * WeCom: first click selects; second click on same cell enters edit.
+ * Track gesture separately — engine fires onSelectionChange before onCellClick
+ * and would otherwise make every first click look like a "second" click.
+ */
+const gestureCell = ref<{ row: number; col: number } | null>(null);
+
 function onCellClick(selection: { row: number; col: number }): void {
   // Keep keyboard focus on the grid wrap for Enter / arrows / typing.
   const wrap = host.value?.parentElement;
@@ -787,8 +795,9 @@ function onCellClick(selection: { row: number; col: number }): void {
     toggleCheckbox(selection.row, selection.col);
     return;
   }
-  const prev = selectedCell.value;
+  const prev = gestureCell.value;
   selectedCell.value = { row: selection.row, col: selection.col };
+  gestureCell.value = { row: selection.row, col: selection.col };
   if (
     prev &&
     prev.row === selection.row &&
@@ -1265,6 +1274,20 @@ function handleViewport(stats: GridStats): void {
   if (overlayKey === lastViewportKey) return;
   lastViewportKey = overlayKey;
   layoutEpoch.value += 1;
+  // Editor is absolute over canvas — follow cell, or commit when scrolled away.
+  if (editing.value && engine) {
+    const rect = engine.cellRect(editing.value.row, editing.value.col);
+    const hostH = stats.hostHeight || host.value?.clientHeight || 0;
+    const hostW = stats.hostWidth || host.value?.clientWidth || 0;
+    if (
+      rect.y + rect.height < 0 ||
+      rect.y > hostH ||
+      rect.x + rect.width < 0 ||
+      rect.x > hostW
+    ) {
+      commitEdit(true);
+    }
+  }
   const rangeKey = `${stats.rows.start}:${stats.rows.end}`;
   if (rangeKey === lastViewportRangeKey) return;
   lastViewportRangeKey = rangeKey;
@@ -1336,6 +1359,8 @@ function createEngine(): void {
     },
     onViewportChange: handleViewport,
   });
+  // e2e / 调试探针：cellRect、列几何
+  window.__gridEngine = engine;
 }
 
 onMounted(createEngine);
@@ -1352,7 +1377,8 @@ watch(
 );
 
 watch(
-  [() => props.rowCount, () => props.recordOffset],
+  // rowCount 未传时 absoluteRowCount 依赖 records.length；必须一起侦听，否则首屏 0 行卡住
+  [() => props.rowCount, () => props.recordOffset, () => props.records.length],
   () => {
     if (!engine) return;
     engine.setRowCount(absoluteRowCount());
@@ -1365,6 +1391,7 @@ watch(
   () => {
     if (!engine) return;
     // Paint via lookup/cache; avoid setColumns (rebuilds axes) on every window materialize.
+    engine.setRowCount(absoluteRowCount());
     engine.setCellProvider(renderCell);
     engine.setColumnFooterProvider(columnFooter);
     engine.invalidate();
@@ -1375,6 +1402,7 @@ watch(
   () => props.rowHeight,
   () => {
     engine?.destroy();
+    if (window.__gridEngine === engine) window.__gridEngine = undefined;
     engine = null;
     createEngine();
   },
@@ -1401,6 +1429,7 @@ watch(
 
 onBeforeUnmount(() => {
   engine?.destroy();
+  if (window.__gridEngine === engine) window.__gridEngine = undefined;
   engine = null;
 });
 
@@ -1715,7 +1744,7 @@ defineExpose({
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor"
       @change="commitEdit(true)"
       @blur="commitEdit(true)"
@@ -1736,7 +1765,7 @@ defineExpose({
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor-relation"
       @change="commitEdit(true)"
       @blur="commitEdit(true)"
@@ -1757,7 +1786,7 @@ defineExpose({
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor"
       @change="commitEdit(true)"
       @blur="commitEdit(true)"
@@ -1776,7 +1805,7 @@ defineExpose({
     <div
       v-else-if="editing && editorKind === 'multiSelect'"
       class="cell-editor multi-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor"
     >
       <label
@@ -1801,7 +1830,7 @@ defineExpose({
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor"
       @change="commitEdit(true)"
       @blur="commitEdit(true)"
@@ -1814,7 +1843,7 @@ defineExpose({
     <div
       v-else-if="editing && editorKind === 'progress'"
       class="cell-editor progress-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       data-testid="cell-editor-progress"
     >
       <input
@@ -1835,7 +1864,7 @@ defineExpose({
       ref="editorInput"
       v-model="editing.value"
       class="cell-editor"
-      :style="editing.style"
+      :style="liveEditorStyle"
       :type="
         editorKind === 'date'
           ? 'date'

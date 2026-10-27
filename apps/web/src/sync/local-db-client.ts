@@ -2,10 +2,28 @@
  * Main-thread facade: prefers Dedicated Worker; falls back to same-thread backend.
  */
 
+import { isProxy, toRaw } from 'vue';
 import * as backend from './local-db-backend';
 import type { LocalDbRequest, LocalDbResponse, ChunkPayload } from './local-db-protocol';
 import type { QueuedMutationRow } from './queued-mutation';
 import { chunkKey, splitIntoLocalBlocks } from './chunk-math';
+
+/** Vue reactive proxies are not structured-cloneable for Worker.postMessage. */
+function unwrapForWorker(value: unknown): unknown {
+  if (value instanceof Blob || value instanceof ArrayBuffer || value instanceof Uint8Array) {
+    return value;
+  }
+  const raw = isProxy(value) ? toRaw(value) : value;
+  if (Array.isArray(raw)) return raw.map(unwrapForWorker);
+  if (raw && typeof raw === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+      out[key] = unwrapForWorker(entry);
+    }
+    return out;
+  }
+  return raw;
+}
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -63,7 +81,12 @@ async function call(req: LocalDbRequestBody): Promise<unknown> {
   }
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    w.postMessage(full);
+    try {
+      w.postMessage(unwrapForWorker(full));
+    } catch (error) {
+      pending.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

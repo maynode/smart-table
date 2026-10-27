@@ -96,8 +96,10 @@ test('analysis report panel: chat, generate, delete', async ({ page }) => {
       { timeout: 15_000 },
     )
     .toBe(0);
-  await page.getByTestId('analysis-close').click();
-  await expect(page.getByTestId('analysis-report-panel')).toBeHidden({
-    timeout: 10_000,
-  });
+  // 删掉最后一份报告时面板会自行 close；若仍打开则点关闭。
+  const panel = page.getByTestId('analysis-report-panel');
+  if (await panel.isVisible().catch(() => false)) {
+    await page.getByTestId('analysis-close').click();
+  }
+  await expect(panel).toBeHidden({ timeout: 10_000 });
 });

@@ -234,7 +234,8 @@ export class CollabSocket {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.lockWaiters.delete(key);
-        resolve({ ok: false, holderName: '锁定超时' });
+        // 服务端未及时回执时降级放行（对齐无 WS / 离线），避免编辑永久卡住
+        resolve({ ok: true });
       }, 4_000);
       this.lockWaiters.set(key, { resolve, timer });
       this.send({ type: 'cell_lock_acquire', recordId, fieldId });

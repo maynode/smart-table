@@ -27,6 +27,10 @@ export default defineConfig({
       cwd: '../..',
       reuseExistingServer: true,
       timeout: 120_000,
+      env: {
+        ...process.env,
+        VITE_PWA_DEV: '1',
+      },
     },
   ],
 });

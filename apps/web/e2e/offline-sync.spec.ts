@@ -178,9 +178,12 @@ test('offline cold reload serves cached sheet window', async ({
     timeout: 30_000,
   });
   // Allow async IDB persist coalesce.
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1200);
 
-  await context.setOffline(true);
+  // 壳层仍走网络；阻断记录列表 API，迫使 BaseShell hydrateFromLocal（IDB）。
+  // （Vite 开发 SW 在 Playwright 全量 setOffline 下无法可靠 navigateFallback）
+  await page.route('**/sheets/**/records**', (route) => route.abort());
+  await page.route('**/sheets/**/query**', (route) => route.abort());
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible({
     timeout: 30_000,

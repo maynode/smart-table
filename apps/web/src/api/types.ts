@@ -191,10 +191,13 @@ export interface PublicFormDto {
 
 export interface FormSubmitResult {
   submissionId: string;
-  recordId: string;
+  recordId: string | null;
   status: string;
-  success: { html: string };
-  stepOutputs?: Record<string, string>;
+  success?: { html: string };
+  pollUrl?: string;
+  jobId?: string;
+  stepOutputs?: Record<string, unknown>;
+  error?: string | null;
 }
 
 export interface AutomationDto {

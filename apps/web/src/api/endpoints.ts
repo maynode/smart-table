@@ -494,6 +494,12 @@ export const endpoints = {
       },
     ),
 
+  getPublicFormSubmission: (token: string, submissionId: string) =>
+    api<FormSubmitResult>(
+      `/public/forms/${encodeURIComponent(token)}/submissions/${encodeURIComponent(submissionId)}`,
+      { token: null },
+    ),
+
   listAutomations: (baseId: string) =>
     api<AutomationDto[]>(`/automations?baseId=${encodeURIComponent(baseId)}`),
 

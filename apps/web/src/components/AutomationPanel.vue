@@ -241,9 +241,18 @@ async function load(): Promise<void> {
   }
 }
 
-async function toggleEnabled(automation: AutomationDto): Promise<void> {
+async function toggleEnabled(
+  automation: AutomationDto,
+  event?: Event,
+): Promise<void> {
   if (!props.editable) return;
-  const nextEnabled = !automation.enabled;
+  // Prefer the checkbox's post-click state — label clicks can re-enter with a
+  // stale closure if we only flip `!automation.enabled`.
+  const target = event?.target as HTMLInputElement | undefined;
+  const nextEnabled =
+    target && typeof target.checked === 'boolean'
+      ? target.checked
+      : !automation.enabled;
   try {
     if (!navigator.onLine) {
       const { enqueueObjectMutation } = await import('../sync/object-outbox');

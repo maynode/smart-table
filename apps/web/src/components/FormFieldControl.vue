@@ -80,6 +80,12 @@ const personValue = computed({
   set: (id: string) => emit('update:modelValue', id || null),
 });
 
+/** Single-select: v-model so Playwright/native change reliably updates parent. */
+const selectValue = computed({
+  get: () => (props.modelValue == null ? '' : String(props.modelValue)),
+  set: (value: string) => emit('update:modelValue', value || null),
+});
+
 const multiSelectIds = computed({
   get: () => {
     const value = props.modelValue;
@@ -129,11 +135,13 @@ function clearAttachment(): void {
     <select
       v-if="type === 'select'"
       :id="`field-${fieldId}`"
-      :value="modelValue == null ? '' : String(modelValue)"
+      :value="selectValue"
       :required="required"
       :disabled="disabled"
       data-testid="form-select"
-      @change="setValue(($event.target as HTMLSelectElement).value || null)"
+      @change="
+        setValue(($event.target as HTMLSelectElement).value || null)
+      "
     >
       <option value="">请选择</option>
       <option v-for="choice in choices" :key="choice.id" :value="choice.id">

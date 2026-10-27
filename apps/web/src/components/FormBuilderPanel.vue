@@ -17,7 +17,7 @@ import {
   type FieldType,
   type LiveEvent,
 } from 'shared';
-import { ApiError } from '../api/client';
+import { ApiError, getStoredUser } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { liveBus } from '../sync/live-bus';
 import { copyText } from '../ui/clipboard';
@@ -132,7 +132,24 @@ watch(
 watch(
   () => props.sheet?.fields,
   (fields) => {
-    if (fields) localFields.value = [...fields];
+    if (!fields) return;
+    // Skip no-op syncs to avoid render churn when parent replaces the same snapshot.
+    const prev = localFields.value;
+    if (
+      prev.length === fields.length &&
+      prev.every(
+        (field, index) =>
+          field.id === fields[index]?.id &&
+          field.name === fields[index]?.name &&
+          field.type === fields[index]?.type &&
+          field.required === fields[index]?.required &&
+          field.hidden === fields[index]?.hidden &&
+          field.order === fields[index]?.order,
+      )
+    ) {
+      return;
+    }
+    localFields.value = [...fields];
   },
 );
 
@@ -374,15 +391,26 @@ const conditionCandidates = computed(() =>
   })),
 );
 
-function ensureDisplayRule(config: FormFieldConfigDto): DisplayConditionRuleDto {
-  const normalized = normalizeDisplayRule(config);
-  if (normalized) {
-    config.displayRule = normalized as DisplayConditionRuleDto;
-    return config.displayRule;
-  }
-  config.displayRule = emptyDisplayRule('and') as DisplayConditionRuleDto;
-  return config.displayRule;
+/** Pure read — safe in template/computed. Never mutate during render. */
+function readDisplayRule(config: FormFieldConfigDto): DisplayConditionRuleDto {
+  return (
+    (normalizeDisplayRule(config) as DisplayConditionRuleDto | null) ??
+    (emptyDisplayRule('and') as DisplayConditionRuleDto)
+  );
 }
+
+/** Imperative write path (load/save/handlers only). */
+function ensureDisplayRule(config: FormFieldConfigDto): DisplayConditionRuleDto {
+  const rule = readDisplayRule(config);
+  config.displayRule = rule;
+  return rule;
+}
+
+const selectedDisplayRule = computed(() => {
+  const config = selectedConfig.value;
+  if (!config) return emptyDisplayRule('and') as DisplayConditionRuleDto;
+  return readDisplayRule(config);
+});
 
 function pruneDisplayRule(
   rule: DisplayConditionRuleDto,
@@ -539,7 +567,20 @@ async function save(showToast = true): Promise<FormDto | null> {
     if (showToast) toast('当前为只读权限，无法保存表单');
     return form.value;
   }
-  if (!props.sheet || saving.value) return form.value;
+  if (!props.sheet) return form.value;
+  // 封面自动保存等可能占用 saving；等在途保存结束后再提交，避免静默丢配置
+  if (saving.value) {
+    await new Promise<void>((resolve) => {
+      const started = Date.now();
+      const timer = setInterval(() => {
+        if (!saving.value || Date.now() - started > 8_000) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 40);
+    });
+  }
+  if (saving.value) return form.value;
   saving.value = true;
   error.value = '';
   try {
@@ -852,6 +893,11 @@ async function copyShareUrl(): Promise<void> {
 const liveUnsubs: Array<() => void> = [];
 
 function onFormLive(event: LiveEvent): void {
+  // Own save / cover upload already applied the response; reloading would wipe
+  // in-progress edits (audience、必填、显示条件) that landed after the request started.
+  if (saving.value || uploadingCover.value) return;
+  const selfId = getStoredUser()?.id;
+  if (selfId && event.actorId === selfId) return;
   const sheetId = props.sheet?.id;
   if (!sheetId) return;
   if (form.value?.id && event.entityId === form.value.id) {
@@ -1098,7 +1144,7 @@ onBeforeUnmount(() => {
               </p>
             </header>
             <DisplayRuleEditor
-              :model-value="ensureDisplayRule(selectedConfig)"
+              :model-value="selectedDisplayRule"
               :candidates="conditionCandidates"
               :operators="conditionOperators"
               @update:model-value="setDisplayRule(selectedConfig, $event)"

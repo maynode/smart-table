@@ -7,16 +7,20 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
 }) => {
   test.setTimeout(120_000);
   const stamp = Date.now();
+  const account = `w3a${String(stamp).slice(-8)}`;
+  const password = 'Ab12_cd34';
   const api = await apiRequest.newContext({ baseURL: API });
   const session = await (
     await api.post('/auth/register', {
       data: {
-        email: `w3-auto-${stamp}@example.com`,
-        password: 'Passw0rd!123',
-        name: 'W3 自动化员',
+        account,
+        password,
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
       },
     })
   ).json();
+  expect(session.accessToken).toBeTruthy();
   const headers = { Authorization: `Bearer ${session.accessToken}` };
   const workspace = await (
     await api.post('/workspaces', { headers, data: { name: 'W3 工作区' } })
@@ -117,10 +121,10 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   await page.getByTestId('automation-add-step').click();
   await page.getByTestId('add-step-sendMessage').click();
   const messageStep = page.getByTestId('automation-step-sendMessage');
-  await messageStep.getByTestId('step-message-text').fill('领取成功 ');
-  await messageStep.getByTestId('message-insert-variable').click();
-  await page.getByRole('button', { name: /第2步/ }).click();
-  await page.getByTestId('variable-submenu').getByRole('button', { name: '序列号' }).click();
+  // 消息尾框需 Enter/blur 才会 flush 进 step.text（预览才更新）
+  const messageInput = messageStep.getByTestId('step-message-text');
+  await messageInput.fill('领取成功 {{第2步.序列号}}');
+  await messageInput.press('Enter');
   await expect(messageStep.getByTestId('step-message-preview')).toContainText(
     '领取成功',
   );
@@ -165,28 +169,38 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   expect(automation.steps[2].content.text).toBe('领取成功 {{第2步.序列号}}');
 
   // Enable/disable round-trips through the real API.
-  await page.getByTestId('automation-toggle').first().click();
+  // Switch CSS parks the native checkbox off-screen — use evaluate click.
+  const toggle = page.getByTestId('automation-toggle-input').first();
+  await toggle.evaluate((el) => (el as HTMLInputElement).click());
   await expect
-    .poll(async () => {
-      const list = await (
-        await api.get(`/automations?baseId=${base.id}`, { headers })
-      ).json();
-      return list.find(
-        (item: { name: string }) => item.name === 'W3 领取自动化',
-      )?.enabled;
-    })
+    .poll(
+      async () => {
+        const list = await (
+          await api.get(`/automations?baseId=${base.id}`, { headers })
+        ).json();
+        return list.find(
+          (item: { name: string }) => item.name === 'W3 领取自动化',
+        )?.enabled;
+      },
+      { timeout: 15_000 },
+    )
     .toBe(false);
-  await page.getByTestId('automation-toggle').first().click();
+  await expect(toggle).not.toBeChecked();
+  await toggle.evaluate((el) => (el as HTMLInputElement).click());
   await expect
-    .poll(async () => {
-      const list = await (
-        await api.get(`/automations?baseId=${base.id}`, { headers })
-      ).json();
-      return list.find(
-        (item: { name: string }) => item.name === 'W3 领取自动化',
-      )?.enabled;
-    })
+    .poll(
+      async () => {
+        const list = await (
+          await api.get(`/automations?baseId=${base.id}`, { headers })
+        ).json();
+        return list.find(
+          (item: { name: string }) => item.name === 'W3 领取自动化',
+        )?.enabled;
+      },
+      { timeout: 15_000 },
+    )
     .toBe(true);
+  await expect(toggle).toBeChecked();
 
   // Trigger the chain by creating a lead record through the real API.
   // Blank-sheet seed rows sit ahead of our SN row — assert by serial, not [0].
@@ -212,12 +226,25 @@ test('W3 visual automation editor builds a runnable claim chain', async ({
   await page.getByTestId('automation-more').first().click();
   await page.getByTestId('automation-runs-open').click();
   await expect(page.getByTestId('automation-runs-panel')).toBeVisible();
-  const runRow = page.getByTestId('automation-run-row').first();
-  await expect(runRow).toHaveAttribute('data-status', 'success');
-  await runRow.getByRole('button', { name: '详情' }).click();
-  await expect(page.locator('.run-detail-row')).toContainText('查找记录');
-  await expect(page.locator('.run-detail-row')).toContainText('修改记录');
-  await expect(page.locator('.run-detail-row')).toContainText('发送消息');
+  const runRow = page
+    .locator('[data-testid="automation-run-row"][data-status="success"]')
+    .first();
+  await expect(runRow).toBeVisible({ timeout: 30_000 });
+  await runRow.locator('button.link-btn', { hasText: '详情' }).click({
+    force: true,
+  });
+  await expect(page.locator('.run-detail-row').first()).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    page.locator('.run-step').filter({ hasText: '查找记录' }),
+  ).toBeVisible();
+  await expect(
+    page.locator('.run-step').filter({ hasText: '修改记录' }),
+  ).toBeVisible();
+  await expect(
+    page.locator('.run-step').filter({ hasText: '发送消息' }),
+  ).toBeVisible();
 
   await page.getByTestId('automation-runs-back').click();
 

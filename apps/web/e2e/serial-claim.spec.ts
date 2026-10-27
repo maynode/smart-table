@@ -9,7 +9,7 @@ interface SeedSummary {
   workspaceId: string;
   baseId: string;
   formId: string;
-  demoEmail: string;
+  demoAccount: string;
   demoPassword: string;
 }
 
@@ -51,7 +51,7 @@ test('share link claims a serial and the admin sees the automation run', async (
   const adminContext = await browser.newContext();
   const admin = await adminContext.newPage();
   await admin.goto('/login');
-  await admin.getByTestId('email-input').fill(seed.demoEmail);
+  await admin.getByTestId('account-input').fill(seed.demoAccount);
   await admin.getByTestId('password-input').fill(seed.demoPassword);
   await admin.getByTestId('auth-submit').click();
   await expect(admin).toHaveURL(/\/(\?|$)/);

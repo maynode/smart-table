@@ -129,8 +129,34 @@ async function submit(): Promise<void> {
     if (outcome.queued) {
       successHtml.value =
         '<p>当前离线，提交已保存在本机。网络恢复后将自动提交（幂等防重复领取）。</p>';
-    } else if (outcome.result?.success?.html) {
-      successHtml.value = outcome.result.success.html;
+    } else if (outcome.result?.success?.html != null) {
+      const html = String(outcome.result.success.html).trim();
+      successHtml.value = html || '<p>提交成功</p>';
+    } else if (outcome.result?.status === 'completed') {
+      successHtml.value = '<p>提交成功</p>';
+    } else if (outcome.result?.status === 'queued') {
+      // SUBMIT_MODE=queue：同步轮询直到完成
+      const submissionId = outcome.result.submissionId;
+      const started = Date.now();
+      let html = '';
+      while (Date.now() - started < 30_000) {
+        await new Promise((r) => setTimeout(r, 400));
+        const status = await endpoints.getPublicFormSubmission(
+          token.value,
+          submissionId,
+        );
+        if (status.status === 'completed' && status.success?.html) {
+          html = status.success.html;
+          break;
+        }
+        if (status.status === 'failed') {
+          throw new Error(status.error || '提交失败');
+        }
+      }
+      if (!html) throw new Error('提交处理超时，请稍后在消息中查看');
+      successHtml.value = html;
+    } else {
+      error.value = '提交未返回结果，请稍后重试';
     }
   } catch (caught) {
     error.value =
@@ -152,18 +178,11 @@ watch(
 );
 
 onMounted(() => {
+  // Public fill: keep first-load snapshot. Builder form.updated/published must
+  // not wipe in-progress answers (select + display conditions).
   liveUnsubs.push(
-    liveBus.on('form.updated', () => {
-      if (!successHtml.value) void load();
-    }),
-    liveBus.on('form.published', () => {
-      if (!successHtml.value) void load();
-    }),
     liveBus.on('form.deleted', () => {
       void load();
-    }),
-    liveBus.on('sheet.schema_changed', () => {
-      if (!successHtml.value) void load();
     }),
   );
   void load();
