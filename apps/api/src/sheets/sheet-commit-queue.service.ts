@@ -26,6 +26,8 @@ export type SheetCommitJob = {
   dto: CommitChangesDto;
   clientIp: string;
   expectedSheetRev?: number;
+  /** Actor 内按当前 sheetRev rebase（多人排队落后客户端 baseRev） */
+  rebase?: boolean;
 };
 
 /**

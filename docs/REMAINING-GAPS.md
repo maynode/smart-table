@@ -9,11 +9,12 @@
 ## 0. 一句话现状
 
 W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落地；相对企微网页版智能表格：**主能力已对齐**；私有化量产协同已收口。  
-**当前主线（2026-10-28）：** **千人同表规模**（每表 Actor 串行合入 + 跨副本扇出 + 压测门槛）——方案见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)；**不要再扫造功能**；像素级视觉对齐 mock **不做**（产品指令）。  
+**当前主线：** 功能/协同/离线/私有化规模 **已收口**（见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md) §4）；**不要再扫造功能**；像素级视觉对齐 mock **不做**。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测、`perf:window` 千万行；W6 见 `docs/FINAL-REPORT.md`。  
 **已落地（同步/离线）：** MessageCenter + `commitchanges`；Nest `/collab` OT + 单元格短租约；`/live` + 多 Tab 镜像；千万行窗口 + skeleton + resize settle。  
 **已落地（2026-10-27 PWA）：** 可安装壳 + chunk 本地库（Worker / cell-budget / 冷启动）+ 对象 Outbox（仪表盘布局/自动化定义/通知已读）+ 多面离线读缓存；见 `docs/OFFLINE.md` §0。提交 `558eb11`。  
 **已落地（2026-10-28 量产硬化）：** 协同观感收口 + JWT 拒启 + `/ready` + metrics 门禁 + Redis 单元格锁/表单限流；提交 `359c0b0`。  
+**已落地（2026-10-28 COLLAB-SCALE 收口）：** rebase 热路径；Redis `waitForRedisReady`（修扇出永久 memory-only）；双副本 `perf:collab-dual`；私有化 SLA 不以 50cps@1000 为门禁。  
 **待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；双人企微 `NEW_CHANGES` 实帧补抓（本仓按 SDK 推断建模）。
 
 ### 已知体验债 / 规模债（2026-10-28）
@@ -23,13 +24,13 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落�
 | 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；若仍抖，查外层 flex。 |
 | 2 | **大表滚动 / 空白观感** | **已对齐 + chunk 本地库** | 块对齐预取 + skeleton + 持久化 chunk；见 `OFFLINE.md` §0 / `PERFORMANCE.md` §9。 |
 | 3 | **实时协同观感** | **已达私有化量产** | Accept 2s+短熔断、冲突人话+OT rebase、锁拒绝/degraded toast、光标名牌常显+窗口定位、Redis 单元格锁、e2e 锁/冲突。见 `docs/COLLAB.md` §9。 |
-| 3b | **千人同表规模** | **进行中（S1–S5 代码已落地）** | S1–S5 已落地。**下一刀：§4 千连接压测基线写入文档**。见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)。未跑通压测前勿宣称千人同表。 |
+| 3b | **千人同表规模** | **私有化 SLA 已收口** | 1000 WS ✅；同时编辑上限见 COLLAB-SCALE §4.2；双副本扇出 ✅（`perf:collab-dual`）。50cps@1000 **非门禁**（结构上限≈6cps）。 |
 | 4 | **表单 live 回刷盖编辑** | **已修（2026-10-28）** | 忽略自身 actor；公开 `/fill` 首屏快照后不跟 `form.updated`。 |
 | 5 | **网格一点即编 / 行轴不同步** | **已修（2026-10-28）** | `gestureCell` 恢复两击进编；`records.length` 同步 `setRowCount`。 |
 | 6 | **自动化开关不可点 / 仪表盘连点加图** | **已修（2026-10-28）** | switch input 铺满可点；加图 `addingWidget` 防重入。 |
 | 7 | **成功页无自动化时空白** | **已修（2026-10-28）** | 默认模板「提交成功」；builder 文案说明优先级。 |
 
-**下一 AI：** 只做 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md) **§4 千连接压测基线**；勿再扫造功能；企微强绑定仍不做。
+**下一 AI：** 无强制主线。勿再扫造功能；若产品另立「50cps@1000」项目再开架构单。
 
 ---
 
@@ -99,18 +100,18 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落�
 
 > 功能主路径 + P0/P1 + PWA/离线已齐；**不要再扫一遍造功能**。
 
-### 当前唯一主线：千人同表规模（COLLAB-SCALE）
+### 千人同表规模（COLLAB-SCALE）— 已收口
 
 | # | 项 | 状态 | 说明 |
 |---|----|------|------|
 | 1 | **S1 metrics** | **已落地** | `/metrics`：连接数、accept p95、冲突、队列深度 |
-| 2 | **S2 进程内 Actor** | **已落地** | `SheetCommitQueue` 同表串行；跨副本仍 advisory lock |
-| 3 | **S3 Redis 扇出** | **已落地** | `CollabFanoutService`；`new_changes`/锁等跨副本 |
+| 2 | **S2 进程内 Actor** | **已落地** | `SheetCommitQueue` 同表串行 |
+| 3 | **S3 Redis 扇出** | **已落地 + 实跑** | `waitForRedisReady`；`pnpm perf:collab-dual` |
 | 4 | **S4 分布式 Actor** | **已落地** | `COLLAB_SHEET_ACTOR=bullmq`；默认 memory |
 | 5 | **S5 降采样 + 背压** | **已落地** | 连接上限 / 光标 coalesce / presence 防抖 |
-| 6 | **§4 千连接压测** | **待跑** | 脚本 `pnpm perf:collab`（`scripts/perf/collab-scale-load.mjs`）；1000 WS 基线写入 COLLAB-SCALE §4.2 |
+| 6 | **§4 私有化 SLA** | **已收口** | 千连接 + 同时编辑上限 + 双副本；50cps@1000 非门禁 |
 
-协同观感（原主线）已达私有化量产，见 `COLLAB.md` §9。勿再扫造功能。
+协同观感已达私有化量产，见 `COLLAB.md` §9。勿再扫造功能。
 
 ### P0 交付闭环（已归档）
 

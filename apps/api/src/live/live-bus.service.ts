@@ -10,6 +10,7 @@ import type IORedis from 'ioredis';
 import type { LiveEvent, LiveEventKind } from 'shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { createRedisConnection } from '../queue/redis-connection';
+import { waitForRedisReady } from '../queue/redis-ready';
 
 const HISTORY_LIMIT = 500;
 const CHANNEL_BASE = 'live:base:';
@@ -81,25 +82,40 @@ export class LiveBusService implements OnModuleInit, OnModuleDestroy {
       this.sub.on('pmessage', (_pattern, _channel, payload) => {
         this.onRedisMessage(payload);
       });
-      void this.sub
-        .psubscribe(`${CHANNEL_BASE}*`, `${CHANNEL_WS}*`, `${CHANNEL_USER}*`)
-        .then(() => {
-          this.redisOk = true;
-          this.logger.log('LiveBus Redis pub/sub ready');
-        })
-        .catch((error) => {
-          this.logger.warn(
-            `LiveBus Redis subscribe failed, memory-only: ${String(error)}`,
-          );
-          this.redisOk = false;
-          void this.tearDownRedis();
-        });
+      void this.armSubscribe();
     } catch (error) {
       this.logger.warn(
         `LiveBus Redis unavailable, memory-only: ${String(error)}`,
       );
       void this.tearDownRedis();
     }
+  }
+
+  private async armSubscribe(): Promise<void> {
+    if (!this.pub || !this.sub) return;
+    try {
+      await Promise.all([
+        waitForRedisReady(this.pub),
+        waitForRedisReady(this.sub),
+      ]);
+      await this.sub.psubscribe(
+        `${CHANNEL_BASE}*`,
+        `${CHANNEL_WS}*`,
+        `${CHANNEL_USER}*`,
+      );
+      this.redisOk = true;
+      this.logger.log('LiveBus Redis pub/sub ready');
+    } catch (error) {
+      this.logger.warn(
+        `LiveBus Redis subscribe failed, memory-only: ${String(error)}`,
+      );
+      this.redisOk = false;
+      await this.tearDownRedis();
+    }
+  }
+
+  isRedisReady(): boolean {
+    return this.redisOk;
   }
 
   private async tearDownRedis(): Promise<void> {

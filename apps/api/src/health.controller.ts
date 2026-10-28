@@ -1,6 +1,7 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createRedisConnection } from './queue/redis-connection';
+import { waitForRedisReady } from './queue/redis-ready';
 import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
@@ -46,6 +47,7 @@ export class HealthController {
       connectTimeoutMs: 2_000,
     });
     try {
+      await waitForRedisReady(redis, 2_000);
       const pong = await redis.ping();
       if (pong !== 'PONG') {
         throw new Error('redis ping failed');

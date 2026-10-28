@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type IORedis from 'ioredis';
 import { createRedisConnection } from '../queue/redis-connection';
+import { waitForRedisReady } from '../queue/redis-ready';
 import type { CollabServerMsg } from './collab.types';
 
 const CHANNEL_PREFIX = 'collab:sheet:';
@@ -69,25 +70,38 @@ export class CollabFanoutService implements OnModuleInit, OnModuleDestroy {
       this.sub.on('pmessage', (_pattern, _channel, payload) => {
         this.onRedisMessage(payload);
       });
-      void this.sub
-        .psubscribe(`${CHANNEL_PREFIX}*`)
-        .then(() => {
-          this.redisOk = true;
-          this.logger.log('CollabFanout Redis pub/sub ready');
-        })
-        .catch((error) => {
-          this.logger.warn(
-            `CollabFanout Redis subscribe failed, memory-only: ${String(error)}`,
-          );
-          this.redisOk = false;
-          void this.tearDownRedis();
-        });
+      void this.armSubscribe();
     } catch (error) {
       this.logger.warn(
         `CollabFanout Redis unavailable, memory-only: ${String(error)}`,
       );
       void this.tearDownRedis();
     }
+  }
+
+  /** Wait for TCP ready then psubscribe — avoids offline-queue race. */
+  private async armSubscribe(): Promise<void> {
+    if (!this.pub || !this.sub) return;
+    try {
+      await Promise.all([
+        waitForRedisReady(this.pub),
+        waitForRedisReady(this.sub),
+      ]);
+      await this.sub.psubscribe(`${CHANNEL_PREFIX}*`);
+      this.redisOk = true;
+      this.logger.log('CollabFanout Redis pub/sub ready');
+    } catch (error) {
+      this.logger.warn(
+        `CollabFanout Redis subscribe failed, memory-only: ${String(error)}`,
+      );
+      this.redisOk = false;
+      await this.tearDownRedis();
+    }
+  }
+
+  /** For dual-replica /ready diagnostics. */
+  isRedisReady(): boolean {
+    return this.redisOk;
   }
 
   async onModuleDestroy(): Promise<void> {

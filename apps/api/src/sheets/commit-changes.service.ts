@@ -7,6 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   COMMIT_ERROR,
   type CommitChangesResponse,
@@ -41,6 +42,7 @@ export class CommitChangesService {
     dto: CommitChangesDto,
     clientIp = '0.0.0.0',
     expectedSheetRev?: number,
+    options?: { skipAccessCheck?: boolean; rebase?: boolean },
   ): Promise<CommitChangesResponse> {
     const rawSize = JSON.stringify(dto).length;
     if (rawSize > MAX_BATCH_CHARS) {
@@ -50,7 +52,9 @@ export class CommitChangesService {
       });
     }
 
-    await this.sheets.assertSheetAccess(sheetId, userId, 'editor');
+    if (!options?.skipAccessCheck) {
+      await this.sheets.assertSheetAccess(sheetId, userId, 'editor');
+    }
 
     return this.commitQueue.enqueue({
       sheetId,
@@ -58,6 +62,7 @@ export class CommitChangesService {
       dto,
       clientIp,
       expectedSheetRev,
+      rebase: options?.rebase === true,
     });
   }
 
@@ -69,6 +74,7 @@ export class CommitChangesService {
       job.dto,
       job.clientIp,
       job.expectedSheetRev,
+      job.rebase === true,
     );
   }
 
@@ -78,15 +84,42 @@ export class CommitChangesService {
     dto: CommitChangesDto,
     clientIp: string,
     expectedSheetRev?: number,
+    rebase = false,
   ): Promise<CommitChangesResponse> {
     const run = async (): Promise<CommitChangesResponse> => {
+      // Actor 内串行：以 DB 当前 sheetRev 为准。rebase 时容忍客户端旧 baseRev
+      //（多人排队时几乎人人都会落后），避免「先写记录再 CAS 失败」制造脏版本。
+      const sheet = await this.prisma.sheet.findUnique({
+        where: { id: sheetId },
+        select: { sheetRev: true },
+      });
+      if (!sheet) {
+        throw new NotFoundException('工作表不存在');
+      }
+      let baseRev = sheet.sheetRev;
       if (expectedSheetRev !== undefined) {
-        const sheet = await this.prisma.sheet.findUnique({
-          where: { id: sheetId },
-        });
-        if (!sheet || sheet.sheetRev !== expectedSheetRev) {
+        if (expectedSheetRev > baseRev) {
           throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
         }
+        if (expectedSheetRev < baseRev && !rebase) {
+          throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
+        }
+        // rebase || equal → 用当前 baseRev 往前 bump
+      }
+
+      const mutations = dto.mutations as unknown as SheetMutation[];
+      const onlySetRecords =
+        mutations.length > 0 &&
+        mutations.every((m) => m.type === 'setRecord');
+
+      if (onlySetRecords && rebase) {
+        return this.fastRebaseSetRecords({
+          sheetId,
+          userId,
+          dto,
+          mutations,
+          baseRev,
+        });
       }
 
       const idMaps = {
@@ -95,8 +128,7 @@ export class CommitChangesService {
       };
       const results: MutationResult[] = [];
 
-      for (const raw of dto.mutations) {
-        const mutation = raw as unknown as SheetMutation;
+      for (const mutation of mutations) {
         results.push(
           await this.applyOne(sheetId, userId, mutation, idMaps, clientIp),
         );
@@ -105,56 +137,169 @@ export class CommitChangesService {
       const allOk = results.every(
         (r) => r.status === 'ok' || r.status === 'duplicate',
       );
-      // HTTP / WS 共用 sheet_rev（pad base_rev 语义）
-      if (allOk && dto.mutations.length > 0) {
-        const sheet = await this.prisma.sheet.findUnique({
-          where: { id: sheetId },
+      let sheetRev: number | undefined;
+      if (allOk && mutations.length > 0) {
+        const newRev = baseRev + 1;
+        const bumped = await this.prisma.sheet.updateMany({
+          where: { id: sheetId, sheetRev: baseRev },
+          data: { sheetRev: newRev },
         });
-        if (sheet) {
-          const newRev = sheet.sheetRev + 1;
-          const bumped =
-            expectedSheetRev === undefined
-              ? await this.prisma.sheet.updateMany({
-                  where: { id: sheetId },
-                  data: { sheetRev: newRev },
-                })
-              : await this.prisma.sheet.updateMany({
-                  where: { id: sheetId, sheetRev: expectedSheetRev },
-                  data: { sheetRev: newRev },
-                });
-          if (bumped.count === 0) {
-            throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
-          }
-          await this.prisma.sheetChangeset.create({
+        if (bumped.count === 0) {
+          throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
+        }
+        await this.prisma.sheetChangeset.create({
+          data: {
+            sheetId,
+            rev: newRev,
+            authorId: userId,
+            commitId: dto.clientBatchId,
+            mutations: dto.mutations as object[],
+          },
+        });
+        sheetRev = newRev;
+      }
+
+      return { clientBatchId: dto.clientBatchId, results, sheetRev };
+    };
+
+    return run();
+  }
+
+  /**
+   * Collab 热路径：仅 setRecord + Actor 已串行。
+   * 单事务内：读/改记录 → bump sheet_rev → changeset → commitOp。
+   */
+  private async fastRebaseSetRecords(params: {
+    sheetId: string;
+    userId: string;
+    dto: CommitChangesDto;
+    mutations: SheetMutation[];
+    baseRev: number;
+  }): Promise<CommitChangesResponse> {
+    const { sheetId, userId, dto, mutations, baseRev } = params;
+    const newRev = baseRev + 1;
+
+    return this.prisma.$transaction(async (tx) => {
+      const results: MutationResult[] = [];
+      for (const mutation of mutations) {
+        if (mutation.type !== 'setRecord') {
+          throw new BadRequestException('fast path 仅支持 setRecord');
+        }
+        const record = await tx.recordRow.findUnique({
+          where: { id: mutation.recordId },
+        });
+        if (!record || record.sheetId !== sheetId) {
+          results.push({
+            clientOpId: mutation.clientOpId,
+            status: 'error',
+            code: COMMIT_ERROR.NOT_FOUND,
+            message: '记录不存在',
+          });
+          continue;
+        }
+        const currentCells = (record.cells ?? {}) as Record<string, unknown>;
+        const merged = { ...currentCells, ...mutation.cells };
+        const expectedVersion = mutation.baseVersion;
+        if (expectedVersion !== undefined) {
+          const updated = await tx.recordRow.updateMany({
+            where: { id: record.id, version: expectedVersion },
             data: {
-              sheetId,
-              rev: newRev,
-              authorId: userId,
-              commitId: dto.clientBatchId,
-              mutations: dto.mutations as object[],
+              cells: merged as Prisma.InputJsonValue,
+              version: { increment: 1 },
+            },
+          });
+          if (updated.count === 0) {
+            results.push({
+              clientOpId: mutation.clientOpId,
+              status: 'error',
+              code: COMMIT_ERROR.VERSION_CONFLICT,
+              message: '记录已被他人修改，请刷新后重试',
+            });
+            continue;
+          }
+        } else {
+          await tx.recordRow.update({
+            where: { id: record.id },
+            data: {
+              cells: merged as Prisma.InputJsonValue,
+              version: { increment: 1 },
             },
           });
         }
+        const ok: MutationResultOk = {
+          clientOpId: mutation.clientOpId,
+          status: 'ok',
+          record: {
+            id: record.id,
+            cells: merged,
+            version:
+              expectedVersion !== undefined
+                ? expectedVersion + 1
+                : record.version + 1,
+          },
+        };
+        try {
+          await tx.commitOp.create({
+            data: {
+              clientOpId: mutation.clientOpId,
+              sheetId,
+              userId,
+              opType: mutation.type,
+              result: ok as object,
+            },
+          });
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            const existing = await tx.commitOp.findUnique({
+              where: { clientOpId: mutation.clientOpId },
+            });
+            if (existing) {
+              results.push({
+                ...(existing.result as unknown as MutationResultOk),
+                status: 'duplicate',
+              });
+              continue;
+            }
+          }
+          throw error;
+        }
+        results.push(ok);
       }
 
-      return { clientBatchId: dto.clientBatchId, results };
-    };
-
-    // 跨副本 / 跨路径：advisory lock 仍保留；同进程已由 SheetCommitQueue 串行
-    if (expectedSheetRev !== undefined) {
-      await this.prisma.$executeRaw`
-        SELECT pg_advisory_lock(hashtext(${sheetId}))
-      `;
-      try {
-        return await run();
-      } finally {
-        await this.prisma.$executeRaw`
-          SELECT pg_advisory_unlock(hashtext(${sheetId}))
-        `;
+      const allOk = results.every(
+        (r) => r.status === 'ok' || r.status === 'duplicate',
+      );
+      if (!allOk || mutations.length === 0) {
+        // 不 bump：整批回滚记录写？此处已部分写入。失败则抛错回滚事务。
+        throw new ConflictException('COMMIT_MUTATION_FAILED');
       }
-    }
 
-    return run();
+      const bumped = await tx.sheet.updateMany({
+        where: { id: sheetId, sheetRev: baseRev },
+        data: { sheetRev: newRev },
+      });
+      if (bumped.count === 0) {
+        throw new ConflictException('COMMIT_BASE_VER_TOO_LOW');
+      }
+      await tx.sheetChangeset.create({
+        data: {
+          sheetId,
+          rev: newRev,
+          authorId: userId,
+          commitId: dto.clientBatchId,
+          mutations: dto.mutations as object[],
+        },
+      });
+
+      return {
+        clientBatchId: dto.clientBatchId,
+        results,
+        sheetRev: newRev,
+      };
+    });
   }
 
   private async applyOne(
@@ -167,14 +312,6 @@ export class CommitChangesService {
     },
     clientIp: string,
   ): Promise<MutationResult> {
-    const existing = await this.prisma.commitOp.findUnique({
-      where: { clientOpId: mutation.clientOpId },
-    });
-    if (existing) {
-      const prior = existing.result as unknown as MutationResultOk;
-      return { ...prior, status: 'duplicate' };
-    }
-
     try {
       const ok = await this.dispatch(
         sheetId,
@@ -183,15 +320,32 @@ export class CommitChangesService {
         idMaps,
         clientIp,
       );
-      await this.prisma.commitOp.create({
-        data: {
-          clientOpId: mutation.clientOpId,
-          sheetId,
-          userId,
-          opType: mutation.type,
-          result: ok as object,
-        },
-      });
+      try {
+        await this.prisma.commitOp.create({
+          data: {
+            clientOpId: mutation.clientOpId,
+            sheetId,
+            userId,
+            opType: mutation.type,
+            result: ok as object,
+          },
+        });
+      } catch (error) {
+        // 幂等：先写后撞唯一键 → 回读（省掉每次成功路径上的 findUnique）。
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          const existing = await this.prisma.commitOp.findUnique({
+            where: { clientOpId: mutation.clientOpId },
+          });
+          if (existing) {
+            const prior = existing.result as unknown as MutationResultOk;
+            return { ...prior, status: 'duplicate' };
+          }
+        }
+        throw error;
+      }
       return ok;
     } catch (error) {
       return this.toError(mutation.clientOpId, error);
@@ -217,6 +371,7 @@ export class CommitChangesService {
           userId,
           mutation.cells,
           mutation.baseVersion,
+          { skipSideEffects: true },
         );
         return {
           clientOpId: mutation.clientOpId,

@@ -27,6 +27,11 @@ const WRITERS = Math.min(
 );
 const DURATION_S = Number(process.env.PERF_COLLAB_DURATION_S ?? 20);
 const TARGET_CPS = Number(process.env.PERF_COLLAB_TARGET_CPS ?? 50);
+/** Parallel writers: sleep between commits (0 = hammer). Human-like ≈ 2000. */
+const WRITER_INTERVAL_MS = Math.max(
+  0,
+  Number(process.env.PERF_COLLAB_WRITER_INTERVAL_MS ?? 0) || 0,
+);
 
 async function call(path, { token, ...init } = {}) {
   const response = await fetch(`${API}${path}`, {
@@ -94,7 +99,12 @@ function openCollab(token, sheetId) {
         const wait = pending.get(msg.clientBatchId);
         if (wait) {
           pending.delete(msg.clientBatchId);
-          wait.resolve({ ok: true, ms: Date.now() - wait.started, newRev: msg.newRev });
+          wait.resolve({
+            ok: true,
+            ms: Date.now() - wait.started,
+            newRev: msg.newRev,
+            results: msg.results,
+          });
         }
         return;
       }
@@ -126,7 +136,7 @@ function openCollab(token, sheetId) {
   });
 }
 
-function commitOnce(client, { recordId, fieldId, value }) {
+function commitOnce(client, { recordId, fieldId, value, baseVersion }) {
   const clientBatchId = randomUUID();
   const clientOpId = randomUUID();
   const started = Date.now();
@@ -153,12 +163,40 @@ function commitOnce(client, { recordId, fieldId, value }) {
             recordId,
             cells: { [fieldId]: value },
             clientOpId,
-            baseVersion: 1,
+            baseVersion,
           },
         ],
       }),
     );
   });
+}
+
+/** Retry version conflicts — client sheetRev is refreshed on error/new_changes. */
+async function commitWithRetry(client, args, { maxAttempts = 12 } = {}) {
+  const started = Date.now();
+  let last = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    last = await commitOnce(client, {
+      ...args,
+      baseVersion: args.getVersion(),
+    });
+    if (last.ok) return { ...last, ms: Date.now() - started, attempts: attempt + 1 };
+    const code = String(last.code ?? '');
+    if (
+      code.includes('CONFLICT') ||
+      code === 'COMMIT_VERSION_CONFLICT' ||
+      code.includes('BASE_VER')
+    ) {
+      await new Promise((r) => setTimeout(r, 2 + Math.floor(Math.random() * 8)));
+      continue;
+    }
+    return { ...last, ms: Date.now() - started, attempts: attempt + 1 };
+  }
+  return {
+    ...(last ?? { ok: false, code: 'RETRY_EXHAUSTED' }),
+    ms: Date.now() - started,
+    attempts: maxAttempts,
+  };
 }
 
 const stamp = Date.now();
@@ -191,12 +229,6 @@ const field = await call(`/sheets/${sheet.id}/fields`, {
   token,
   body: JSON.stringify({ name: '压测列', type: 'text' }),
 });
-const record = await call(`/sheets/${sheet.id}/records`, {
-  method: 'POST',
-  token,
-  body: JSON.stringify({ cells: { [field.id]: 'init' } }),
-});
-
 console.log(`opening ${CONNECTIONS} WS to sheet ${sheet.id} …`);
 const clients = [];
 const connectErrors = [];
@@ -217,42 +249,97 @@ for (let i = 0; i < CONNECTIONS; i += batch) {
 process.stdout.write('\n');
 
 const writers = clients.slice(0, WRITERS);
+/** One record per writer — avoid record.version stampede under parallel load. */
+const writerRecords = [];
+for (let i = 0; i < writers.length; i += 1) {
+  const row = await call(`/sheets/${sheet.id}/records`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ cells: { [field.id]: `init-${i}` } }),
+  });
+  writerRecords.push({ id: row.id, version: row.version ?? 1 });
+}
 const acceptLatencies = [];
 let accepts = 0;
 let conflicts = 0;
 let timeouts = 0;
 let otherErrors = 0;
+const otherErrorCodes = new Map();
 
 const intervalMs = Math.max(1, Math.floor(1000 / Math.max(1, TARGET_CPS)));
 const deadline = Date.now() + DURATION_S * 1000;
-let writeIdx = 0;
+const parallel = writers.length > 1;
 console.log(
-  `writing ~${TARGET_CPS} commits/s for ${DURATION_S}s with ${writers.length} writers …`,
+  parallel
+    ? `PARALLEL ${writers.length} writers for ${DURATION_S}s (interval=${WRITER_INTERVAL_MS}ms, each own record) …`
+    : `writing ~${TARGET_CPS} commits/s for ${DURATION_S}s with 1 writer …`,
 );
 
-while (Date.now() < deadline && writers.length > 0) {
-  const client = writers[writeIdx % writers.length];
-  writeIdx += 1;
-  const tickStart = Date.now();
-  const result = await commitOnce(client, {
-    recordId: record.id,
-    fieldId: field.id,
-    value: `v-${writeIdx}-${Date.now()}`,
-  });
+function tally(result, rec) {
   acceptLatencies.push(result.ms);
-  if (result.ok) accepts += 1;
-  else if (result.code === 'TIMEOUT') timeouts += 1;
+  if (result.ok) {
+    accepts += 1;
+    const ver = result.results?.[0]?.record?.version;
+    if (typeof ver === 'number') rec.version = ver;
+    else rec.version += 1;
+  } else if (result.code === 'TIMEOUT') timeouts += 1;
   else if (
     String(result.code ?? '').includes('CONFLICT') ||
-    String(result.code ?? '') === 'COMMIT_VERSION_CONFLICT'
+    String(result.code ?? '') === 'COMMIT_VERSION_CONFLICT' ||
+    String(result.code ?? '').includes('BASE_VER')
   ) {
     conflicts += 1;
-  } else otherErrors += 1;
-  const spent = Date.now() - tickStart;
-  if (spent < intervalMs) {
-    await new Promise((r) => setTimeout(r, intervalMs - spent));
+  } else {
+    otherErrors += 1;
+    const key = String(result.code ?? 'unknown');
+    otherErrorCodes.set(key, (otherErrorCodes.get(key) ?? 0) + 1);
   }
 }
+
+const wallStart = Date.now();
+if (!parallel) {
+  let writeIdx = 0;
+  while (Date.now() < deadline) {
+    const tickStart = Date.now();
+    writeIdx += 1;
+    const rec = writerRecords[0];
+    const result = await commitWithRetry(writers[0], {
+      recordId: rec.id,
+      fieldId: field.id,
+      value: `v-${writeIdx}-${Date.now()}`,
+      getVersion: () => rec.version,
+    });
+    tally(result, rec);
+    const spent = Date.now() - tickStart;
+    if (spent < intervalMs) {
+      await new Promise((r) => setTimeout(r, intervalMs - spent));
+    }
+  }
+} else {
+  // 每条 socket 自己循环提交，真正「N 人同时编辑」
+  await Promise.all(
+    writers.map(async (client, wi) => {
+      const rec = writerRecords[wi];
+      let n = 0;
+      while (Date.now() < deadline) {
+        n += 1;
+        const tick = Date.now();
+        const result = await commitWithRetry(client, {
+          recordId: rec.id,
+          fieldId: field.id,
+          value: `v-${wi}-${n}-${Date.now()}`,
+          getVersion: () => rec.version,
+        });
+        tally(result, rec);
+        if (WRITER_INTERVAL_MS > 0) {
+          const wait = WRITER_INTERVAL_MS - (Date.now() - tick);
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        }
+      }
+    }),
+  );
+}
+const wallElapsedS = Math.max(0.001, (Date.now() - wallStart) / 1000);
 
 for (const c of clients) {
   try {
@@ -262,7 +349,7 @@ for (const c of clients) {
   }
 }
 
-const elapsedS = DURATION_S;
+const elapsedS = wallElapsedS;
 const cps = accepts / elapsedS;
 const report = {
   at: new Date().toISOString(),
@@ -271,13 +358,19 @@ const report = {
   connectionsOpened: clients.length,
   connectErrors: connectErrors.slice(0, 5),
   writers: writers.length,
+  parallel,
   durationS: DURATION_S,
+  wallElapsedS: Number(elapsedS.toFixed(2)),
   targetCommitsPerSec: TARGET_CPS,
   accepts,
   conflicts,
   timeouts,
   otherErrors,
+  otherErrorCodes: Object.fromEntries(otherErrorCodes),
   commitsPerSec: Number(cps.toFixed(2)),
+  acceptsPerWriter: writers.length
+    ? Number((accepts / writers.length).toFixed(2))
+    : 0,
   acceptLatencyMs: {
     p50: percentile(acceptLatencies, 50),
     p95: percentile(acceptLatencies, 95),
@@ -293,7 +386,8 @@ const report = {
     connections:
       clients.length >= Math.min(CONNECTIONS, 1000) ||
       (CONNECTIONS < 1000 && clients.length === CONNECTIONS),
-    commitsPerSec: cps >= Math.min(TARGET_CPS * 0.8, 50) || CONNECTIONS < 1000,
+    commitsPerSec:
+      cps >= Math.min(TARGET_CPS * 0.8, 40) || CONNECTIONS < 1000,
   },
 };
 

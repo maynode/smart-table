@@ -66,6 +66,13 @@ const LEVELS: readonly AclLevel[] = ['full', 'edit', 'view', 'none'];
 
 @Injectable()
 export class PermissionsService {
+  /** Hot-path ACL decision cache (collab/commit); short TTL keeps edits fresh. */
+  private readonly decisionCache = new Map<
+    string,
+    { at: number; value: AclDecision }
+  >();
+  private static readonly DECISION_TTL_MS = 2_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspacesService: WorkspacesService,
@@ -118,6 +125,15 @@ export class PermissionsService {
     objectId: string,
     userId: string,
   ): Promise<AclDecision> {
+    const cacheKey = `${objectType}:${objectId}:${userId}`;
+    const cached = this.decisionCache.get(cacheKey);
+    if (
+      cached &&
+      Date.now() - cached.at < PermissionsService.DECISION_TTL_MS
+    ) {
+      return cached.value;
+    }
+
     const object = await this.resolveObject(objectType, objectId);
     let role: WorkspaceRole;
     try {
@@ -144,8 +160,9 @@ export class PermissionsService {
       (row) => row.subjectType === 'member' && row.subjectId === userId,
     );
 
+    let value: AclDecision;
     if (role === 'owner' || role === 'admin') {
-      return {
+      value = {
         objectType,
         objectId,
         workspaceId: object.workspaceId,
@@ -153,24 +170,32 @@ export class PermissionsService {
         role,
         level: 'full',
       };
+    } else {
+      const defaultLevel: AclLevel = role === 'editor' ? 'edit' : 'view';
+      const level = this.parseLevel(
+        member?.level ?? everyone?.level ?? defaultLevel,
+      );
+      value = {
+        objectType,
+        objectId,
+        workspaceId: object.workspaceId,
+        baseId: object.baseId,
+        role,
+        level,
+        recordRule: (member?.recordRule ?? everyone?.recordRule ??
+          undefined) as AclRecordRule | undefined,
+        fieldRule: (member?.fieldRule ?? everyone?.fieldRule ??
+          undefined) as AclFieldRule | undefined,
+      };
     }
-
-    const defaultLevel: AclLevel = role === 'editor' ? 'edit' : 'view';
-    const level = this.parseLevel(
-      member?.level ?? everyone?.level ?? defaultLevel,
-    );
-    return {
-      objectType,
-      objectId,
-      workspaceId: object.workspaceId,
-      baseId: object.baseId,
-      role,
-      level,
-      recordRule: (member?.recordRule ?? everyone?.recordRule ??
-        undefined) as AclRecordRule | undefined,
-      fieldRule: (member?.fieldRule ?? everyone?.fieldRule ??
-        undefined) as AclFieldRule | undefined,
-    };
+    this.decisionCache.set(cacheKey, { at: Date.now(), value });
+    if (this.decisionCache.size > 5_000) {
+      const cutoff = Date.now() - PermissionsService.DECISION_TTL_MS;
+      for (const [key, entry] of this.decisionCache) {
+        if (entry.at < cutoff) this.decisionCache.delete(key);
+      }
+    }
+    return value;
   }
 
   async assertCan(

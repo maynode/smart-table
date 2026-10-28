@@ -30,9 +30,21 @@ import { applyAiFields, stripAiFieldInputs } from './ai-field';
 import { seedBlankSheetStructure } from './blank-sheet';
 import { syncBidirectionalRelations } from './relation-sync';
 
+type SheetFieldRow = {
+  id: string;
+  name: string;
+  type: string;
+  options: unknown;
+};
+
 @Injectable()
 export class SheetsService {
   private readonly logger = new Logger(SheetsService.name);
+  private readonly fieldCache = new Map<
+    string,
+    { at: number; fields: SheetFieldRow[] }
+  >();
+  private static readonly FIELD_CACHE_TTL_MS = 5_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -268,6 +280,7 @@ export class SheetsService {
           AND "cells" ? ${fieldId}::text
       `;
     });
+    this.invalidateFieldCache(field.sheetId);
     await this.live.emit({
       baseId: field.sheet.baseId,
       actorId: userId,
@@ -331,6 +344,7 @@ export class SheetsService {
           : { options: dto.options as Prisma.InputJsonValue }),
       },
     });
+    this.invalidateFieldCache(sheetId);
     await this.live.emit({
       baseId: sheet.baseId,
       actorId: userId,
@@ -367,6 +381,7 @@ export class SheetsService {
           : { options: dto.options as Prisma.InputJsonValue }),
       },
     });
+    this.invalidateFieldCache(field.sheetId);
     await this.live.emit({
       baseId: field.sheet.baseId,
       actorId: userId,
@@ -483,11 +498,33 @@ export class SheetsService {
     return { id: recordId, deleted: true };
   }
 
+  private async fieldsForSheet(sheetId: string): Promise<SheetFieldRow[]> {
+    const hit = this.fieldCache.get(sheetId);
+    if (
+      hit &&
+      Date.now() - hit.at < SheetsService.FIELD_CACHE_TTL_MS
+    ) {
+      return hit.fields;
+    }
+    const fields = await this.prisma.field.findMany({
+      where: { sheetId },
+      orderBy: { order: 'asc' },
+      select: { id: true, name: true, type: true, options: true },
+    });
+    this.fieldCache.set(sheetId, { at: Date.now(), fields });
+    return fields;
+  }
+
+  invalidateFieldCache(sheetId: string): void {
+    this.fieldCache.delete(sheetId);
+  }
+
   async updateRecord(
     recordId: string,
     userId: string,
     cells: Record<string, unknown>,
     expectedVersion?: number,
+    options?: { skipSideEffects?: boolean },
   ) {
     const record = await this.prisma.recordRow.findUnique({
       where: { id: recordId },
@@ -510,25 +547,45 @@ export class SheetsService {
         changes: cells,
       },
     );
-    const strippedNumbers = await stripAutoNumberInputs(
-      this.prisma,
-      record.sheetId,
-      cells,
+
+    // 一次拉全字段（短 TTL 缓存），避免 strip/AI/assert/relation/formula 各扫一遍。
+    const sheetFields = await this.fieldsForSheet(record.sheetId);
+    const autoIds = new Set(
+      sheetFields.filter((f) => f.type === 'autoNumber').map((f) => f.id),
     );
-    const stripped = await stripAiFieldInputs(
-      this.prisma,
-      record.sheetId,
-      strippedNumbers,
+    const aiIds = new Set(
+      sheetFields.filter((f) => f.type === 'ai').map((f) => f.id),
     );
-    const fields = await this.assertKnownFields(record.sheetId, stripped);
+    let stripped: Record<string, unknown> = cells;
+    if (autoIds.size > 0 || aiIds.size > 0) {
+      stripped = { ...cells };
+      for (const id of autoIds) delete stripped[id];
+      for (const id of aiIds) delete stripped[id];
+    }
+    const known = new Set(sheetFields.map((f) => f.id));
+    const unknown = Object.keys(stripped).filter((key) => !known.has(key));
+    if (unknown.length > 0) {
+      throw new BadRequestException(`未知字段: ${unknown.join(', ')}`);
+    }
+    const fields = sheetFields.map((f) => ({
+      id: f.id,
+      name: f.name,
+      options: f.options,
+    }));
 
     const currentCells = (record.cells ?? {}) as Record<string, unknown>;
-    const mergedCells = await applyAiFields(
-      this.prisma,
-      record.sheetId,
-      { ...currentCells, ...stripped },
-      currentCells,
-    );
+    let mergedCells: Record<string, unknown> = {
+      ...currentCells,
+      ...stripped,
+    };
+    if (aiIds.size > 0) {
+      mergedCells = await applyAiFields(
+        this.prisma,
+        record.sheetId,
+        mergedCells,
+        currentCells,
+      );
+    }
     const claimStatus = this.claimStatusFor(fields, mergedCells);
 
     let updatedRecord;
@@ -554,63 +611,88 @@ export class SheetsService {
       if (updated.count === 0) {
         throw new ConflictException('记录已被他人修改，请刷新后重试');
       }
-      updatedRecord = await this.prisma.recordRow.findUniqueOrThrow({
-        where: { id: recordId },
+      updatedRecord = {
+        ...record,
+        cells: mergedCells as Prisma.InputJsonValue,
+        version: expectedVersion + 1,
+        claimStatus,
+      };
+    }
+
+    if (!options?.skipSideEffects) {
+      void this.webhooks
+        .emitForSheet(record.sheetId, 'record.updated', {
+          recordId,
+          cells: updatedRecord.cells,
+          changes: cells,
+        })
+        .catch((error: unknown) => {
+          this.logger.warn(`webhook record.updated failed: ${String(error)}`);
+        });
+      void this.audit.recordSheet(
+        record.sheetId,
+        userId,
+        'record.updated',
+        recordId,
+        { changes: cells, version: updatedRecord.version },
+      );
+      void this.emitSheetRevBumped(record.sheetId, userId, {
+        reason: 'record_updated',
+        recordId,
       });
     }
 
-    void this.webhooks
-      .emitForSheet(record.sheetId, 'record.updated', {
-        recordId,
-        cells: updatedRecord.cells,
-        changes: cells,
-      })
+    const changedIds = Object.keys(stripped);
+    const needsRelationSync = sheetFields.some((field) => {
+      if (!changedIds.includes(field.id)) return false;
+      const relation = (
+        field.options as {
+          relation?: { bidirectional?: boolean; reverseFieldId?: string };
+        } | null
+      )?.relation;
+      return Boolean(relation?.bidirectional && relation.reverseFieldId);
+    });
+    if (needsRelationSync) {
+      try {
+        await syncBidirectionalRelations(
+          this.prisma,
+          sheetFields,
+          recordId,
+          currentCells,
+          mergedCells,
+          changedIds,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `bidirectional relation sync failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    // 勿阻塞单元格合入：自动化异步跑。
+    void this.automationRunner
+      .triggerRecordUpdated(recordId)
       .catch((error: unknown) => {
-        this.logger.warn(`webhook record.updated failed: ${String(error)}`);
+        this.logger.error(
+          `automation update trigger failed for record ${recordId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       });
-    void this.audit.recordSheet(
-      record.sheetId,
-      userId,
-      'record.updated',
-      recordId,
-      { changes: cells, version: updatedRecord.version },
+
+    const hasFormula = sheetFields.some(
+      (field) =>
+        field.type === 'formula' ||
+        Boolean((field.options as { formula?: string } | null)?.formula),
     );
-    void this.emitSheetRevBumped(record.sheetId, userId, {
-      reason: 'record_updated',
-      recordId,
-    });
-
-    const sheetFields = await this.prisma.field.findMany({
-      where: { sheetId: record.sheetId },
-      orderBy: { order: 'asc' },
-    });
-    try {
-      await syncBidirectionalRelations(
-        this.prisma,
-        sheetFields,
-        recordId,
-        currentCells,
-        mergedCells,
-        Object.keys(stripped),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `bidirectional relation sync failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+    if (!hasFormula) {
+      return {
+        ...updatedRecord,
+        cells: (updatedRecord.cells ?? {}) as Record<string, unknown>,
+      };
     }
-
-    try {
-      await this.automationRunner.triggerRecordUpdated(recordId);
-    } catch (error) {
-      this.logger.error(
-        `automation update trigger failed for record ${recordId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-
     const formulaValues = evaluateFormulaRecord(
       sheetFields.map((field) => ({
         id: field.id,

@@ -37,6 +37,9 @@ interface RoomClient {
 export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CollabRoomService.name);
   private readonly rooms = new Map<string, Set<RoomClient>>();
+  /** Authoritative in-process sheetRev mirror; avoids a DB round-trip per user_changes. */
+  private readonly roomSheetRev = new Map<string, number>();
+  private readonly roomBaseId = new Map<string, string>();
   private readonly cellLocks: CellLockRegistry;
   private readonly lockRedis: IORedis | null;
   /** 0 = unlimited */
@@ -200,10 +203,16 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       void this.leave(client);
     });
 
-    const sheet = await this.prisma.sheet.findUnique({ where: { id: sheetId } });
+    const sheet = await this.prisma.sheet.findUnique({
+      where: { id: sheetId },
+      select: { sheetRev: true, baseId: true },
+    });
+    const rev = sheet?.sheetRev ?? 0;
+    this.roomSheetRev.set(sheetId, rev);
+    if (sheet?.baseId) this.roomBaseId.set(sheetId, sheet.baseId);
     this.send(socket, {
       type: 'last_reversion',
-      sheetRev: sheet?.sheetRev ?? 0,
+      sheetRev: rev,
     });
     this.broadcastPresence(sheetId);
     await this.sendCellLocksSnapshot(client);
@@ -411,41 +420,36 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     msg: Extract<CollabClientMsg, { type: 'user_changes' }>,
   ): Promise<void> {
     const started = Date.now();
-    const sheet = await this.prisma.sheet.findUnique({
-      where: { id: client.sheetId },
-    });
-    if (!sheet) {
-      this.send(client.socket, {
-        type: 'error',
-        code: 'NOT_FOUND',
-        message: '工作表不存在',
+    let sheetRev = this.roomSheetRev.get(client.sheetId);
+    let baseId = this.roomBaseId.get(client.sheetId);
+    if (sheetRev === undefined || !baseId) {
+      const sheet = await this.prisma.sheet.findUnique({
+        where: { id: client.sheetId },
+        select: { sheetRev: true, baseId: true },
       });
-      return;
+      if (!sheet) {
+        this.send(client.socket, {
+          type: 'error',
+          code: 'NOT_FOUND',
+          message: '工作表不存在',
+        });
+        return;
+      }
+      sheetRev = sheet.sheetRev;
+      baseId = sheet.baseId;
+      this.roomSheetRev.set(client.sheetId, sheetRev);
+      this.roomBaseId.set(client.sheetId, baseId);
     }
-    if (msg.baseRev !== sheet.sheetRev) {
+    // 仅拒绝「未来版本」；落后 baseRev 交给 Actor rebase（排队时人人都会落后）。
+    if (msg.baseRev > sheetRev) {
       this.metrics.increment('collab_conflict_total', { reason: 'version' });
       this.send(client.socket, {
         type: 'error',
         code: COMMIT_ERROR.VERSION_CONFLICT,
         message: 'COMMIT_BASE_VER_TOO_LOW',
-        sheetRev: sheet.sheetRev,
+        sheetRev,
       });
       await this.sendChanges(client, msg.baseRev);
-      return;
-    }
-
-    try {
-      await this.sheets.assertSheetAccess(
-        client.sheetId,
-        client.userId,
-        'editor',
-      );
-    } catch {
-      this.send(client.socket, {
-        type: 'error',
-        code: 'FORBIDDEN',
-        message: '无编辑权限',
-      });
       return;
     }
 
@@ -460,28 +464,30 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
         },
         '0.0.0.0',
         msg.baseRev,
+        { skipAccessCheck: true, rebase: true },
       );
     } catch {
       this.metrics.increment('collab_conflict_total', { reason: 'version' });
       const sheetNow = await this.prisma.sheet.findUnique({
         where: { id: client.sheetId },
+        select: { sheetRev: true },
       });
+      const revNow = sheetNow?.sheetRev ?? sheetRev;
+      this.roomSheetRev.set(client.sheetId, revNow);
       this.send(client.socket, {
         type: 'error',
         code: COMMIT_ERROR.VERSION_CONFLICT,
         message: 'COMMIT_BASE_VER_TOO_LOW',
-        sheetRev: sheetNow?.sheetRev ?? sheet.sheetRev,
+        sheetRev: revNow,
       });
       await this.sendChanges(client, msg.baseRev);
       return;
     }
 
-    const updated = await this.prisma.sheet.findUnique({
-      where: { id: client.sheetId },
-    });
-    const newRev = updated?.sheetRev ?? sheet.sheetRev;
-    const commitId = msg.clientBatchId;
     const hasError = response.results.some((r) => r.status === 'error');
+    const newRev = response.sheetRev ?? sheetRev;
+    this.roomSheetRev.set(client.sheetId, newRev);
+    const commitId = msg.clientBatchId;
 
     this.send(client.socket, {
       type: 'accept_commit',
@@ -493,7 +499,7 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     });
     this.metrics.observe('collab_accept_duration_ms', Date.now() - started);
 
-    if (hasError) {
+    if (hasError || response.sheetRev === undefined) {
       this.send(client.socket, {
         type: 'error',
         code: COMMIT_ERROR.FAILED,
@@ -503,11 +509,16 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // 落后客户端补洞，避免只靠广播漏中间 rev。
+    if (msg.baseRev < newRev - 1) {
+      await this.sendChanges(client, msg.baseRev);
+    }
+
     this.broadcast(
       client.sheetId,
       {
         type: 'new_changes',
-        baseRev: msg.baseRev,
+        baseRev: newRev - 1,
         newRev,
         commitId,
         authorId: client.userId,
@@ -515,18 +526,18 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       },
       client,
     );
-    this.broadcast(client.sheetId, {
-      type: 'comm_notice',
-      noticeType: 'DIRTY_AREA_CHANGE',
-      sheetRev: newRev,
-    });
-    await this.live.emit({
-      baseId: sheet.baseId,
-      actorId: client.userId,
-      kind: 'sheet.rev_bumped',
-      entityId: client.sheetId,
-      meta: { sheetRev: newRev },
-    });
+    // 勿 await：Live 总线/Redis 延迟会堵住同 socket 下一条 user_changes，压测 cps 崩塌。
+    void this.live
+      .emit({
+        baseId,
+        actorId: client.userId,
+        kind: 'sheet.rev_bumped',
+        entityId: client.sheetId,
+        meta: { sheetRev: newRev },
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(`live emit after accept failed: ${String(error)}`);
+      });
   }
 
   /**
@@ -675,9 +686,9 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     msg: CollabServerMsg,
     except?: RoomClient,
   ): void {
-    this.localBroadcast(sheetId, msg, except);
-    // Cross-replica: remote pods deliver to all their sockets (author not there).
+    // Cross-replica first so peer pods start deliver while we chunk locally.
     void this.fanout.publish(sheetId, msg);
+    this.localBroadcast(sheetId, msg, except);
   }
 
   /** Deliver only to sockets on this process. Used by Redis fanout handler. */
@@ -688,10 +699,26 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
   ): void {
     const room = this.rooms.get(sheetId);
     if (!room) return;
+    const targets: WebSocket[] = [];
     for (const c of room) {
       if (except && c === except) continue;
-      this.send(c.socket, msg);
+      targets.push(c.socket);
     }
+    if (targets.length === 0) return;
+    // 千连接：stringify 一次 + 分片 setImmediate，避免同步扇出堵死 accept 回程。
+    const raw = JSON.stringify(msg);
+    // 大房用更大 chunk，减少 setImmediate 调度次数（Event loop 抢占 accept）。
+    const CHUNK = targets.length >= 200 ? 256 : 64;
+    const sendChunk = (offset: number) => {
+      const end = Math.min(offset + CHUNK, targets.length);
+      for (let i = offset; i < end; i += 1) {
+        this.sendRaw(targets[i], raw);
+      }
+      if (end < targets.length) {
+        setImmediate(() => sendChunk(end));
+      }
+    };
+    sendChunk(0);
   }
 
   private refreshConnectionGauges(sheetId?: string): void {
@@ -709,9 +736,13 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
   }
 
   private send(socket: WebSocket, msg: CollabServerMsg): void {
+    this.sendRaw(socket, JSON.stringify(msg));
+  }
+
+  private sendRaw(socket: WebSocket, raw: string): void {
     if (socket.readyState !== socket.OPEN) return;
     try {
-      socket.send(JSON.stringify(msg));
+      socket.send(raw);
     } catch (error) {
       this.logger.warn(`collab send failed: ${String(error)}`);
     }

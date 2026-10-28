@@ -165,4 +165,6 @@ export type MutationResult = MutationResultOk | MutationResultErr;
 export interface CommitChangesResponse {
   clientBatchId: string;
   results: MutationResult[];
+  /** Present when sheet_rev was bumped by this commit. */
+  sheetRev?: number;
 }
