@@ -158,6 +158,8 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
+      args:
+        VITE_PREVIEW_BANNER: ${VITE_PREVIEW_BANNER:-1}
     image: smart-table-web:local
     container_name: smart-table-web
     restart: unless-stopped

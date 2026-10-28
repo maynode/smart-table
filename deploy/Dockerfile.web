@@ -10,6 +10,9 @@ COPY packages/shared/package.json packages/shared/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+# 公开测试顶栏：测试期保持 1；正式环境构建改为 0
+ARG VITE_PREVIEW_BANNER=1
+ENV VITE_PREVIEW_BANNER=$VITE_PREVIEW_BANNER
 RUN pnpm --filter web build
 
 FROM nginx:1.27-alpine

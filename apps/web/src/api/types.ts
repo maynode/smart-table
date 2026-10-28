@@ -4,6 +4,20 @@ export interface UserDto {
   name: string;
   avatarSeed: string;
   avatarUrl?: string | null;
+  /** 安装管理员（反馈后台 / 配额） */
+  installAdmin?: boolean;
+}
+
+export interface FeedbackDto {
+  id: string;
+  userId: string;
+  content: string;
+  pagePath: string | null;
+  imageUrls: string[];
+  status: 'open' | 'done';
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; account: string; name: string } | null;
 }
 
 export interface WorkspaceDto {

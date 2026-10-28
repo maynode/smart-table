@@ -4,6 +4,7 @@ import { AuthModule } from './auth/auth.module';
 import { BasesModule } from './bases/bases.module';
 import { CommentsModule } from './comments/comments.module';
 import { AutomationsModule } from './automations/automations.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { AnalysisReportsModule } from './analysis-reports/analysis-reports.module';
@@ -40,6 +41,7 @@ import { LiveModule } from './live/live.module';
     CommentsModule,
     AutomationsModule,
     FormsModule,
+    FeedbackModule,
     StorageModule,
     MetricsModule,
     PermissionsModule,

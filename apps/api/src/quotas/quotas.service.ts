@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { isInstallAdmin as checkInstallAdmin } from '../auth/install-admin';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface QuotaLimits {
@@ -227,24 +228,8 @@ export class QuotasService {
     return member;
   }
 
-  private async isInstallAdmin(userId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return false;
-    const configured = (
-      process.env.INSTALL_ADMIN_ACCOUNTS ??
-      process.env.INSTALL_ADMIN_EMAILS ??
-      ''
-    )
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
-    if (configured.length) {
-      return configured.includes(user.account.toLowerCase());
-    }
-    const first = await this.prisma.user.findFirst({
-      orderBy: { createdAt: 'asc' },
-    });
-    return first?.id === user.id;
+  private isInstallAdmin(userId: string): Promise<boolean> {
+    return checkInstallAdmin(this.prisma, userId);
   }
 
   private presentPolicy(policy: {

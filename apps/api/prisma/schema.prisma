@@ -32,6 +32,7 @@ model User {
   memberships WorkspaceMember[]
   comments    Comment[]
   notifications Notification[]
+  feedbacks   Feedback[]
 
   @@map("users")
 }
@@ -707,4 +708,28 @@ model FormSubmitIdempotency {
 
   @@index([formId])
   @@map("form_submit_idempotency")
+}
+
+enum FeedbackStatus {
+  open
+  done
+}
+
+/** 已登录用户问题反馈（安装管理员后台可见） */
+model Feedback {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  content   String         @db.Text
+  pagePath  String?        @map("page_path")
+  /// 压缩后截图 URL（最多 3 张，/files/uploads/…）
+  imageUrls String[]       @default([]) @map("image_urls")
+  status    FeedbackStatus @default(open)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("feedbacks")
 }

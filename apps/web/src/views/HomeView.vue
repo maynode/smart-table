@@ -1237,6 +1237,15 @@ onUnmounted(() => {
             >
               修改密码
             </button>
+            <button
+              v-if="auth.state.user?.installAdmin"
+              type="button"
+              data-testid="admin-feedback-menu"
+              role="menuitem"
+              @click="closeMenus(); router.push('/admin/feedback')"
+            >
+              反馈后台
+            </button>
             <button type="button" role="menuitem" @click="closeMenus(); signOut()">
               退出
             </button>

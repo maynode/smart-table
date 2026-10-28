@@ -33,6 +33,7 @@ import type {
   SavedViewDto,
   UserDto,
   NotificationDto,
+  FeedbackDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
   AnalysisMessageAttachmentDto,
@@ -82,6 +83,8 @@ async function exportSheetFile(
 }
 
 export const endpoints = {
+  me: () => api<UserDto>('/auth/me'),
+
   login: (account: string, password: string) =>
     api<AuthResult>('/auth/login', {
       body: { account, password },
@@ -788,6 +791,38 @@ export const endpoints = {
     api<{ notifications: NotificationDto[] }>(
       `/notifications?limit=${limit}`,
     ),
+
+  submitFeedback: (payload: {
+    content: string;
+    pagePath?: string;
+    imageUrls?: string[];
+  }) => api<FeedbackDto>('/feedback', { method: 'POST', body: payload }),
+
+  uploadFeedbackAttachment: async (file: Blob, filename = 'feedback.jpg') => {
+    const form = new FormData();
+    form.append('file', file, filename);
+    const token = getToken();
+    const response = await fetch(`${API_BASE}/feedback/attachments`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as { url: string };
+  },
+
+  listAdminFeedback: (status: 'open' | 'done' | 'all' = 'open') =>
+    api<{ items: FeedbackDto[] }>(
+      `/admin/feedback?status=${encodeURIComponent(status)}`,
+    ),
+
+  updateAdminFeedbackStatus: (id: string, status: 'open' | 'done') =>
+    api<FeedbackDto>(`/admin/feedback/${id}`, {
+      method: 'PATCH',
+      body: { status },
+    }),
 
   markNotificationRead: (id: string) =>
     api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),

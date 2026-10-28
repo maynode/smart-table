@@ -22,6 +22,7 @@ import { CollabRoomService } from '../collab/collab-room.service';
 import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { isInstallAdmin } from './install-admin';
 import { hashPassword, verifyPassword } from './password';
 
 /** 自定义头像上传上限（前端裁剪后约几十 KB） */
@@ -35,6 +36,8 @@ export interface PublicUser {
   avatarSeed: string;
   avatarUrl: string | null;
   createdAt: Date;
+  /** 安装管理员：可看反馈后台 / 改全局配额 */
+  installAdmin: boolean;
 }
 
 export interface AuthResult {
@@ -217,7 +220,7 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('登录状态已失效');
     }
-    return toPublicUser(user);
+    return this.presentUser(user);
   }
 
   /** 登录态修改用户名（全局唯一；同步展示名） */
@@ -234,7 +237,7 @@ export class AuthService {
       throw new UnauthorizedException('登录状态已失效');
     }
     if (user.account === account) {
-      return toPublicUser(user);
+      return this.presentUser(user);
     }
 
     const taken = await this.prisma.user.findUnique({ where: { account } });
@@ -259,7 +262,7 @@ export class AuthService {
     }
 
     await this.claimWorkspaceInvites(updated.id, account);
-    const publicUser = toPublicUser(updated);
+    const publicUser = await this.presentUser(updated);
     await this.notifyProfileChanged(publicUser, 'username');
     return publicUser;
   }
@@ -285,7 +288,7 @@ export class AuthService {
       where: { id: userId },
       data: { avatarSeed, avatarUrl: null },
     });
-    const publicUser = toPublicUser(updated);
+    const publicUser = await this.presentUser(updated);
     await this.notifyProfileChanged(publicUser, 'avatar');
     return publicUser;
   }
@@ -314,7 +317,7 @@ export class AuthService {
       where: { id: userId },
       data: { avatarUrl },
     });
-    const publicUser = toPublicUser(updated);
+    const publicUser = await this.presentUser(updated);
     await this.notifyProfileChanged(publicUser, 'avatar');
     return publicUser;
   }
@@ -439,11 +442,26 @@ export class AuthService {
       sub: user.id,
       account: user.account,
     });
-    return { accessToken, user: toPublicUser(user) };
+    return { accessToken, user: await this.presentUser(user) };
+  }
+
+  private async presentUser(user: User): Promise<PublicUser> {
+    return {
+      id: user.id,
+      account: user.account,
+      name: user.name,
+      avatarSeed: user.avatarSeed || user.account,
+      avatarUrl: user.avatarUrl ?? null,
+      createdAt: user.createdAt,
+      installAdmin: await isInstallAdmin(this.prisma, user.id),
+    };
   }
 }
 
-export function toPublicUser(user: User): PublicUser {
+export function toPublicUser(
+  user: User,
+  installAdmin = false,
+): PublicUser {
   return {
     id: user.id,
     account: user.account,
@@ -451,5 +469,6 @@ export function toPublicUser(user: User): PublicUser {
     avatarSeed: user.avatarSeed || user.account,
     avatarUrl: user.avatarUrl ?? null,
     createdAt: user.createdAt,
+    installAdmin,
   };
 }

@@ -4,6 +4,7 @@ export interface StoredUser {
   name: string;
   avatarSeed?: string;
   avatarUrl?: string | null;
+  installAdmin?: boolean;
 }
 
 const TOKEN_KEY = 'st.token';
