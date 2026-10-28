@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,6 +17,10 @@ import {
 import { FormsService } from '../forms/forms.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CommitChangesDto } from './dto/commit-changes.dto';
+import {
+  SheetCommitQueue,
+  type SheetCommitJob,
+} from './sheet-commit-queue.service';
 import { SheetsService } from './sheets.service';
 
 const MAX_BATCH_CHARS = 1_500_000;
@@ -25,6 +31,8 @@ export class CommitChangesService {
     private readonly prisma: PrismaService,
     private readonly sheets: SheetsService,
     private readonly forms: FormsService,
+    @Inject(forwardRef(() => SheetCommitQueue))
+    private readonly commitQueue: SheetCommitQueue,
   ) {}
 
   async commit(
@@ -44,6 +52,33 @@ export class CommitChangesService {
 
     await this.sheets.assertSheetAccess(sheetId, userId, 'editor');
 
+    return this.commitQueue.enqueue({
+      sheetId,
+      userId,
+      dto,
+      clientIp,
+      expectedSheetRev,
+    });
+  }
+
+  /** Worker / memory actor entry — access already checked by `commit`. */
+  executeCommitJob(job: SheetCommitJob): Promise<CommitChangesResponse> {
+    return this.commitSerialized(
+      job.sheetId,
+      job.userId,
+      job.dto,
+      job.clientIp,
+      job.expectedSheetRev,
+    );
+  }
+
+  private async commitSerialized(
+    sheetId: string,
+    userId: string,
+    dto: CommitChangesDto,
+    clientIp: string,
+    expectedSheetRev?: number,
+  ): Promise<CommitChangesResponse> {
     const run = async (): Promise<CommitChangesResponse> => {
       if (expectedSheetRev !== undefined) {
         const sheet = await this.prisma.sheet.findUnique({
@@ -105,7 +140,7 @@ export class CommitChangesService {
       return { clientBatchId: dto.clientBatchId, results };
     };
 
-    // WS 并发提交：会话级锁，避免「先 apply 再 bump」窗口里双写同 rev
+    // 跨副本 / 跨路径：advisory lock 仍保留；同进程已由 SheetCommitQueue 串行
     if (expectedSheetRev !== undefined) {
       await this.prisma.$executeRaw`
         SELECT pg_advisory_lock(hashtext(${sheetId}))

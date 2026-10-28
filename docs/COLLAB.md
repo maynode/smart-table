@@ -109,8 +109,8 @@ Collab 与 Offline 共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等�
 
 ## 10. 下一主线：千人同表规模
 
-常规私有化并发已够用；**下一刀**做同表千级在线：
+常规私有化并发已够用；同表千级在线推进中：
 
-- 方案与切片：**[COLLAB-SCALE.md](./COLLAB-SCALE.md)**（每表 Actor 串行合入 + 跨副本扇出 + 压测门槛）
+- 方案与切片：**[COLLAB-SCALE.md](./COLLAB-SCALE.md)** — **S1–S5 代码已落地**；**§4 千连接压测基线**待跑入库
 - 交接入口：`docs/REMAINING-GAPS.md` §0 #3b  
 - 未跑通规模压测前，**勿**宣称「千人同表已达标」。

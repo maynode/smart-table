@@ -87,6 +87,6 @@ spec:
 
 ## 7. 监控
 
-- `GET /metrics` 输出 Prometheus 文本：`form_submit_total{mode,status}`、`automation_run_total` 等。
+- `GET /metrics` 输出 Prometheus 文本：`form_submit_total{mode,status}`、`automation_run_total`、以及协同规模指标 `collab_connections` / `collab_sheet_connections` / `collab_accept_duration_ms_p95` / `collab_conflict_total` / `collab_sheet_queue_depth`。
 - API Deployment 已带 `prometheus.io/scrape` 注解；没有 Prometheus Operator 时用静态抓取。
 - 建议告警：提交 409 比例突增（码尽）、`automation_run_total{status="failed"}`、API p95、队列积压。

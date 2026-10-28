@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { WebSocket } from 'ws';
 import type IORedis from 'ioredis';
@@ -6,12 +11,15 @@ import type { SheetMutation } from 'shared';
 import { COMMIT_ERROR, peerColorFromUserId } from 'shared';
 import { JwtService } from '@nestjs/jwt';
 import { LiveBusService } from '../live/live-bus.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { createRedisConnection } from '../queue/redis-connection';
 import { SheetsService } from '../sheets/sheets.service';
 import { CommitChangesService } from '../sheets/commit-changes.service';
 import type { CollabClientMsg, CollabServerMsg } from './collab.types';
 import { CellLockRegistry } from './cell-lock.registry';
+import { CollabFanoutService } from './collab-fanout.service';
+import { CoalesceThrottle } from './collab-backpressure';
 
 interface RoomClient {
   socket: WebSocket;
@@ -26,11 +34,19 @@ interface RoomClient {
 }
 
 @Injectable()
-export class CollabRoomService implements OnModuleDestroy {
+export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CollabRoomService.name);
   private readonly rooms = new Map<string, Set<RoomClient>>();
   private readonly cellLocks: CellLockRegistry;
   private readonly lockRedis: IORedis | null;
+  /** 0 = unlimited */
+  private readonly maxSheetConnections: number;
+  private readonly cursorThrottle: CoalesceThrottle<{
+    sheetId: string;
+    except?: RoomClient;
+    msg: Extract<CollabServerMsg, { type: 'cursor_message' }>;
+  }>;
+  private readonly presenceThrottle: CoalesceThrottle<string>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -38,8 +54,30 @@ export class CollabRoomService implements OnModuleDestroy {
     private readonly sheets: SheetsService,
     private readonly commits: CommitChangesService,
     private readonly live: LiveBusService,
+    private readonly metrics: MetricsService,
+    private readonly fanout: CollabFanoutService,
     config: ConfigService,
   ) {
+    this.maxSheetConnections = Math.max(
+      0,
+      Number(config.get<string>('COLLAB_MAX_SHEET_CONNECTIONS') ?? 1000) || 0,
+    );
+    const cursorMs = Math.max(
+      0,
+      Number(config.get<string>('COLLAB_CURSOR_MIN_INTERVAL_MS') ?? 80) || 0,
+    );
+    const presenceMs = Math.max(
+      0,
+      Number(config.get<string>('COLLAB_PRESENCE_DEBOUNCE_MS') ?? 250) || 0,
+    );
+    this.cursorThrottle = new CoalesceThrottle(cursorMs, (_key, payload) => {
+      // Cursor is best-effort: local only (no Redis) to cut hot-path bandwidth.
+      this.localBroadcast(payload.sheetId, payload.msg, payload.except);
+      this.metrics.increment('collab_cursor_flush_total');
+    });
+    this.presenceThrottle = new CoalesceThrottle(presenceMs, (_key, sheetId) => {
+      this.flushPresence(sheetId);
+    });
     const url = config.get<string>('REDIS_URL');
     if (url) {
       try {
@@ -64,9 +102,18 @@ export class CollabRoomService implements OnModuleDestroy {
       this.lockRedis = null;
       this.cellLocks = new CellLockRegistry();
     }
+    this.refreshConnectionGauges();
+  }
+
+  onModuleInit(): void {
+    this.fanout.setLocalHandler((sheetId, msg) => {
+      this.localBroadcast(sheetId, msg);
+    });
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.cursorThrottle.clear();
+    this.presenceThrottle.clear();
     if (this.lockRedis) {
       try {
         await this.lockRedis.quit();
@@ -115,6 +162,21 @@ export class CollabRoomService implements OnModuleDestroy {
       room = new Set();
       this.rooms.set(sheetId, room);
     }
+    if (
+      this.maxSheetConnections > 0 &&
+      room.size >= this.maxSheetConnections
+    ) {
+      this.metrics.increment('collab_connection_rejected_total', {
+        reason: 'sheet_full',
+      });
+      this.send(socket, {
+        type: 'error',
+        code: 'ROOM_FULL',
+        message: `该表在线连接已达上限（${this.maxSheetConnections}）`,
+      });
+      socket.close();
+      return;
+    }
     const client: RoomClient = {
       socket,
       userId: payload.sub,
@@ -126,6 +188,7 @@ export class CollabRoomService implements OnModuleDestroy {
       sheetId,
     };
     room.add(client);
+    this.refreshConnectionGauges(sheetId);
 
     socket.on('message', (raw) => {
       void this.onMessage(client, raw.toString());
@@ -211,9 +274,14 @@ export class CollabRoomService implements OnModuleDestroy {
       }
       this.broadcastPresence(client.sheetId);
     }
+    this.refreshConnectionGauges(client.sheetId);
   }
 
   private broadcastPresence(sheetId: string): void {
+    this.presenceThrottle.push(sheetId, sheetId);
+  }
+
+  private flushPresence(sheetId: string): void {
     const room = this.rooms.get(sheetId);
     if (!room) return;
     const byUser = new Map<
@@ -241,6 +309,7 @@ export class CollabRoomService implements OnModuleDestroy {
     }
     const members = [...byUser.values()];
     const msg: CollabServerMsg = { type: 'user_newinfos', members };
+    // 本机房间成员列表（跨副本合并见 S5 后续；勿把单副本名单当全集 Redis 扇出）
     for (const c of room) this.send(c.socket, msg);
   }
 
@@ -275,9 +344,10 @@ export class CollabRoomService implements OnModuleDestroy {
         this.send(client.socket, { type: 'heart_beat', ok: true });
         return;
       case 'cursor_message':
-        this.broadcast(
-          client.sheetId,
-          {
+        this.cursorThrottle.push(`${client.sheetId}:${client.userId}`, {
+          sheetId: client.sheetId,
+          except: client,
+          msg: {
             type: 'cursor_message',
             userId: client.userId,
             account: client.account,
@@ -285,8 +355,13 @@ export class CollabRoomService implements OnModuleDestroy {
             color: client.color,
             cursor: msg.cursor ?? {},
           },
-          client,
-        );
+        });
+        if (this.cursorThrottle.droppedCount > 0) {
+          this.metrics.setGauge(
+            'collab_cursor_dropped_total',
+            this.cursorThrottle.droppedCount,
+          );
+        }
         return;
       case 'cell_lock_acquire':
         await this.handleCellLockAcquire(client, msg.recordId, msg.fieldId);
@@ -335,6 +410,7 @@ export class CollabRoomService implements OnModuleDestroy {
     client: RoomClient,
     msg: Extract<CollabClientMsg, { type: 'user_changes' }>,
   ): Promise<void> {
+    const started = Date.now();
     const sheet = await this.prisma.sheet.findUnique({
       where: { id: client.sheetId },
     });
@@ -347,6 +423,7 @@ export class CollabRoomService implements OnModuleDestroy {
       return;
     }
     if (msg.baseRev !== sheet.sheetRev) {
+      this.metrics.increment('collab_conflict_total', { reason: 'version' });
       this.send(client.socket, {
         type: 'error',
         code: COMMIT_ERROR.VERSION_CONFLICT,
@@ -385,6 +462,7 @@ export class CollabRoomService implements OnModuleDestroy {
         msg.baseRev,
       );
     } catch {
+      this.metrics.increment('collab_conflict_total', { reason: 'version' });
       const sheetNow = await this.prisma.sheet.findUnique({
         where: { id: client.sheetId },
       });
@@ -413,6 +491,7 @@ export class CollabRoomService implements OnModuleDestroy {
       clientBatchId: msg.clientBatchId,
       results: response.results,
     });
+    this.metrics.observe('collab_accept_duration_ms', Date.now() - started);
 
     if (hasError) {
       this.send(client.socket, {
@@ -596,11 +675,36 @@ export class CollabRoomService implements OnModuleDestroy {
     msg: CollabServerMsg,
     except?: RoomClient,
   ): void {
+    this.localBroadcast(sheetId, msg, except);
+    // Cross-replica: remote pods deliver to all their sockets (author not there).
+    void this.fanout.publish(sheetId, msg);
+  }
+
+  /** Deliver only to sockets on this process. Used by Redis fanout handler. */
+  private localBroadcast(
+    sheetId: string,
+    msg: CollabServerMsg,
+    except?: RoomClient,
+  ): void {
     const room = this.rooms.get(sheetId);
     if (!room) return;
     for (const c of room) {
       if (except && c === except) continue;
       this.send(c.socket, msg);
+    }
+  }
+
+  private refreshConnectionGauges(sheetId?: string): void {
+    let total = 0;
+    for (const room of this.rooms.values()) total += room.size;
+    this.metrics.setGauge('collab_connections', total);
+    this.metrics.setGauge('collab_rooms', this.rooms.size);
+    if (sheetId) {
+      this.metrics.setGauge(
+        'collab_sheet_connections',
+        this.rooms.get(sheetId)?.size ?? 0,
+        { sheet_id: sheetId },
+      );
     }
   }
 

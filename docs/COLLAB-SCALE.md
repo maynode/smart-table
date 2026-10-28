@@ -1,6 +1,6 @@
 # 千人同表规模方案（下一主线）
 
-> 状态：**下一主线（2026-10-28）**  
+> 状态：**进行中（2026-10-28）— S1–S5 代码已落地；§4 千连接压测基线待跑**  
 > 前置：私有化量产协同已收口（见 [COLLAB.md](./COLLAB.md) §9）  
 > 不做：企微登录/通讯录/真群、像素级 UI、新功能盘
 
@@ -61,13 +61,13 @@ flowchart LR
 
 ## 3. 切片顺序（实施时按此推进）
 
-| 切片 | 内容 | 验收 |
-|------|------|------|
-| S1 | 文档 + metrics：每表连接数、accept p95、冲突计数 | 仪表可刮；无行为变更 |
-| S2 | 单进程内 per-sheet 串行队列（Actor 雏形） | 同表并发写无 `sheet_rev` 乱序；e2e 仍绿 |
-| S3 | Redis pub/sub 扇出 `new_changes`（跨副本） | 两 API 副本、两客户端无 sticky 也能互见（或 sticky 关闭的集成测） |
-| S4 | Actor 外置/分布式（按 sheet 分区消费） | 杀一副本不丢队列；热点表压测通过 |
-| S5 | presence/cursor 降采样 + 连接上限/背压 | 千连接压测：编辑路径稳定，光标可降级 |
+| 切片 | 内容 | 状态 | 验收 |
+|------|------|------|------|
+| S1 | 文档 + metrics：每表连接数、accept p95、冲突计数 | **已落地** | `GET /metrics`：`collab_connections` / `collab_sheet_connections` / `collab_accept_duration_ms_p95` / `collab_conflict_total` / `collab_sheet_queue_depth` |
+| S2 | 单进程内 per-sheet 串行队列（Actor 雏形） | **已落地** | `SheetCommitQueue` 包裹 HTTP/WS `commit`；同表同进程串行；跨副本仍靠 advisory lock |
+| S3 | Redis pub/sub 扇出 `new_changes`（跨副本） | **已落地** | `CollabFanoutService` 频道 `collab:sheet:{id}`；`COLLAB_REDIS=0` 可关；锁/comm_notice/new_changes 随 `broadcast` 扇出 |
+| S4 | Actor 外置/分布式（按 sheet 分区消费） | **已落地** | `COLLAB_SHEET_ACTOR=bullmq` 启用；`sheet-commits` 队列 + worker 内 Redis 锁 `st:sheet-actor:{sheetId}`；默认 `memory` 不变 |
+| S5 | presence/cursor 降采样 + 连接上限/背压 | **已落地** | `COLLAB_MAX_SHEET_CONNECTIONS`（默认 1000）拒连 `ROOM_FULL`；光标 coalesce + 仅本机扇出；presence 防抖；指标 `collab_connection_rejected_total` / `collab_cursor_*` |
 
 ## 4. 压测门槛（收工）
 
@@ -76,16 +76,35 @@ flowchart LR
 - 双副本：关闭 sticky 时，对端仍能收到 `new_changes`（S3+）。
 - 回归：`collab-realtime`、`offline-sync`、grid 相关 Playwright 全绿；锁拒绝仍正确。
 
+### 4.1 复现命令
+
+```bash
+# API :3000 已起；默认 100 连接冒烟
+pnpm perf:collab
+
+# 门槛级（需机器资源；结果写入 artifacts/perf/collab-scale.json）
+PERF_COLLAB_CONNECTIONS=1000 PERF_COLLAB_WRITERS=20 PERF_COLLAB_DURATION_S=30 \
+  PERF_COLLAB_TARGET_CPS=50 pnpm perf:collab
+```
+
+### 4.2 基线记录
+
+| 日期 | 连接 | commits/s | accept p95 | 环境 | 备注 |
+|------|------|-----------|------------|------|------|
+| （待跑） | 1000 | ≥50 | 填入 | | 跑通后改本表；未填数字前勿宣称达标 |
+
 ## 5. 代码锚点
 
 - 房与广播：[`apps/api/src/collab/collab-room.service.ts`](../apps/api/src/collab/collab-room.service.ts)
-- 提交：[`apps/api/src/sheets/commit-changes.service.ts`](../apps/api/src/sheets/commit-changes.service.ts)
+- 跨副本扇出：[`apps/api/src/collab/collab-fanout.service.ts`](../apps/api/src/collab/collab-fanout.service.ts)
+- 提交 + Actor 队列：[`apps/api/src/sheets/commit-changes.service.ts`](../apps/api/src/sheets/commit-changes.service.ts)、[`sheet-commit-queue.service.ts`](../apps/api/src/sheets/sheet-commit-queue.service.ts)
 - 锁：[`apps/api/src/collab/cell-lock.registry.ts`](../apps/api/src/collab/cell-lock.registry.ts)
+- Metrics：[`apps/api/src/metrics/metrics.service.ts`](../apps/api/src/metrics/metrics.service.ts)
 - Live 总线可参考：[`apps/api/src/live/live-bus.service.ts`](../apps/api/src/live/live-bus.service.ts)（Redis pub/sub 模式）
 - 部署约束：[`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) §6
 
 ## 6. 与交付边界
 
-- **已交付**：私有化量产协同（观感 + JWT/`/ready`/Redis 锁与限流 + sticky 文档）。
-- **本文件**：千人同表扩展；做完前勿宣称「千人同表已达标」。
+- **已交付**：私有化量产协同；千人同表 **S1–S5**（压测脚本/基线数字仍待写入 §4）。
+- **仍缺**：§4 千连接压测可复现报告（勿在无数字时宣称达标）。
 - 跟踪入口：[`docs/REMAINING-GAPS.md`](./REMAINING-GAPS.md) §0。

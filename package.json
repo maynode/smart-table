@@ -17,6 +17,7 @@
     "perf:window": "node scripts/perf/window-fetch.mjs",
     "perf:seed-10m": "node scripts/perf/seed-10m-sheet.mjs",
     "perf:form": "node scripts/perf/form-load.mjs",
+    "perf:collab": "node scripts/perf/collab-scale-load.mjs",
     "perf:queue": "node scripts/perf/queue-smoke.mjs",
     "perf:soft": "pnpm --filter api test:e2e -- perf-foundation && pnpm --filter web exec playwright test e2e/grid-perf.spec.ts"
   }

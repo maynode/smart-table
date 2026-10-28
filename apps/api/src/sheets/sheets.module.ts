@@ -12,6 +12,7 @@ import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { CommitChangesService } from './commit-changes.service';
 import { ExcelController } from './excel.controller';
 import { ExcelService } from './excel.service';
+import { SheetCommitQueue } from './sheet-commit-queue.service';
 import { SheetsController } from './sheets.controller';
 import { SheetsService } from './sheets.service';
 
@@ -29,7 +30,12 @@ import { SheetsService } from './sheets.service';
     forwardRef(() => CollabModule),
   ],
   controllers: [SheetsController, ExcelController],
-  providers: [SheetsService, ExcelService, CommitChangesService],
-  exports: [SheetsService, CommitChangesService],
+  providers: [
+    SheetsService,
+    ExcelService,
+    SheetCommitQueue,
+    CommitChangesService,
+  ],
+  exports: [SheetsService, CommitChangesService, SheetCommitQueue],
 })
 export class SheetsModule {}

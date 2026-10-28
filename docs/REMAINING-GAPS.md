@@ -23,13 +23,13 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落�
 | 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；若仍抖，查外层 flex。 |
 | 2 | **大表滚动 / 空白观感** | **已对齐 + chunk 本地库** | 块对齐预取 + skeleton + 持久化 chunk；见 `OFFLINE.md` §0 / `PERFORMANCE.md` §9。 |
 | 3 | **实时协同观感** | **已达私有化量产** | Accept 2s+短熔断、冲突人话+OT rebase、锁拒绝/degraded toast、光标名牌常显+窗口定位、Redis 单元格锁、e2e 锁/冲突。见 `docs/COLLAB.md` §9。 |
-| 3b | **千人同表规模** | **下一主线** | 每表 Actor 串行合入 + Redis 跨副本扇出 + 千连接压测。方案与切片：[`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)。未达标前勿宣称千人同表。 |
+| 3b | **千人同表规模** | **进行中（S1–S5 代码已落地）** | S1–S5 已落地。**下一刀：§4 千连接压测基线写入文档**。见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)。未跑通压测前勿宣称千人同表。 |
 | 4 | **表单 live 回刷盖编辑** | **已修（2026-10-28）** | 忽略自身 actor；公开 `/fill` 首屏快照后不跟 `form.updated`。 |
 | 5 | **网格一点即编 / 行轴不同步** | **已修（2026-10-28）** | `gestureCell` 恢复两击进编；`records.length` 同步 `setRowCount`。 |
 | 6 | **自动化开关不可点 / 仪表盘连点加图** | **已修（2026-10-28）** | switch input 铺满可点；加图 `addingWidget` 防重入。 |
 | 7 | **成功页无自动化时空白** | **已修（2026-10-28）** | 默认模板「提交成功」；builder 文案说明优先级。 |
 
-**下一 AI：** 只做 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)（S1→S5）；勿再扫造功能；企微强绑定仍不做。
+**下一 AI：** 只做 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md) **§4 千连接压测基线**；勿再扫造功能；企微强绑定仍不做。
 
 ---
 
@@ -99,16 +99,18 @@ W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落�
 
 > 功能主路径 + P0/P1 + PWA/离线已齐；**不要再扫一遍造功能**。
 
-### 当前唯一主线：协同观感
+### 当前唯一主线：千人同表规模（COLLAB-SCALE）
 
 | # | 项 | 状态 | 说明 |
 |---|----|------|------|
-| 1 | **双人同编流畅度** | **待做** | 延迟、接受回执、远端 `new_changes` 上屏节奏；对照 `COLLAB.md` |
-| 2 | **冲突 / 锁提示** | **待做** | 单元格短租约失败、`COMMIT_VERSION_CONFLICT` 表面化文案与恢复 |
-| 3 | **光标 / 在线叠层** | **待做** | 少遮挡、可扫读；勿为装饰加重绘 |
-| 4 | **回归** | **必做** | 改协同后跑相关 API/Playwright；勿静默降级离线 flush |
+| 1 | **S1 metrics** | **已落地** | `/metrics`：连接数、accept p95、冲突、队列深度 |
+| 2 | **S2 进程内 Actor** | **已落地** | `SheetCommitQueue` 同表串行；跨副本仍 advisory lock |
+| 3 | **S3 Redis 扇出** | **已落地** | `CollabFanoutService`；`new_changes`/锁等跨副本 |
+| 4 | **S4 分布式 Actor** | **已落地** | `COLLAB_SHEET_ACTOR=bullmq`；默认 memory |
+| 5 | **S5 降采样 + 背压** | **已落地** | 连接上限 / 光标 coalesce / presence 防抖 |
+| 6 | **§4 千连接压测** | **待跑** | 脚本 `pnpm perf:collab`（`scripts/perf/collab-scale-load.mjs`）；1000 WS 基线写入 COLLAB-SCALE §4.2 |
 
-可选补证据：本机起 API `:3000` + web `:5173` 后 `pnpm --filter web exec playwright test e2e/offline-sync.spec.ts`（含 cold reload）。
+协同观感（原主线）已达私有化量产，见 `COLLAB.md` §9。勿再扫造功能。
 
 ### P0 交付闭环（已归档）
 

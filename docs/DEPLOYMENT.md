@@ -93,8 +93,8 @@ docker compose start api claim-worker
 ## 6. 扩容
 
 - **HTTP API / claim-worker** 可水平扩：worker 占码用 `FOR UPDATE SKIP LOCKED`，公开表单限流与单元格锁走 Redis，多副本一致。
-- **协同 WebSocket 必须会话粘滞**：负载均衡对 `/collab` 与 `/live`（含 Upgrade）按连接粘滞到同一 API 副本；房间扇出为进程内，无跨副本 Socket adapter。单元格锁已 Redis 共享，即使用户落到不同 HTTP 副本，锁仍正确。
-- **千人同表（下一主线）**：跨副本扇出 + 每表 Actor 串行合入见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)；落地后可弱化 sticky 硬依赖。
+- **协同 WebSocket 建议会话粘滞**：负载均衡对 `/collab` 与 `/live`（含 Upgrade）仍建议 sticky。`new_changes` / 锁更新等已可经 Redis `collab:sheet:*` 跨副本扇出（`COLLAB_REDIS`）；单元格锁 Redis 共享。热点表可开 `COLLAB_SHEET_ACTOR=bullmq`。presence/cursor 降采样见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md) S5。
+- **千人同表**：S1–S4 已落地；S5 与压测门槛见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)。未跑通千连接压测前勿宣称达标。
 - Compose 示例里 `api` / `web` 写了 `container_name`，**不能**直接 `docker compose up --scale api=N`（名字冲突）。扩容请去掉 `container_name`，或在前面加 sticky LB / k8s Service（见 `deploy/k8s/`）。
 - PgBouncer `DEFAULT_POOL_SIZE` 与 API 的 `connection_limit` 需按数据库连接上限调优。
 - 千万行表格渲染在浏览器完成（多图层 Canvas + 视口裁剪），不随 API 扩容线性增加带宽。
