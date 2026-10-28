@@ -99,13 +99,18 @@ Collab 与 Offline 共用 `sheet_rev` / `sheet_changesets` / `CommitOp` 幂等�
 - 单元格锁：`packages/shared/src/cell-lock.ts`、`apps/api/src/collab/cell-lock.registry.ts`
 - e2e：`apps/web/e2e/collab-realtime.spec.ts`
 
-## 8. 验收
+## 8. 验收（私有化量产）
 
 双浏览器无刷新互见；OT/冲突可理解；离线联调；光标/在线人数；**同格第二人无法进入编辑**；副作用仅 accept 后。
 
-> 千人同表扇出 / 每表 Actor 串行合入：见规模方案，未包含在本切片。
-
 ## 9. 私有化量产状态（2026-10-28）
 
-协议 + 单元格短租约 + 观感收口已达**私有化量产**可用：Accept 2s/短熔断、冲突人话 + OT rebase、锁拒绝/降级 toast、光标/占用叠层可扫读、Redis 共享锁。
-规模项（千人同表 Actor 串行合入）仍见规模方案，不挡交付。跟踪见 `docs/REMAINING-GAPS.md` §0 #3。
+协议 + 单元格短租约 + 观感收口已达**私有化量产**可用：Accept 2s/短熔断、冲突人话 + OT rebase、锁拒绝/降级 toast、光标/占用叠层可扫读、Redis 共享锁。提交 `359c0b0`。
+
+## 10. 下一主线：千人同表规模
+
+常规私有化并发已够用；**下一刀**做同表千级在线：
+
+- 方案与切片：**[COLLAB-SCALE.md](./COLLAB-SCALE.md)**（每表 Actor 串行合入 + 跨副本扇出 + 压测门槛）
+- 交接入口：`docs/REMAINING-GAPS.md` §0 #3b  
+- 未跑通规模压测前，**勿**宣称「千人同表已达标」。

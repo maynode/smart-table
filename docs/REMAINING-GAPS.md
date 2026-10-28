@@ -1,33 +1,35 @@
 # 智能表格 — 剩余未完成清单（交接版）
 
-> 更新日期：2026-10-27  
-> 对照：`docs/智能表格-产品与技术方案.md`、`docs/superpowers/plans/2026-10-20-phase0-1-core-serial-claim.md`  
+> 更新日期：2026-10-28  
+> 对照：`docs/智能表格-产品与技术方案.md`、`docs/COLLAB-SCALE.md`  
 > 原则：**不以文档勾选代替验证**。本文件只记录「代码状态 + 可复现证据 + 仍缺什么」。
 
 ---
 
 ## 0. 一句话现状
 
-W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落地；相对企微网页版智能表格：**主能力已对齐**。  
-**当前主线（2026-10-28）：** 实时协同观感 + 生产硬化（JWT/`/ready`/Redis 锁与限流）已按私有化量产收口；**不要再扫造功能**；像素级视觉对齐 mock **不做**（产品指令）。  
+W1–W4 功能主路径 + M12 缺口补齐 + UI 打磨 + P0 交付闭环已落地；相对企微网页版智能表格：**主能力已对齐**；私有化量产协同已收口。  
+**当前主线（2026-10-28）：** **千人同表规模**（每表 Actor 串行合入 + 跨副本扇出 + 压测门槛）——方案见 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)；**不要再扫造功能**；像素级视觉对齐 mock **不做**（产品指令）。  
 **P0 已完成：** 全量 API e2e、前端 Playwright/vue-tsc/vitest、领码/网格/表单压测、`perf:window` 千万行；W6 见 `docs/FINAL-REPORT.md`。  
 **已落地（同步/离线）：** MessageCenter + `commitchanges`；Nest `/collab` OT + 单元格短租约；`/live` + 多 Tab 镜像；千万行窗口 + skeleton + resize settle。  
 **已落地（2026-10-27 PWA）：** 可安装壳 + chunk 本地库（Worker / cell-budget / 冷启动）+ 对象 Outbox（仪表盘布局/自动化定义/通知已读）+ 多面离线读缓存；见 `docs/OFFLINE.md` §0。提交 `558eb11`。  
+**已落地（2026-10-28 量产硬化）：** 协同观感收口 + JWT 拒启 + `/ready` + metrics 门禁 + Redis 单元格锁/表单限流；提交 `359c0b0`。  
 **待定（成熟后再议）：** 企微登录/通讯录/真企微群；`USER_C`；双人企微 `NEW_CHANGES` 实帧补抓（本仓按 SDK 推断建模）。
 
-### 已知体验债（2026-10-28）
+### 已知体验债 / 规模债（2026-10-28）
 
 | # | 项 | 状态 | 说明 / 复现 |
 |---|----|------|-------------|
 | 1 | **拉伸窗口表格抖动** | **已收敛** | 拖边 CSS 拉伸上一帧 + 80ms settle 再 realloc；若仍抖，查外层 flex。 |
 | 2 | **大表滚动 / 空白观感** | **已对齐 + chunk 本地库** | 块对齐预取 + skeleton + 持久化 chunk；见 `OFFLINE.md` §0 / `PERFORMANCE.md` §9。 |
-| 3 | **实时协同观感** | **已达私有化量产** | Accept 2s+短熔断、冲突人话+OT rebase、锁拒绝/degraded toast、光标名牌常显+窗口定位、Redis 单元格锁、e2e 锁/冲突。千人同表 Actor 仍为规模项。见 `docs/COLLAB.md` §9。 |
+| 3 | **实时协同观感** | **已达私有化量产** | Accept 2s+短熔断、冲突人话+OT rebase、锁拒绝/degraded toast、光标名牌常显+窗口定位、Redis 单元格锁、e2e 锁/冲突。见 `docs/COLLAB.md` §9。 |
+| 3b | **千人同表规模** | **下一主线** | 每表 Actor 串行合入 + Redis 跨副本扇出 + 千连接压测。方案与切片：[`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)。未达标前勿宣称千人同表。 |
 | 4 | **表单 live 回刷盖编辑** | **已修（2026-10-28）** | 忽略自身 actor；公开 `/fill` 首屏快照后不跟 `form.updated`。 |
 | 5 | **网格一点即编 / 行轴不同步** | **已修（2026-10-28）** | `gestureCell` 恢复两击进编；`records.length` 同步 `setRowCount`。 |
 | 6 | **自动化开关不可点 / 仪表盘连点加图** | **已修（2026-10-28）** | switch input 铺满可点；加图 `addingWidget` 防重入。 |
 | 7 | **成功页无自动化时空白** | **已修（2026-10-28）** | 默认模板「提交成功」；builder 文案说明优先级。 |
 
-**下一 AI：** #3 已收口为私有化量产；勿再扫造功能。规模项（千人同表）另议。
+**下一 AI：** 只做 [`docs/COLLAB-SCALE.md`](./COLLAB-SCALE.md)（S1→S5）；勿再扫造功能；企微强绑定仍不做。
 
 ---
 
