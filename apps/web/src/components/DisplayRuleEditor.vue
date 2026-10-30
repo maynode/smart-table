@@ -250,6 +250,12 @@ function asGroup(
   background: #fff;
   font-size: 12px;
 }
+.rule-toolbar select:focus,
+.rule-toolbar select:focus-visible {
+  outline: none;
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.22);
+}
 .rule-joiner {
   font-size: 12px;
   font-weight: 600;
@@ -273,6 +279,14 @@ function asGroup(
   background: #fff;
   font-size: 12px;
   box-sizing: border-box;
+}
+.condition-row select:focus,
+.condition-row select:focus-visible,
+.condition-row input:focus,
+.condition-row input:focus-visible {
+  outline: none;
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.22);
 }
 .condition-row .icon-btn {
   flex: 0 0 auto;

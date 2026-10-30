@@ -180,6 +180,7 @@ export async function seedSerialClaim(
         // 成功页优先展示「发送消息」插值结果；此处仅作无该步骤时的兜底
         successTemplate: '',
         rejectDuplicatePhone: true,
+        duplicateCheckFieldId: phone.id,
       },
     });
 
@@ -197,9 +198,7 @@ export async function seedSerialClaim(
             ],
           },
         } as Prisma.InputJsonValue,
-        // Mirrors WeCom「联动修改」from automation/list:
-        // LOOKUP_RECORD(type=1) → UPDATE_RECORD(type=3, selector=fromStep)
-        // → SEND_MESSAGE(type=4, users=填写者, content=序列号).
+        // 查找 → 修改 → 发送消息给填写者（成功页读 消息内容）
         steps: [
           {
             id: 'find-code',
@@ -235,7 +234,6 @@ export async function seedSerialClaim(
           {
             id: 'notify-claimer',
             type: 'sendMessage',
-            // WeCom: title「你的序列号为」+ content ref 修改步骤.序列号
             name: '你的序列号为',
             channel: 'doc',
             recipients: [{ source: 'trigger', field: '填写者' }],

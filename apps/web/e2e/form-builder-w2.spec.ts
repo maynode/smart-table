@@ -71,6 +71,15 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await expect(page.getByTestId(`form-field-${noteField.id}`)).toBeVisible();
 
   await page.getByTestId('form-name-input').fill('到访登记表');
+  await page.getByTestId('form-name-input').blur();
+  await expect
+    .poll(async () => {
+      const forms = await (
+        await api.get(`/forms?baseId=${base.id}`, { headers })
+      ).json();
+      return forms[0]?.name;
+    })
+    .toBe('到访登记表');
 
   // Remove and re-add a field to prove visual field management.
   await page.getByTestId(`form-remove-${noteField.id}`).click();
@@ -110,7 +119,6 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
     page.getByTestId(`form-required-${noteField.id}`),
   ).toBeChecked();
 
-  await expect(page.getByTestId('form-success-hint')).toContainText('发送消息');
   // 封面上传会自动 save：先传封面，再改 audience/到期，避免被自动保存盖掉
   await page.getByTestId('form-cover-input').setInputFiles({
     name: 'cover.png',
@@ -139,9 +147,7 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await expect(
     page.getByTestId(`form-required-${noteField.id}`),
   ).toBeChecked();
-  await page.getByTestId('form-builder-save').click();
-  await expect.poll(async () => page.getByText('表单已保存').count()).toBeGreaterThan(0);
-  // 嵌入模式分享链接在「分享表单」对话框里
+  // 嵌入模式分享链接在「分享表单」对话框里（填写设置已自动保存）
   await page.getByTestId('form-share-open').click();
   await expect(page.getByTestId('form-share-url-dialog')).toContainText('/fill/');
   await expect(page.getByTestId('form-share-qr-dialog')).toBeVisible();
@@ -198,14 +204,10 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
     .toBeLessThan(3);
 
   await page.getByTestId('form-tab-fill').click();
-  await expect(page.getByTestId('form-success-preview')).toContainText(
-    '发送消息',
-  );
 
   // Switch back to anyone so the public fill flow can run unauthenticated.
   await page.getByTestId('form-tab-edit').click();
   await page.getByTestId('form-audience').selectOption('anyone');
-  await page.getByTestId('form-builder-save').click();
   await expect
     .poll(async () => {
       const forms = await (

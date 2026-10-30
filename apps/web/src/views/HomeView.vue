@@ -15,6 +15,7 @@ import { endpoints } from '../api/endpoints';
 import AvatarCropper from '../components/AvatarCropper.vue';
 import MembersPanel from '../components/MembersPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
+import PageLoading from '../components/PageLoading.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import { auth } from '../stores/auth';
@@ -1240,11 +1241,29 @@ onUnmounted(() => {
             <button
               v-if="auth.state.user?.installAdmin"
               type="button"
+              data-testid="admin-users-menu"
+              role="menuitem"
+              @click="closeMenus(); router.push('/admin/users')"
+            >
+              用户管理
+            </button>
+            <button
+              v-if="auth.state.user?.installAdmin"
+              type="button"
               data-testid="admin-feedback-menu"
               role="menuitem"
               @click="closeMenus(); router.push('/admin/feedback')"
             >
               反馈后台
+            </button>
+            <button
+              v-if="auth.state.user?.installAdmin"
+              type="button"
+              data-testid="admin-activity-menu"
+              role="menuitem"
+              @click="closeMenus(); router.push('/admin/activity')"
+            >
+              日志管理
             </button>
             <button type="button" role="menuitem" @click="closeMenus(); signOut()">
               退出
@@ -1284,7 +1303,7 @@ onUnmounted(() => {
             placeholder="筛选工作区"
           />
         </div>
-        <p v-if="loading" class="hint">加载中…</p>
+        <PageLoading v-if="loading" variant="inline" label="加载工作区…" />
         <ul v-else class="ws-list" @scroll="closeMenus">
           <li v-for="ws in filteredWorkspaces" :key="ws.id" class="ws-row">
             <button
@@ -1364,7 +1383,10 @@ onUnmounted(() => {
         class="main"
         :class="{ 'main-onboard': hideWorkspaceSidebar }"
       >
-        <p v-if="loading && hideWorkspaceSidebar" class="hint main-hint">加载中…</p>
+        <PageLoading
+          v-if="loading && hideWorkspaceSidebar"
+          label="加载工作区…"
+        />
         <div
           v-else-if="needsWorkspaceOnboard"
           class="workspace-setup"
@@ -1549,7 +1571,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <p v-if="basesLoading" class="hint main-hint">加载表格…</p>
+        <PageLoading v-if="basesLoading" label="加载表格…" />
 
         <div
           v-else-if="needsBaseOnboard"

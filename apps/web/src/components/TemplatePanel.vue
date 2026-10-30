@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import PageLoading from './PageLoading.vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { promptDialog } from '../ui/dialog';
@@ -177,7 +178,13 @@ onMounted(load);
     </div>
 
     <div class="template-body">
-      <section v-for="section in sections" :key="section.title" class="template-section">
+      <PageLoading v-if="loading && !templates.length" label="加载模板…" />
+      <template v-else>
+      <section
+        v-for="section in sections"
+        :key="section.title"
+        class="template-section"
+      >
         <header class="section-head">
           <h4>{{ section.title }}</h4>
           <button
@@ -215,6 +222,7 @@ onMounted(load);
         </div>
       </section>
       <p v-if="!filtered.length && !loading" class="empty-hint">暂无模板。</p>
+      </template>
     </div>
   </section>
 </template>

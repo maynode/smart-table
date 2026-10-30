@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LiveEvent } from 'shared';
 import DashboardChart from './DashboardChart.vue';
 import DashboardAiDock from './DashboardAiDock.vue';
+import PageLoading from './PageLoading.vue';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { liveBus } from '../sync/live-bus';
@@ -644,7 +645,7 @@ function onAiApplied(): void {
 
     <div class="dashboard-body">
       <div v-if="loading && !active" class="dashboard-main dashboard-main-empty">
-        <p class="list-empty-hint">加载中…</p>
+        <PageLoading label="加载仪表盘…" />
       </div>
       <div v-else-if="active" class="dashboard-main">
         <section v-if="editable" class="widget-builder chart-config">

@@ -71,6 +71,8 @@ const props = withDefaults(
     ) => Promise<CellLockAcquireResult>;
     releaseCellLock?: (recordId: string, fieldId: string) => void;
     peerCellLocks?: CollabCellLock[];
+    /** 首屏/切表加载中：无数据时画 skeleton 行，避免空白闪一下 */
+    loading?: boolean;
   }>(),
   {
     records: () => [],
@@ -93,6 +95,7 @@ const props = withDefaults(
     acquireCellLock: undefined,
     releaseCellLock: undefined,
     peerCellLocks: () => [],
+    loading: false,
   },
 );
 
@@ -187,8 +190,12 @@ function recordAt(row: number): RecordDto | undefined {
   return props.records[row - (props.recordOffset ?? 0)];
 }
 
+const SKELETON_PLACEHOLDER_ROWS = 12;
+
 function absoluteRowCount(): number {
-  return props.rowCount ?? props.records.length;
+  const n = props.rowCount ?? props.records.length;
+  if (props.loading && n === 0) return SKELETON_PLACEHOLDER_ROWS;
+  return n;
 }
 
 function confirmInsert(direction: 'above' | 'below'): void {
@@ -310,18 +317,27 @@ function editorMinWidth(fieldType: string): number {
   if (fieldType === 'location') return 200;
   if (fieldType === 'relation') return 180;
   if (fieldType === 'person') return 140;
+  if (fieldType === 'progress') return 280;
+  if (fieldType === 'multiSelect') return 200;
   return 120;
 }
 
 function styleForEditorCell(row: number, col: number, fieldType: string): Record<string, string> {
   if (!engine) return {};
   const rect = engine.cellRect(row, col);
-  return {
+  const style: Record<string, string> = {
     left: `${rect.x}px`,
     top: `${rect.y}px`,
     width: `${Math.max(rect.width, editorMinWidth(fieldType))}px`,
-    height: `${rect.height}px`,
   };
+  // 进度 / 多选需要比单元格更高的浮层，否则控件挤在一行里拖不动
+  if (fieldType === 'progress' || fieldType === 'multiSelect') {
+    style.minHeight = `${Math.max(rect.height, 40)}px`;
+    style.height = 'auto';
+  } else {
+    style.height = `${rect.height}px`;
+  }
+  return style;
 }
 
 /** Follow cellRect on scroll (editing.style alone is snapshotted at beginEdit). */
@@ -585,6 +601,7 @@ function renderCell(row: number, col: number): CellRender | null {
   if (!field) return null;
   const record = recordAt(row);
   if (!record) {
+    if (props.loading) return { text: '', skeleton: true };
     // Large-sheet window miss: skeleton bars instead of empty flash (WeCom chunk feel).
     const virtual =
       props.recordLookup != null &&
@@ -838,6 +855,14 @@ function moveSelection(dRow: number, dCol: number): void {
   selectedCell.value = next;
   engine.setSelection(next);
   engine.ensureCellVisible(next.row, next.col);
+}
+
+function onProgressFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null;
+  const root = event.currentTarget as HTMLElement | null;
+  if (root && next && root.contains(next)) return;
+  // 点到浮层外再提交，避免滑条拖动过程中误关
+  commitEdit(true);
 }
 
 function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): void {
@@ -1394,7 +1419,12 @@ watch(
 
 watch(
   // rowCount 未传时 absoluteRowCount 依赖 records.length；必须一起侦听，否则首屏 0 行卡住
-  [() => props.rowCount, () => props.recordOffset, () => props.records.length],
+  [
+    () => props.rowCount,
+    () => props.recordOffset,
+    () => props.records.length,
+    () => props.loading,
+  ],
   () => {
     if (!engine) return;
     engine.setRowCount(absoluteRowCount());
@@ -1866,6 +1896,7 @@ defineExpose({
       class="cell-editor progress-editor"
       :style="liveEditorStyle"
       data-testid="cell-editor-progress"
+      @focusout="onProgressFocusOut"
     >
       <input
         ref="editorInput"
@@ -1873,10 +1904,31 @@ defineExpose({
         type="range"
         min="0"
         max="100"
+        step="1"
+        @change="commitEdit(true)"
         @keydown.enter.prevent="commitEdit(true)"
         @keydown.esc.prevent="commitEdit(false)"
       />
-      <span>{{ editing.value }}%</span>
+      <input
+        class="progress-number"
+        type="number"
+        min="0"
+        max="100"
+        step="1"
+        :value="editing.value"
+        @input="
+          editing &&
+            (editing.value = String(
+              Math.min(
+                100,
+                Math.max(0, Number(($event.target as HTMLInputElement).value) || 0),
+              ),
+            ))
+        "
+        @keydown.enter.prevent="commitEdit(true)"
+        @keydown.esc.prevent="commitEdit(false)"
+      />
+      <span class="progress-unit">%</span>
       <button type="button" class="btn small" @click="commitEdit(true)">确定</button>
     </div>
 
@@ -2004,15 +2056,34 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px !important;
+  padding: 6px 10px !important;
   height: auto !important;
-  min-height: 36px !important;
+  min-height: 40px !important;
   background: #fff;
 }
 .progress-editor input[type='range'] {
   flex: 1;
-  min-width: 0;
+  min-width: 96px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
   accent-color: var(--brand, #2d8cf0);
+}
+.progress-number {
+  width: 52px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: right;
+}
+.progress-unit {
+  flex: none;
+  color: #667085;
+  font-size: 12px;
 }
 .multi-done {
   align-self: flex-end;

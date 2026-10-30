@@ -78,6 +78,20 @@ export class LiveRoomService implements OnModuleInit {
       return;
     }
 
+    const authUser = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { blacklistedAt: true },
+    });
+    if (!authUser || authUser.blacklistedAt) {
+      this.send(socket, {
+        type: 'error',
+        code: 'UNAUTHORIZED',
+        message: '账号已被限制登录',
+      });
+      socket.close();
+      return;
+    }
+
     let baseId = baseIdQ;
     let workspaceId = workspaceIdQ;
 

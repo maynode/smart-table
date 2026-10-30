@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,25 +11,37 @@ import { isInstallAdmin } from '../auth/install-admin';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
-const MAX_CONTENT = 4_000;
+const MAX_CONTENT = 200;
 const MAX_IMAGES = 3;
 const MAX_IMAGE_BYTES = 800 * 1024;
 const IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const IMAGE_URL_RE = /^\/files\/uploads\/[A-Za-z0-9-]+\.(png|jpe?g|webp)$/i;
 
+/** 匿名反馈简易限流：每 IP 每小时最多 N 次提交 / 上传 */
+const ANON_CREATE_LIMIT = 20;
+const ANON_UPLOAD_LIMIT = 40;
+const ANON_WINDOW_MS = 60 * 60 * 1000;
+
 @Injectable()
 export class FeedbackService {
+  private readonly anonCreateHits = new Map<string, number[]>();
+  private readonly anonUploadHits = new Map<string, number[]>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
   ) {}
 
   async uploadImage(
-    _userId: string,
+    _userId: string | null,
     buffer: Buffer,
     mimetype: string,
     originalName: string,
+    ip?: string,
   ): Promise<{ url: string }> {
+    if (!_userId) {
+      this.assertAnonRate(this.anonUploadHits, ip, ANON_UPLOAD_LIMIT);
+    }
     if (!IMAGE_MIME.has(mimetype)) {
       throw new BadRequestException('仅支持 JPG / PNG / WebP');
     }
@@ -46,9 +60,13 @@ export class FeedbackService {
   }
 
   async create(
-    userId: string,
+    userId: string | null,
     input: { content: string; pagePath?: string; imageUrls?: string[] },
+    ip?: string,
   ) {
+    if (!userId) {
+      this.assertAnonRate(this.anonCreateHits, ip, ANON_CREATE_LIMIT);
+    }
     const content = (input.content ?? '').trim();
     const imageUrls = this.normalizeImageUrls(input.imageUrls);
     if (!content && imageUrls.length === 0) {
@@ -83,11 +101,16 @@ export class FeedbackService {
     });
     return {
       items: rows.map((row) =>
-        this.present(row, {
-          id: row.user.id,
-          account: row.user.account,
-          name: row.user.name,
-        }),
+        this.present(
+          row,
+          row.user
+            ? {
+                id: row.user.id,
+                account: row.user.account,
+                name: row.user.name,
+              }
+            : null,
+        ),
       ),
     };
   }
@@ -111,14 +134,49 @@ export class FeedbackService {
           },
         },
       });
-      return this.present(row, {
-        id: row.user.id,
-        account: row.user.account,
-        name: row.user.name,
-      });
+      return this.present(
+        row,
+        row.user
+          ? {
+              id: row.user.id,
+              account: row.user.account,
+              name: row.user.name,
+            }
+          : null,
+      );
     } catch {
       throw new NotFoundException('反馈不存在');
     }
+  }
+
+  /** 硬删除：直接从库移除，不可恢复 */
+  async remove(adminUserId: string, feedbackId: string) {
+    await this.assertInstallAdmin(adminUserId);
+    try {
+      await this.prisma.feedback.delete({ where: { id: feedbackId } });
+    } catch {
+      throw new NotFoundException('反馈不存在');
+    }
+    return { deleted: true as const, id: feedbackId };
+  }
+
+  private assertAnonRate(
+    bucket: Map<string, number[]>,
+    ip: string | undefined,
+    limit: number,
+  ): void {
+    const key = (ip || 'unknown').slice(0, 64);
+    const now = Date.now();
+    const cutoff = now - ANON_WINDOW_MS;
+    const prev = (bucket.get(key) ?? []).filter((t) => t > cutoff);
+    if (prev.length >= limit) {
+      throw new HttpException(
+        { code: 'FEEDBACK_RATE_LIMIT', message: '反馈过于频繁，请稍后再试' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    prev.push(now);
+    bucket.set(key, prev);
   }
 
   private normalizeImageUrls(raw: unknown): string[] {
@@ -142,7 +200,7 @@ export class FeedbackService {
     if (!(await isInstallAdmin(this.prisma, userId))) {
       throw new ForbiddenException({
         code: 'INSTALL_ADMIN_REQUIRED',
-        message: '仅安装管理员可访问',
+        message: '仅系统管理员可访问',
       });
     }
   }
@@ -150,7 +208,7 @@ export class FeedbackService {
   private present(
     row: {
       id: string;
-      userId: string;
+      userId: string | null;
       content: string;
       pagePath: string | null;
       imageUrls: string[];

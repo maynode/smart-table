@@ -57,7 +57,9 @@ export class ExcelService {
 
     // Phone/text identifiers must stay text; otherwise Excel strips leading 0.
     fields.forEach((field, index) => {
-      if (['phone', 'text', 'email', 'url', 'id'].includes(field.type)) {
+      if (
+        ['phone', 'text', 'longText', 'email', 'url', 'id'].includes(field.type)
+      ) {
         worksheet.getColumn(index + 1).numFmt = '@';
       }
     });

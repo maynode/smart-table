@@ -16,6 +16,7 @@ import {
 } from 'shared';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
+import { resolvePostLoginPath } from '../auth/post-login-path';
 import { auth } from '../stores/auth';
 import authLoginMid from '../assets/auth-login-mid.svg';
 
@@ -133,7 +134,11 @@ async function submit(): Promise<void> {
             securityAnswer: securityAnswer.value,
           });
     auth.signIn(result.accessToken, result.user);
-    await router.push('/');
+    const redirect = resolvePostLoginPath(
+      router.currentRoute.value.query.redirect,
+      result.user,
+    );
+    await router.replace(redirect);
   } catch (caught) {
     error.value =
       caught instanceof ApiError ? caught.message : '网络错误，请稍后重试';

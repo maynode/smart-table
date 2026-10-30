@@ -7,6 +7,7 @@ import { liveBus } from '../sync/live-bus';
 import type { MemberDto } from '../api/types';
 import { confirmDialog } from '../ui/dialog';
 import { resolveAvatarSrc } from '../utils/avatar';
+import PageLoading from './PageLoading.vue';
 
 type AssignableRole = 'admin' | 'editor' | 'viewer';
 
@@ -453,7 +454,9 @@ onUnmounted(() => {
           ×
         </button>
       </li>
-      <li v-if="loading" class="muted-row">加载中…</li>
+      <li v-if="loading" class="muted-row">
+        <PageLoading variant="inline" label="加载成员…" />
+      </li>
       <li v-else-if="members.length === 0 && !error" class="muted-row">
         暂无成员。
       </li>

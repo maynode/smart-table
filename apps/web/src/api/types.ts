@@ -4,13 +4,13 @@ export interface UserDto {
   name: string;
   avatarSeed: string;
   avatarUrl?: string | null;
-  /** 安装管理员（反馈后台 / 配额） */
+  /** 系统管理员（反馈后台 / 配额）；对应 INSTALL_ADMIN_* */
   installAdmin?: boolean;
 }
 
 export interface FeedbackDto {
   id: string;
-  userId: string;
+  userId: string | null;
   content: string;
   pagePath: string | null;
   imageUrls: string[];
@@ -18,6 +18,37 @@ export interface FeedbackDto {
   createdAt: string;
   updatedAt: string;
   user: { id: string; account: string; name: string } | null;
+}
+
+export interface AdminUserDto {
+  id: string;
+  account: string;
+  name: string;
+  createdAt: string;
+  blacklistedAt: string | null;
+  workspaceCount: number;
+  baseCount: number;
+  installAdmin: boolean;
+}
+
+export interface ActivityLogDto {
+  id: string;
+  actorId: string | null;
+  actorAccount: string;
+  action: string;
+  op: string;
+  summary: string;
+  method: string;
+  path: string;
+  resourceType: string;
+  resourceId: string | null;
+  workspaceId: string | null;
+  baseId: string | null;
+  sheetId: string | null;
+  source: string;
+  ip: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface WorkspaceDto {
@@ -177,6 +208,8 @@ export interface FormDto {
   };
   successPage: { templateHtml: string };
   rejectDuplicatePhone: boolean;
+  /** 去重依据的表单字段 id；空则后端回退第一个手机号字段 */
+  duplicateCheckFieldId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -340,6 +373,7 @@ export interface UpsertFormPayload {
   };
   successPage?: { templateHtml: string };
   rejectDuplicatePhone?: boolean;
+  duplicateCheckFieldId?: string | null;
 }
 
 export interface DashboardDto {

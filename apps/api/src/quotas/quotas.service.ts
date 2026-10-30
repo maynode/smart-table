@@ -47,7 +47,7 @@ export class QuotasService {
     if (!(await this.isInstallAdmin(userId))) {
       throw new ForbiddenException({
         code: 'INSTALL_ADMIN_REQUIRED',
-        message: '仅安装管理员可以修改配额策略',
+        message: '仅系统管理员可以修改配额策略',
       });
     }
     const limits = this.normalize(body);

@@ -26,6 +26,8 @@ model User {
   /// 密保答案哈希（答案规范化后 argon2）
   securityAnswerHash  String   @map("security_answer_hash")
   wecomUserId         String?  @unique @map("wecom_user_id")
+  /// 加入黑名单时间；非空则禁止登录
+  blacklistedAt       DateTime? @map("blacklisted_at") @db.Timestamptz(6)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -235,6 +237,8 @@ model Form {
   shareToken      String   @unique @map("share_token")
   successTemplate String   @default("") @map("success_template")
   rejectDuplicatePhone Boolean @default(true) @map("reject_duplicate_phone")
+  /** 去重依据字段（表单内字段 id）；空则回退到第一个 phone 字段 */
+  duplicateCheckFieldId String? @map("duplicate_check_field_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -604,6 +608,33 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// 前台操作日志（系统管理员「日志管理」）；不含 /admin 后台管理操作。
+model ActivityLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  actorAccount String   @default("") @map("actor_account")
+  action       String
+  op           String   @default("other")
+  summary      String
+  method       String   @default("")
+  path         String   @default("")
+  resourceType String   @default("") @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  workspaceId  String?  @map("workspace_id") @db.Uuid
+  baseId       String?  @map("base_id") @db.Uuid
+  sheetId      String?  @map("sheet_id") @db.Uuid
+  source       String   @default("api")
+  ip           String   @default("")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([op, createdAt])
+  @@map("activity_logs")
+}
+
 model QuotaPolicy {
   id                          String   @id @default(uuid()) @db.Uuid
   key                         String   @unique
@@ -715,10 +746,11 @@ enum FeedbackStatus {
   done
 }
 
-/** 已登录用户问题反馈（安装管理员后台可见） */
+/** 问题反馈（可匿名；安装管理员后台可见） */
 model Feedback {
   id        String         @id @default(uuid()) @db.Uuid
-  userId    String         @map("user_id") @db.Uuid
+  /// 登录用户；公开填写/未登录扫码反馈时为空
+  userId    String?        @map("user_id") @db.Uuid
   content   String         @db.Text
   pagePath  String?        @map("page_path")
   /// 压缩后截图 URL（最多 3 张，/files/uploads/…）
@@ -727,7 +759,7 @@ model Feedback {
   createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
   @@index([userId, createdAt])

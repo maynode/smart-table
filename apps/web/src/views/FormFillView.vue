@@ -6,6 +6,7 @@ import { endpoints } from '../api/endpoints';
 import type { PublicFormDto, PublicFormFieldDto } from '../api/types';
 import { isFormFieldVisible } from 'shared';
 import FormFieldControl from '../components/FormFieldControl.vue';
+import PageLoading from '../components/PageLoading.vue';
 import { liveBus } from '../sync/live-bus';
 import { liveSocket } from '../sync/live-socket';
 
@@ -197,8 +198,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="fill-page">
     <div v-if="loading" class="empty-state">
-      <p class="empty-state-title">加载表单中</p>
-      <p class="empty-state-hint">请稍候…</p>
+      <PageLoading label="加载表单…" />
     </div>
     <div v-else-if="!form" class="empty-state" data-testid="form-load-error">
       <p class="empty-state-title">无法打开表单</p>
@@ -261,15 +261,18 @@ onBeforeUnmount(() => {
           再填一次
         </button>
       </section>
-
-      <p class="fill-footnote">智能表格 · 数据保存在企业内部</p>
     </div>
   </div>
 </template>
 
 <style scoped>
 .fill-page {
-  min-height: 100vh;
+  /* 相对 app-shell 剩余高度铺满，勿用 100vh（会叠测试版顶栏冒出幽灵滚动条） */
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -295,6 +298,7 @@ onBeforeUnmount(() => {
 }
 .fill-header {
   margin-bottom: 22px;
+  text-align: center;
 }
 .fill-title {
   font-size: 22px;
@@ -302,6 +306,7 @@ onBeforeUnmount(() => {
   line-height: 1.3;
   color: #1f2329;
   margin: 0;
+  text-align: center;
 }
 .fill-form {
   display: flex;
@@ -323,10 +328,13 @@ onBeforeUnmount(() => {
   margin-right: 2px;
 }
 .fill-submit {
-  width: 100%;
-  min-height: 44px;
-  margin-top: 4px;
-  padding: 11px;
+  display: block;
+  width: auto;
+  min-width: 140px;
+  max-width: 220px;
+  min-height: 40px;
+  margin: 8px auto 0;
+  padding: 10px 28px;
   font-size: 15px;
   font-weight: 600;
 }
@@ -367,18 +375,24 @@ onBeforeUnmount(() => {
 .fill-success-body {
   font-size: 15px;
   line-height: 1.7;
-  text-align: left;
+  text-align: center;
   color: #344054;
 }
-.fill-again {
-  margin-top: 20px;
-  min-height: 40px;
-}
-.fill-footnote {
+.fill-success-body :deep(p),
+.fill-success-body :deep(div),
+.fill-success-body :deep(h1),
+.fill-success-body :deep(h2),
+.fill-success-body :deep(h3) {
   text-align: center;
-  color: #98a2b3;
-  font-size: 12px;
-  margin: 24px 0 0;
+  margin-left: auto;
+  margin-right: auto;
+}
+.fill-again {
+  display: inline-block;
+  margin-top: 20px;
+  min-width: 120px;
+  min-height: 40px;
+  padding: 0 24px;
 }
 .empty-state {
   display: flex;

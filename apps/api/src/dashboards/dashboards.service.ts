@@ -593,14 +593,21 @@ export class DashboardsService implements OnModuleInit, OnModuleDestroy {
     const data = await this.data(dashboard.id, userId);
     const title = `仪表盘推送：${dashboard.name}`;
     const body = `共 ${data.widgets.length} 个图表，分析引擎 ${data.driver}。`;
+    const base = await this.prisma.base.findUnique({
+      where: { id: dashboard.baseId },
+      select: { id: true, workspaceId: true },
+    });
     const notification = await this.prisma.notification.create({
       data: {
         userId: schedule.createdBy ?? userId,
         title,
         body,
         data: {
+          kind: 'dashboard_schedule',
           dashboardId: dashboard.id,
           scheduleId: schedule.id,
+          baseId: dashboard.baseId,
+          workspaceId: base?.workspaceId ?? null,
           widgets: data.widgets.length,
         } as Prisma.InputJsonValue,
       },

@@ -10,6 +10,7 @@ import type IORedis from 'ioredis';
 import type { SheetMutation } from 'shared';
 import { COMMIT_ERROR, peerColorFromUserId } from 'shared';
 import { JwtService } from '@nestjs/jwt';
+import { ActivityLogService } from '../activity/activity-log.service';
 import { LiveBusService } from '../live/live-bus.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -59,6 +60,7 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     private readonly live: LiveBusService,
     private readonly metrics: MetricsService,
     private readonly fanout: CollabFanoutService,
+    private readonly activity: ActivityLogService,
     config: ConfigService,
   ) {
     this.maxSheetConnections = Math.max(
@@ -139,6 +141,20 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
         type: 'error',
         code: 'UNAUTHORIZED',
         message: '无效令牌',
+      });
+      socket.close();
+      return;
+    }
+
+    const authUser = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { blacklistedAt: true },
+    });
+    if (!authUser || authUser.blacklistedAt) {
+      this.send(socket, {
+        type: 'error',
+        code: 'UNAUTHORIZED',
+        message: '账号已被限制登录',
       });
       socket.close();
       return;
@@ -508,6 +524,14 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       });
       return;
     }
+
+    this.activity.recordCollabCommit({
+      actorId: client.userId,
+      account: client.account,
+      sheetId: client.sheetId,
+      baseId,
+      mutationCount: Array.isArray(msg.mutations) ? msg.mutations.length : 0,
+    });
 
     // 落后客户端补洞，避免只靠广播漏中间 rev。
     if (msg.baseRev < newRev - 1) {

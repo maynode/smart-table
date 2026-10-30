@@ -36,7 +36,7 @@ export interface PublicUser {
   avatarSeed: string;
   avatarUrl: string | null;
   createdAt: Date;
-  /** 安装管理员：可看反馈后台 / 改全局配额 */
+  /** 系统管理员：可看反馈后台 / 改全局配额 */
   installAdmin: boolean;
 }
 
@@ -152,6 +152,12 @@ export class AuthService {
       throw new NotFoundException('该用户名尚未注册');
     }
 
+    if (user.blacklistedAt) {
+      throw new UnauthorizedException(
+        '账号已被限制登录，请联系管理员；仍可通过右下角「反馈」留言',
+      );
+    }
+
     const valid = await verifyPassword(user.passwordHash, password);
     if (!valid) {
       throw new UnauthorizedException('密码错误');
@@ -219,6 +225,11 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException('登录状态已失效');
+    }
+    if (user.blacklistedAt) {
+      throw new UnauthorizedException(
+        '账号已被限制登录，请联系管理员；仍可通过右下角「反馈」留言',
+      );
     }
     return this.presentUser(user);
   }

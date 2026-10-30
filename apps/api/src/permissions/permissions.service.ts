@@ -102,6 +102,7 @@ export class PermissionsService {
       return {
         workspaceId: form.base.workspaceId,
         baseId: form.baseId,
+        sheetId: form.sheetId,
         name: form.name,
       };
     }
@@ -407,6 +408,11 @@ export class PermissionsService {
             objectId,
             baseId: object.baseId,
             workspaceId: object.workspaceId,
+            ...(objectType === 'sheet'
+              ? { sheetId: objectId }
+              : 'sheetId' in object && object.sheetId
+                ? { sheetId: object.sheetId }
+                : {}),
             actorId: userId,
           },
         },
@@ -579,6 +585,11 @@ export class PermissionsService {
                 objectId,
                 baseId: object.baseId,
                 workspaceId: object.workspaceId,
+                ...(objectType === 'sheet'
+                  ? { sheetId: objectId }
+                  : 'sheetId' in object && object.sheetId
+                    ? { sheetId: object.sheetId }
+                    : {}),
                 level: config.level,
                 actorId: userId,
               },
@@ -598,6 +609,11 @@ export class PermissionsService {
                 objectId,
                 baseId: object.baseId,
                 workspaceId: object.workspaceId,
+                ...(objectType === 'sheet'
+                  ? { sheetId: objectId }
+                  : 'sheetId' in object && object.sheetId
+                    ? { sheetId: object.sheetId }
+                    : {}),
                 previousLevel: prev,
                 level: config.level,
                 actorId: userId,
@@ -622,6 +638,11 @@ export class PermissionsService {
               objectId,
               baseId: object.baseId,
               workspaceId: object.workspaceId,
+              ...(objectType === 'sheet'
+                ? { sheetId: objectId }
+                : 'sheetId' in object && object.sheetId
+                  ? { sheetId: object.sheetId }
+                  : {}),
               previousLevel: prev,
               actorId: userId,
             },

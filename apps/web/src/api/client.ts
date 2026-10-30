@@ -9,6 +9,13 @@ export interface StoredUser {
 
 const TOKEN_KEY = 'st.token';
 const USER_KEY = 'st.user';
+/** 模拟登录前保存的管理员会话，用于「退出模拟登录」 */
+const IMPERSONATOR_KEY = 'st.impersonator';
+
+export type StoredSession = {
+  token: string;
+  user: StoredUser;
+};
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -32,6 +39,27 @@ export function setSession(token: string, user: StoredUser): void {
 export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(IMPERSONATOR_KEY);
+}
+
+export function getImpersonatorSession(): StoredSession | null {
+  const raw = localStorage.getItem(IMPERSONATOR_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredSession;
+    if (!parsed?.token || !parsed?.user?.id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function setImpersonatorSession(session: StoredSession): void {
+  localStorage.setItem(IMPERSONATOR_KEY, JSON.stringify(session));
+}
+
+export function clearImpersonatorSession(): void {
+  localStorage.removeItem(IMPERSONATOR_KEY);
 }
 
 /** 网络层失败（断网 / DNS / 中止），非 HTTP 业务错误 */

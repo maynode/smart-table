@@ -4,6 +4,7 @@ import type { FieldType } from 'shared';
 export function fieldTypeIcon(type: string): string {
   const map: Partial<Record<FieldType, string>> = {
     text: 'A',
+    longText: '≡',
     title: '题',
     select: '▾',
     multiSelect: '▦',

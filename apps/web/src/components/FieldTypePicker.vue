@@ -67,6 +67,7 @@ const MENU_GROUPS: FieldType[][] = [
   ['ai'],
   [
     'text',
+    'longText',
     'title',
     'select',
     'multiSelect',

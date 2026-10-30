@@ -10,6 +10,7 @@ import AnalysisReportPanel from '../components/AnalysisReportPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
+import PageLoading from '../components/PageLoading.vue';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { confirmDialog, promptDialog } from '../ui/dialog';
@@ -182,6 +183,8 @@ let scrollDirection: ScrollDirection = 0;
 const SCROLL_SETTLE_MS = 32;
 let scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
 const loading = ref(false);
+/** 整页 Base 首次 bootstrap（工作区/表列表/首表） */
+const booting = ref(true);
 const bootError = ref('');
 const rowColors = ref<Record<string, string>>({});
 const rowHeightPx = ref(36);
@@ -272,6 +275,7 @@ function applyDefaultView(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  booting.value = true;
   bootError.value = '';
   try {
     const [
@@ -325,16 +329,7 @@ async function bootstrap(): Promise<void> {
       };
     }
 
-    const requested =
-      typeof route.query.sheet === 'string' ? route.query.sheet : null;
-    // 默认优先打开码库类工作表；若只有收集表单则进表单视图
-    const preferred =
-      requested ??
-      sheetList.find((sheet) => !isFormSheet(sheet))?.id ??
-      sheetList[0]?.id;
-    if (preferred) {
-      await selectSheet(preferred, false);
-    }
+    await applyRouteDeepLink(sheetList, dashboardList);
   } catch (error) {
     const cached = (await localDb.getShellMeta(`base:${baseId.value}`)) as {
       workspace?: typeof workspace.value;
@@ -354,17 +349,60 @@ async function bootstrap(): Promise<void> {
       dashboards.value = cached.dashboards ?? [];
       analysisReports.value = cached.analysisReports ?? [];
       bootError.value = '';
-      const requested =
-        typeof route.query.sheet === 'string' ? route.query.sheet : null;
-      const preferred =
-        requested ??
-        cached.sheets.find((sheet) => !isFormSheet(sheet))?.id ??
-        cached.sheets[0]?.id;
-      if (preferred) await selectSheet(preferred, false);
+      await applyRouteDeepLink(cached.sheets, cached.dashboards ?? []);
       toast('已从离线缓存打开（部分数据可能不是最新）');
     } else {
       bootError.value = messageOf(error);
     }
+  } finally {
+    booting.value = false;
+  }
+}
+
+/** 通知 / 外链：?dashboard= | ?sheet=&view=form-results|form */
+async function applyRouteDeepLink(
+  sheetList: SheetDto[],
+  dashboardList: DashboardDto[],
+): Promise<void> {
+  const requestedDashboard =
+    typeof route.query.dashboard === 'string' ? route.query.dashboard : null;
+  const requestedSheet =
+    typeof route.query.sheet === 'string' ? route.query.sheet : null;
+  const requestedView =
+    typeof route.query.view === 'string' ? route.query.view : null;
+
+  if (requestedDashboard) {
+    if (dashboardList.some((item) => item.id === requestedDashboard)) {
+      openDashboard(requestedDashboard, false);
+      return;
+    }
+    toast('目标仪表盘已删除或无法访问，已打开默认工作表');
+    await router.replace({
+      query: { ...route.query, dashboard: undefined },
+    });
+  }
+
+  const sheetStillThere =
+    !requestedSheet || sheetList.some((sheet) => sheet.id === requestedSheet);
+  if (requestedSheet && !sheetStillThere) {
+    toast('目标工作表已删除或无法访问，已打开默认工作表');
+    await router.replace({
+      query: { ...route.query, sheet: undefined, view: undefined },
+    });
+  }
+
+  // 默认优先打开码库类工作表；若只有收集表单则进表单视图
+  const preferred =
+    (sheetStillThere ? requestedSheet : null) ??
+    sheetList.find((sheet) => !isFormSheet(sheet))?.id ??
+    sheetList[0]?.id;
+  if (!preferred) return;
+  await selectSheet(preferred, false);
+  if (!activeSheet.value || !isFormSheet(activeSheet.value)) return;
+  if (requestedView === 'form-results' && sheetStillThere) {
+    await openFormResults();
+  } else if (requestedView === 'form' && sheetStillThere) {
+    mainView.value = 'form';
   }
 }
 
@@ -474,8 +512,18 @@ async function refreshFormAcl(sheetId: string | null): Promise<void> {
 }
 
 async function selectSheet(sheetId: string, push = true): Promise<void> {
-  if (push && route.query.sheet !== sheetId) {
-    await router.replace({ query: { ...route.query, sheet: sheetId } });
+  if (
+    push &&
+    (route.query.sheet !== sheetId || route.query.dashboard != null)
+  ) {
+    await router.replace({
+      query: {
+        ...route.query,
+        sheet: sheetId,
+        dashboard: undefined,
+        view: undefined,
+      },
+    });
   }
   loading.value = true;
   try {
@@ -523,6 +571,11 @@ async function selectSheet(sheetId: string, push = true): Promise<void> {
     viewGroups.value = [];
     recordsLoadGen.value += 1;
     clearRecordWindowCache();
+    // 切表先清空，让 Canvas skeleton 顶住空白闪烁
+    records.value = [];
+    nextCursor.value = null;
+    totalRecordCount.value = null;
+    recordOffset.value = 0;
     const fieldCount = Math.max(1, (detail.fields ?? []).length);
     let page: {
       records: RecordDto[];
@@ -581,7 +634,26 @@ watch(
   () => route.query.sheet,
   (value) => {
     if (typeof value === 'string' && value !== activeSheet.value?.id) {
-      void selectSheet(value, false);
+      void selectSheet(value, false).then(async () => {
+        if (
+          route.query.view === 'form-results' &&
+          activeSheet.value &&
+          isFormSheet(activeSheet.value)
+        ) {
+          await openFormResults();
+        }
+      });
+    }
+  },
+);
+
+watch(
+  () => route.query.dashboard,
+  (value) => {
+    if (typeof value === 'string' && value !== activeDashboardId.value) {
+      if (dashboards.value.some((item) => item.id === value)) {
+        openDashboard(value, false);
+      }
     }
   },
 );
@@ -1838,7 +1910,7 @@ async function createSheet(): Promise<void> {
   }
 }
 
-function openDashboard(dashboardId: string): void {
+function openDashboard(dashboardId: string, push = true): void {
   sectionCollapsed.value = { ...sectionCollapsed.value, dashboards: false };
   activeDashboardId.value = dashboardId;
   activeAnalysisReportId.value = '';
@@ -1846,6 +1918,21 @@ function openDashboard(dashboardId: string): void {
   sheetMenuId.value = null;
   dashboardAclLevel.value = null;
   void refreshDashboardAcl(dashboardId);
+  if (
+    push &&
+    (route.query.dashboard !== dashboardId ||
+      route.query.sheet != null ||
+      route.query.view != null)
+  ) {
+    void router.replace({
+      query: {
+        ...route.query,
+        dashboard: dashboardId,
+        sheet: undefined,
+        view: undefined,
+      },
+    });
+  }
 }
 
 async function createDashboard(): Promise<void> {
@@ -2951,6 +3038,7 @@ onBeforeUnmount(() => {
 
       <main class="base-main">
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
+        <PageLoading v-else-if="booting" label="加载表格…" />
         <DashboardPanel
           v-else-if="mainView === 'dashboard' && activeDashboardId"
           :key="activeDashboardId"

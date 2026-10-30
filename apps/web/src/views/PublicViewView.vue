@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 import { endpoints } from '../api/endpoints';
 import { ApiError, NetworkError } from '../api/client';
 import DashboardChart from '../components/DashboardChart.vue';
+import PageLoading from '../components/PageLoading.vue';
 import { liveBus } from '../sync/live-bus';
 import { liveSocket } from '../sync/live-socket';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
@@ -277,7 +278,7 @@ onBeforeUnmount(() => {
       <p>{{ error }}</p>
     </div>
 
-    <div v-else-if="loading" class="empty">加载中…</div>
+    <PageLoading v-else-if="loading" label="加载视图…" />
 
     <template v-else-if="data">
       <div class="view-title">

@@ -1666,6 +1666,14 @@ defineExpose({
     </div>
 
     <div class="grid-stage">
+      <div
+        v-if="loading && displayRecords.length > 0"
+        class="grid-loading-banner"
+        data-testid="grid-loading-banner"
+      >
+        <span class="page-loading-spinner" aria-hidden="true" />
+        加载中…
+      </div>
       <CanvasGrid
         ref="gridRef"
         :fields="fields"
@@ -1688,6 +1696,7 @@ defineExpose({
         :acquire-cell-lock="acquireCellLock"
         :release-cell-lock="releaseCellLock"
         :peer-cell-locks="peerCellLocks"
+        :loading="loading"
         @commit="emit('commit', $event)"
         @viewport="handleViewport"
         @add-column="openFieldPicker"

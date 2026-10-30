@@ -4,6 +4,7 @@ import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { liveBus } from '../sync/live-bus';
 import { toast } from '../ui/toast';
+import PageLoading from './PageLoading.vue';
 import type {
   AclFieldAccess,
   AclLevel,
@@ -297,7 +298,8 @@ onBeforeUnmount(() => {
     </header>
 
     <div v-if="viewMode === 'home'" class="home-body">
-      <section class="home-card">
+      <PageLoading v-if="loading && !objects.length" variant="inline" label="加载权限…" />
+      <section v-else class="home-card">
         <header class="home-card-head">
           <span>全员权限</span>
           <span class="info-dot" title="对可编辑/仅浏览成员生效">i</span>

@@ -37,6 +37,7 @@ import type {
 import DisplayRuleEditor from './DisplayRuleEditor.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FormFieldControl from './FormFieldControl.vue';
+import PageLoading from './PageLoading.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -69,11 +70,19 @@ const form = ref<FormDto | null>(null);
 const draftId = ref(newId());
 const loading = ref(true);
 const saving = ref(false);
+/** 加载中禁止自动保存，避免用空草稿盖掉服务端配置 */
+const hydrating = ref(true);
+const savePending = ref(false);
+const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let savedHintTimer: ReturnType<typeof setTimeout> | null = null;
 const uploadingCover = ref(false);
 const error = ref('');
 const name = ref('');
 const coverUrl = ref('');
 const rejectDuplicatePhone = ref(true);
+/** 去重字段变量：绑到表单内字段 id，不是写死「手机号」文案 */
+const duplicateCheckFieldId = ref('');
 const shareEnabled = ref(true);
 const audience = ref<'anyone' | 'workspace'>('anyone');
 const expiresAt = ref('');
@@ -162,18 +171,46 @@ const sheetFields = computed(() => localFields.value);
 const fieldById = computed(
   () => new Map(sheetFields.value.map((field) => [field.id, field])),
 );
-/** 同字段值去重是领取场景能力，仅表单含手机号字段时露出 */
-const formPhoneField = computed(() => {
+/** 可做「同值仅提交一次」的字段类型（变量候选） */
+const UNIQUE_CHECK_TYPES = new Set([
+  'phone',
+  'text',
+  'longText',
+  'email',
+  'number',
+]);
+const uniqueCandidateFields = computed(() => {
+  const list: Array<{ id: string; name: string; type: string }> = [];
   for (const item of items.value) {
     const field = fieldById.value.get(item.fieldId);
-    if (field?.type === 'phone') return field;
+    if (!field || !UNIQUE_CHECK_TYPES.has(field.type)) continue;
+    list.push({
+      id: field.id,
+      name: field.name.trim() || '未命名',
+      type: field.type,
+    });
   }
-  return null;
+  return list;
 });
-const formHasPhoneField = computed(() => formPhoneField.value != null);
-const phoneFieldLabel = computed(
-  () => formPhoneField.value?.name?.trim() || '手机号',
-);
+const formHasUniqueField = computed(() => uniqueCandidateFields.value.length > 0);
+const uniqueFieldLabel = computed(() => {
+  const selected = uniqueCandidateFields.value.find(
+    (field) => field.id === duplicateCheckFieldId.value,
+  );
+  return selected?.name ?? uniqueCandidateFields.value[0]?.name ?? '字段';
+});
+
+watch(uniqueCandidateFields, (list) => {
+  if (hydrating.value) return;
+  if (!list.length) {
+    duplicateCheckFieldId.value = '';
+    return;
+  }
+  if (!list.some((field) => field.id === duplicateCheckFieldId.value)) {
+    const phone = list.find((field) => field.type === 'phone');
+    duplicateCheckFieldId.value = phone?.id ?? list[0]!.id;
+  }
+});
 
 function emitSheetUpdated(): void {
   if (!props.sheet) return;
@@ -431,6 +468,7 @@ function pruneDisplayRule(
 function setDisplayRule(
   config: FormFieldConfigDto,
   rule: DisplayConditionRuleDto,
+  persist = false,
 ): void {
   config.displayRule = rule;
   const leavesOnly =
@@ -439,6 +477,14 @@ function setDisplayRule(
   config.displayConditions = leavesOnly
     ? (rule.conditions as FormFieldConfigDto['displayConditions'])
     : [];
+  if (persist) scheduleSave();
+}
+
+function onDisplayRuleUpdate(
+  config: FormFieldConfigDto,
+  rule: DisplayConditionRuleDto,
+): void {
+  setDisplayRule(config, rule, true);
 }
 
 function errorOf(caught: unknown): string {
@@ -480,6 +526,7 @@ function fieldRowClass(fieldId: string): Record<string, boolean> {
 async function load(): Promise<void> {
   if (!props.sheet) return;
   loading.value = true;
+  hydrating.value = true;
   error.value = '';
   try {
     const forms = await endpoints.listForms(props.baseId);
@@ -487,6 +534,7 @@ async function load(): Promise<void> {
     name.value = form.value?.name ?? `${props.sheet.name}收集表`;
     coverUrl.value = form.value?.coverUrl ?? '';
     rejectDuplicatePhone.value = form.value?.rejectDuplicatePhone ?? true;
+    duplicateCheckFieldId.value = form.value?.duplicateCheckFieldId ?? '';
     shareEnabled.value = form.value?.share.enabled ?? true;
     audience.value = form.value?.share.audience ?? 'anyone';
     expiresAt.value = form.value?.share.expiresAt ?? '';
@@ -533,6 +581,10 @@ async function load(): Promise<void> {
     error.value = errorOf(caught);
   } finally {
     loading.value = false;
+    // 等一帧再放开自动保存，避免 watch 被 load 赋值误触发
+    requestAnimationFrame(() => {
+      hydrating.value = false;
+    });
   }
 }
 
@@ -559,40 +611,64 @@ function savePayload() {
       expiresAt: expiresAt.value || null,
     },
     rejectDuplicatePhone: rejectDuplicatePhone.value,
+    duplicateCheckFieldId: rejectDuplicatePhone.value
+      ? duplicateCheckFieldId.value || null
+      : null,
   };
 }
 
-async function save(showToast = true): Promise<FormDto | null> {
+function scheduleSave(delayMs = 450): void {
+  if (!props.editable || hydrating.value || loading.value) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void save(false);
+  }, delayMs);
+}
+
+function flushSave(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  void save(false);
+}
+
+async function save(showToast = false): Promise<FormDto | null> {
   if (!props.editable) {
     if (showToast) toast('当前为只读权限，无法保存表单');
     return form.value;
   }
-  if (!props.sheet) return form.value;
-  // 封面自动保存等可能占用 saving；等在途保存结束后再提交，避免静默丢配置
+  if (!props.sheet || hydrating.value) return form.value;
   if (saving.value) {
-    await new Promise<void>((resolve) => {
-      const started = Date.now();
-      const timer = setInterval(() => {
-        if (!saving.value || Date.now() - started > 8_000) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 40);
-    });
+    savePending.value = true;
+    return form.value;
   }
-  if (saving.value) return form.value;
   saving.value = true;
+  saveStatus.value = 'saving';
   error.value = '';
   try {
-    form.value = await endpoints.upsertForm(formId.value, savePayload());
-    emit('form-saved', form.value);
+    do {
+      savePending.value = false;
+      form.value = await endpoints.upsertForm(formId.value, savePayload());
+      emit('form-saved', form.value);
+    } while (savePending.value);
+    saveStatus.value = 'saved';
+    if (savedHintTimer) clearTimeout(savedHintTimer);
+    savedHintTimer = setTimeout(() => {
+      if (saveStatus.value === 'saved') saveStatus.value = 'idle';
+    }, 1600);
     if (showToast) toast('表单已保存');
     return form.value;
   } catch (caught) {
     error.value = errorOf(caught);
+    saveStatus.value = 'error';
     return null;
   } finally {
     saving.value = false;
+    if (savePending.value) {
+      void save(false);
+    }
   }
 }
 
@@ -603,6 +679,7 @@ function move(index: number, direction: -1 | 1): void {
   const list = [...items.value];
   [list[index], list[target]] = [list[target], list[index]];
   items.value = list;
+  flushSave();
 }
 
 function removeItem(index: number): void {
@@ -848,10 +925,14 @@ async function deleteFieldFromForm(index: number): Promise<void> {
 function addCondition(config: FormFieldConfigDto): void {
   if (!props.editable) return;
   const rule = ensureDisplayRule(config);
-  setDisplayRule(config, {
-    ...rule,
-    conditions: [...rule.conditions, emptyDisplayCondition()],
-  });
+  setDisplayRule(
+    config,
+    {
+      ...rule,
+      conditions: [...rule.conditions, emptyDisplayCondition()],
+    },
+    true,
+  );
   showConditionsFor.value[config.fieldId] = true;
 }
 
@@ -883,8 +964,13 @@ async function uploadCover(event: Event): Promise<void> {
 
 async function copyShareUrl(): Promise<void> {
   if (!shareUrl.value) {
-    toast('请先保存表单，生成分享链接');
-    return;
+    if (props.editable) {
+      await save(false);
+    }
+    if (!shareUrl.value) {
+      toast('暂无分享链接，请稍后再试');
+      return;
+    }
   }
   const ok = await copyText(shareUrl.value);
   toast(ok ? '分享链接已复制' : '复制失败，请手动选中链接复制');
@@ -911,6 +997,13 @@ function onFormLive(event: LiveEvent): void {
   if (!form.value) void load();
 }
 
+watch(
+  [audience, shareEnabled, rejectDuplicatePhone, duplicateCheckFieldId, expiresAt],
+  () => {
+    scheduleSave();
+  },
+);
+
 onMounted(() => {
   void load();
   liveUnsubs.push(liveBus.on('form.*', onFormLive));
@@ -918,6 +1011,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   while (liveUnsubs.length) liveUnsubs.pop()?.();
+  if (saveTimer) clearTimeout(saveTimer);
+  if (savedHintTimer) clearTimeout(savedHintTimer);
+  if (props.editable && !hydrating.value && !loading.value) {
+    void save(false);
+  }
 });
 </script>
 
@@ -954,15 +1052,6 @@ onBeforeUnmount(() => {
           disabled
         >
           ↷
-        </button>
-        <button
-          v-if="embedded"
-          class="ghost-link"
-          type="button"
-          data-testid="form-automation-hint"
-          @click="toast('请用顶栏「自动化」配置提交后联动')"
-        >
-          设置自动化提醒
         </button>
         <h3 v-if="!embedded">收集表单</h3>
       </div>
@@ -1004,7 +1093,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <p v-if="loading" class="muted">加载中…</p>
+    <PageLoading v-if="loading" label="加载表单…" />
     <template v-else>
       <p v-if="error" class="form-error" data-testid="form-builder-error">{{ error }}</p>
 
@@ -1085,6 +1174,7 @@ onBeforeUnmount(() => {
                       v-model="item.required"
                       type="checkbox"
                       :data-testid="`form-required-${item.fieldId}`"
+                      @change="flushSave"
                     />
                     必填
                   </label>
@@ -1147,7 +1237,7 @@ onBeforeUnmount(() => {
               :model-value="selectedDisplayRule"
               :candidates="conditionCandidates"
               :operators="conditionOperators"
-              @update:model-value="setDisplayRule(selectedConfig, $event)"
+              @update:model-value="onDisplayRuleUpdate(selectedConfig, $event)"
             />
           </section>
 
@@ -1157,54 +1247,80 @@ onBeforeUnmount(() => {
             </div>
             <label class="builder-inline">
               <span class="builder-label">填写截止时间</span>
-              <input v-model="expiresAtInput" type="date" data-testid="form-expires-at" />
+              <input
+                v-model="expiresAtInput"
+                type="date"
+                data-testid="form-expires-at"
+                @change="flushSave"
+              />
             </label>
             <p class="setting-hint">到期后公开链接不可再提交；留空表示不限期。</p>
             <label class="builder-inline">
               <span class="builder-label">谁可以填写</span>
-              <select v-model="audience" data-testid="form-audience">
+              <select
+                v-model="audience"
+                data-testid="form-audience"
+                @change="flushSave"
+              >
                 <option value="anyone">企业内、外所有成员</option>
                 <option value="workspace">仅工作区成员</option>
               </select>
             </label>
             <label class="inline-check setting-check">
-              <input v-model="shareEnabled" type="checkbox" data-testid="form-share-enabled" />
+              <input
+                v-model="shareEnabled"
+                type="checkbox"
+                data-testid="form-share-enabled"
+                @change="flushSave"
+              />
               启用表单链接
             </label>
-            <template v-if="formHasPhoneField">
-              <label class="inline-check setting-check">
+            <template v-if="formHasUniqueField">
+              <label class="inline-check setting-check duplicate-check-row">
                 <input
                   v-model="rejectDuplicatePhone"
                   type="checkbox"
                   data-testid="form-reject-duplicate"
+                  @change="flushSave"
                 />
-                同【{{ phoneFieldLabel }}】仅可提交一次
+                <span class="duplicate-check-text">
+                  同
+                  <select
+                    v-model="duplicateCheckFieldId"
+                    class="field-var-select"
+                    data-testid="form-duplicate-field"
+                    :disabled="!rejectDuplicatePhone"
+                    @click.stop
+                    @change="flushSave"
+                  >
+                    <option
+                      v-for="field in uniqueCandidateFields"
+                      :key="field.id"
+                      :value="field.id"
+                    >
+                      {{ field.name }}
+                    </option>
+                  </select>
+                  仅可提交一次
+                </span>
               </label>
               <p class="setting-hint">
-                领取类场景用：已提交过的「{{ phoneFieldLabel }}」会被拒绝。普通问卷可关掉。
+                按所选字段变量去重：已提交过相同「{{ uniqueFieldLabel }}」会被拒绝。普通问卷可关掉。
               </p>
             </template>
           </section>
 
-          <section class="builder-section">
-            <div class="field-heading">
-              <span class="section-title">成功页</span>
-            </div>
-            <p class="setting-hint" data-testid="form-success-hint">
-              提交成功页优先展示自动化「发送消息」的文案；未配置时显示默认「提交成功」。
-            </p>
-          </section>
-
-          <div class="builder-actions" :class="{ 'embedded-save': embedded }">
-            <button
-              class="btn btn-primary"
-              data-testid="form-builder-save"
-              :disabled="saving || uploadingCover || !sheet"
-              @click="save()"
-            >
-              {{ saving ? '保存中…' : '保存表单' }}
-            </button>
-          </div>
+          <p
+            class="autosave-status"
+            :class="saveStatus"
+            data-testid="form-builder-save"
+            aria-live="polite"
+          >
+            <template v-if="saveStatus === 'saving'">保存中…</template>
+            <template v-else-if="saveStatus === 'saved'">已自动保存</template>
+            <template v-else-if="saveStatus === 'error'">保存失败，请重试</template>
+            <template v-else>修改后自动保存</template>
+          </p>
         </aside>
 
         <div class="canvas-pane">
@@ -1227,11 +1343,14 @@ onBeforeUnmount(() => {
               data-testid="form-name-input"
               maxlength="100"
               placeholder="表单"
+              @blur="flushSave"
+              @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
             />
             <input
               v-model="description"
               class="canvas-desc"
               placeholder="添加描述"
+              @blur="flushSave"
             />
             <div
               v-for="(item, index) in previewFields"
@@ -1279,7 +1398,13 @@ onBeforeUnmount(() => {
                   :title="tag.title"
                 >{{ tag.text }}</span>
               </div>
-              <div class="canvas-field-input" aria-hidden="true">填写人将在此作答</div>
+              <div
+                class="canvas-field-input"
+                :class="{ multiline: item.field.type === 'longText' }"
+                aria-hidden="true"
+              >
+                {{ item.field.type === 'longText' ? '填写人将在此输入多行内容' : '填写人将在此作答' }}
+              </div>
               <div
                 v-if="selectedFieldId === item.config.fieldId"
                 class="canvas-toolbar"
@@ -1302,7 +1427,7 @@ onBeforeUnmount(() => {
                   <input
                     v-model="item.config.required"
                     type="checkbox"
-                    @change="save(false)"
+                    @change="flushSave"
                   />
                   必填
                 </label>
@@ -1362,9 +1487,6 @@ onBeforeUnmount(() => {
             />
           </div>
           <button class="preview-submit" type="button" disabled>提交</button>
-          <p class="setting-hint fill-success-hint" data-testid="form-success-preview">
-            提交成功后优先展示自动化「发送消息」文案；未配置时显示默认「提交成功」。
-          </p>
         </div>
       </div>
 
@@ -1372,7 +1494,7 @@ onBeforeUnmount(() => {
       <section v-if="form && !embedded" class="share-box">
         <div class="share-box-main">
           <strong class="share-box-title">分享链接</strong>
-          <p class="share-url" data-testid="form-share-url">{{ shareUrl || '保存表单后生成链接' }}</p>
+          <p class="share-url" data-testid="form-share-url">{{ shareUrl || '配置后自动生成链接' }}</p>
           <div class="share-actions">
             <button class="btn small" type="button" @click="copyShareUrl">复制链接</button>
             <a
@@ -1409,62 +1531,75 @@ onBeforeUnmount(() => {
         data-testid="form-share-dialog"
         @click.self="shareDialogOpen = false"
       >
-        <div class="share-dialog">
-          <header>
-            <h4>分享表单</h4>
+        <div class="share-dialog" role="dialog" aria-labelledby="share-dialog-title">
+          <header class="share-dialog-header">
+            <h4 id="share-dialog-title">分享表单</h4>
             <button
-              class="icon-btn"
+              class="share-dialog-close"
               type="button"
               aria-label="关闭"
               @click="shareDialogOpen = false"
-            >×</button>
+            >
+              ×
+            </button>
           </header>
-          <p class="setting-hint">
-            成员可通过链接直接添加记录。截止时间、填写范围等请在左侧「填写设置」修改。
-          </p>
+
           <p
             v-if="!shareEnabled"
             class="form-error"
             data-testid="form-share-disabled-hint"
           >
-            表单链接未启用，请先在左侧打开「启用表单链接」并保存。
+            表单链接未启用，请先在左侧打开「启用表单链接」。
           </p>
-          <label class="builder-field">
-            <span class="builder-label">填写链接</span>
-            <p
-              class="share-url share-url-box"
-              data-testid="form-share-url-dialog"
-            >{{ shareUrl || '保存表单后生成' }}</p>
-          </label>
-          <div class="share-invite">
-            <button
-              class="btn btn-primary"
-              type="button"
-              :disabled="!shareEnabled || !shareUrl"
-              @click="copyShareUrl"
-            >
-              复制链接
-            </button>
+
+          <section class="share-dialog-section">
+            <div class="share-link-row">
+              <p
+                class="share-url share-url-box"
+                data-testid="form-share-url-dialog"
+              >
+                {{ shareUrl || '配置后自动生成' }}
+              </p>
+              <button
+                class="btn btn-primary share-copy-btn"
+                type="button"
+                :disabled="!shareEnabled || !shareUrl"
+                @click="copyShareUrl"
+              >
+                复制
+              </button>
+            </div>
             <a
               v-if="shareUrl && shareEnabled"
-              class="btn"
+              class="share-open-link"
               :href="shareUrl"
               target="_blank"
               rel="noreferrer"
-            >打开填写页</a>
-          </div>
-          <div v-if="qrDataUrl && shareEnabled" class="share-dialog-qr">
+            >
+              在新窗口打开填写页 →
+            </a>
+          </section>
+
+          <section
+            v-if="qrDataUrl && shareEnabled"
+            class="share-dialog-qr-card"
+          >
             <img
               :src="qrDataUrl"
-              class="share-qr"
+              class="share-qr share-qr-lg"
               data-testid="form-share-qr-dialog"
               alt="二维码"
             />
-            <p class="setting-hint">扫码打开填写页</p>
-          </div>
-          <footer>
-            <button class="btn" type="button" @click="shareDialogOpen = false">
-              完成
+            <p class="share-qr-caption">扫码打开填写页</p>
+          </section>
+
+          <footer class="share-dialog-footer">
+            <button
+              class="btn btn-primary"
+              type="button"
+              @click="shareDialogOpen = false"
+            >
+              知道了
             </button>
           </footer>
         </div>
@@ -1986,6 +2121,12 @@ onBeforeUnmount(() => {
   background: #f5f6f7;
   color: #98a2b3;
   font-size: 13px;
+  min-height: 20px;
+  line-height: 1.4;
+}
+.canvas-field-input.multiline {
+  min-height: 72px;
+  align-items: flex-start;
 }
 .canvas-toolbar {
   display: flex;
@@ -2065,6 +2206,12 @@ onBeforeUnmount(() => {
 .fill-mode {
   background: #fff;
 }
+.fill-mode h2 {
+  text-align: center;
+}
+.fill-mode .canvas-desc-static {
+  text-align: center;
+}
 .fill-cover {
   width: 100%;
   height: 120px;
@@ -2079,22 +2226,107 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 23, 42, 0.35);
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
 }
 .share-dialog {
-  width: min(420px, 92vw);
-  padding: 16px;
-  border-radius: 12px;
+  width: min(440px, 92vw);
+  padding: 0;
+  border-radius: 16px;
   background: #fff;
+  box-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.18),
+    0 0 0 1px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
 }
-.share-dialog header {
+.share-dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #eef0f3;
 }
 .share-dialog h4 {
   margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1f2329;
+}
+.share-dialog-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0 -4px 0 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8f959e;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.share-dialog-close:hover {
+  background: #f2f3f5;
+  color: #1f2329;
+}
+.share-dialog-section {
+  padding: 16px 20px 4px;
+}
+.share-link-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.share-copy-btn {
+  flex: none;
+  min-width: 64px;
+  height: auto;
+  align-self: stretch;
+}
+.share-open-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #1a6dcc;
+  text-decoration: none;
+}
+.share-open-link:hover {
+  text-decoration: underline;
+}
+.share-dialog-qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 20px 0;
+  padding: 18px 16px;
+  border-radius: 12px;
+  background: #f7f8fa;
+  border: 1px solid #eef0f3;
+}
+.share-qr-lg {
+  width: 148px !important;
+  height: 148px !important;
+  border-radius: 10px;
+  border: 1px solid #e5e6eb;
+  background: #fff;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.share-qr-caption {
+  margin: 0;
+  font-size: 12px;
+  color: #8f959e;
+}
+.share-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 20px 18px;
+}
+.share-dialog .form-error {
+  margin: 12px 20px 0;
 }
 .share-invite {
   display: flex;
@@ -2102,10 +2334,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   margin: 12px 0;
-}
-.share-dialog footer {
-  display: flex;
-  justify-content: flex-end;
 }
 .btn.small {
   height: 28px;
@@ -2313,6 +2541,39 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
+.duplicate-check-row {
+  align-items: center;
+}
+.duplicate-check-text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.4;
+}
+.field-var-select {
+  height: 26px;
+  max-width: 160px;
+  padding: 0 8px;
+  border: 1px solid #d6e4ff;
+  border-radius: 999px;
+  background: #f5f8ff;
+  color: #1d6fdc;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.field-var-select:focus,
+.field-var-select:focus-visible {
+  outline: none;
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.22);
+}
+.field-var-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .var-chip:hover {
   background: #e8f3ff;
   border-color: #91caff;
@@ -2347,10 +2608,33 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: #fff;
 }
+.builder-inline select:focus,
+.builder-inline select:focus-visible,
+.builder-inline input:focus,
+.builder-inline input:focus-visible {
+  outline: none;
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.22);
+}
 .builder-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.autosave-status {
+  margin: 8px 0 0;
+  min-height: 20px;
+  font-size: 12px;
+  color: var(--text-tertiary, #8f959e);
+}
+.autosave-status.saving {
+  color: var(--brand-strong, #1a6dcc);
+}
+.autosave-status.saved {
+  color: #12b76a;
+}
+.autosave-status.error {
+  color: #d92d20;
 }
 .phone-frame {
   align-self: start;
@@ -2392,7 +2676,7 @@ onBeforeUnmount(() => {
   color: #344054;
 }
 .preview-field textarea,
-.preview-field input,
+.preview-field input:not([type='range']):not([type='number']),
 .preview-field select {
   width: 100%;
   box-sizing: border-box;
@@ -2404,14 +2688,21 @@ onBeforeUnmount(() => {
   font-size: 12px;
   resize: none;
 }
+.preview-field input[type='range'] {
+  accent-color: #2d8cf0;
+}
 .required-star {
   color: #d4380d;
   font-style: normal;
 }
 .preview-submit {
-  width: 100%;
+  display: block;
+  width: auto;
+  min-width: 120px;
+  max-width: 200px;
   height: 36px;
-  margin-top: 8px;
+  margin: 12px auto 0;
+  padding: 0 24px;
   border: none;
   border-radius: 8px;
   background: #2d8cf0;
@@ -2440,9 +2731,6 @@ onBeforeUnmount(() => {
 .live-preview {
   padding-top: 4px;
   border-top: 1px solid var(--border, #e5e6eb);
-}
-.fill-success-hint {
-  margin: 12px 0 0;
 }
 .cover-editor {
   display: flex;
@@ -2507,6 +2795,18 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: #fff;
 }
+.share-link-row .share-url-box {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-color: #e5e6eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+  color: #1f2329;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-all;
+}
 .share-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2540,13 +2840,6 @@ onBeforeUnmount(() => {
   line-height: 1.4;
   color: #98a2b3;
   text-align: center;
-}
-.share-dialog-qr {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin: 12px 0;
 }
 .hidden-cover-input {
   display: none;

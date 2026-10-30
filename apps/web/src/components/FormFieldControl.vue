@@ -175,13 +175,14 @@ function clearAttachment(): void {
       是
     </label>
 
-    <!-- 进度 -->
+    <!-- 进度：滑条 + 数字，避免只能拖却改不动 -->
     <div v-else-if="type === 'progress'" class="progress-row">
       <input
         :id="`field-${fieldId}`"
         type="range"
         min="0"
         max="100"
+        step="1"
         :value="Number(modelValue) || 0"
         :disabled="disabled"
         data-testid="form-progress"
@@ -189,7 +190,25 @@ function clearAttachment(): void {
           setValue(Number(($event.target as HTMLInputElement).value) || 0)
         "
       />
-      <span>{{ Number(modelValue) || 0 }}%</span>
+      <input
+        class="progress-number"
+        type="number"
+        min="0"
+        max="100"
+        step="1"
+        :value="Number(modelValue) || 0"
+        :disabled="disabled"
+        data-testid="form-progress-number"
+        @input="
+          setValue(
+            Math.min(
+              100,
+              Math.max(0, Number(($event.target as HTMLInputElement).value) || 0),
+            ),
+          )
+        "
+      />
+      <span class="progress-unit">%</span>
     </div>
 
     <!-- 人员 -->
@@ -283,15 +302,29 @@ function clearAttachment(): void {
       data-testid="form-location"
     />
 
-    <!-- 文本：多行 -->
-    <textarea
+    <!-- 文本：单行 -->
+    <input
       v-else-if="type === 'text'"
       :id="`field-${fieldId}`"
+      type="text"
       :value="modelValue == null ? '' : String(modelValue)"
-      rows="3"
       :placeholder="`请输入${name}`"
       :required="required"
       :disabled="disabled"
+      data-testid="form-text"
+      @input="setValue(($event.target as HTMLInputElement).value)"
+    />
+
+    <!-- 多行文本 -->
+    <textarea
+      v-else-if="type === 'longText'"
+      :id="`field-${fieldId}`"
+      :value="modelValue == null ? '' : String(modelValue)"
+      rows="4"
+      :placeholder="`请输入${name}`"
+      :required="required"
+      :disabled="disabled"
+      data-testid="form-long-text"
       @input="setValue(($event.target as HTMLTextAreaElement).value)"
     />
 
@@ -390,7 +423,7 @@ function clearAttachment(): void {
 .form-control {
   width: 100%;
 }
-.form-control :is(input, select, textarea) {
+.form-control :is(input, select, textarea):not([type='range']) {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #d0d5dd;
@@ -400,7 +433,7 @@ function clearAttachment(): void {
   outline: none;
   background: #fff;
 }
-.form-control :is(input, select, textarea):focus {
+.form-control :is(input, select, textarea):not([type='range']):focus {
   border-color: #2e6be6;
 }
 .fill-choices {
@@ -422,8 +455,23 @@ function clearAttachment(): void {
 }
 .progress-row input[type='range'] {
   flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
   padding: 0;
   border: none;
+  background: transparent;
+  accent-color: #2d8cf0;
+}
+.progress-number {
+  width: 64px;
+  flex: none;
+  text-align: right;
+}
+.progress-unit {
+  flex: none;
+  color: #667085;
+  font-size: 13px;
 }
 .affix-row {
   display: flex;

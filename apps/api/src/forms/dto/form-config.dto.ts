@@ -113,6 +113,11 @@ export class UpsertFormDto {
   @IsOptional()
   @IsBoolean()
   rejectDuplicatePhone?: boolean;
+
+  /** 去重字段 id（须在本表单 fields 内）；与 rejectDuplicatePhone 联用 */
+  @IsOptional()
+  @Allow()
+  duplicateCheckFieldId?: string | null;
 }
 
 export class SubmitFormDto {

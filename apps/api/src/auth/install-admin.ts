@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 
 /**
- * 安装管理员：`INSTALL_ADMIN_ACCOUNTS`（或旧名 EMAILS）逗号分隔账号；
+ * 系统管理员：`INSTALL_ADMIN_ACCOUNTS`（或旧名 EMAILS）逗号分隔账号；
  * 未配置时回退为最早注册用户。
  */
 export async function isInstallAdmin(

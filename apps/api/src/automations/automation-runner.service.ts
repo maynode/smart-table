@@ -1217,8 +1217,15 @@ export class AutomationRunnerService {
       title: this.interpolate(button.title, state),
       url: this.interpolate(button.url, state),
     }));
+    const base = await tx.base.findUnique({
+      where: { id: state.automation.baseId },
+      select: { id: true, workspaceId: true },
+    });
     const data = {
+      kind: 'automation_message',
       automationId: state.automation.id,
+      baseId: state.automation.baseId,
+      workspaceId: base?.workspaceId ?? null,
       buttons,
     } as unknown as Prisma.InputJsonValue;
 
@@ -1562,8 +1569,10 @@ export class AutomationRunnerService {
       ids.add(state.triggerUser);
     }
 
-    if (ids.size === 0) {
-      // Fall back to base editors so notifications are never silently dropped.
+    // 已显式配置接收人（如「填写者」）但解析不到登录用户时：不要回落到管理员，
+    // 否则公开匿名填写会把「你的序列号为」误推给 owner/admin；成功页仍用 消息内容。
+    const hasExplicitRecipients = (step.recipients?.length ?? 0) > 0;
+    if (ids.size === 0 && !hasExplicitRecipients) {
       const base = await tx.base.findUnique({
         where: { id: state.automation.baseId },
         include: {

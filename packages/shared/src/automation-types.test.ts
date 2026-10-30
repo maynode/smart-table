@@ -43,6 +43,7 @@ describe('field type contract', () => {
     // Merged from wecom smart-table/01-field-types/01 + 02.
     const expectedLabels = [
       '文本',
+      '多行文本',
       '单选',
       '多选',
       '数字',

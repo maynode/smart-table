@@ -20,7 +20,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
         }),
         signOptions: {
           expiresIn: (config.get<string>('JWT_EXPIRES_IN') ??
-            '7d') as JwtSignOptions['expiresIn'],
+            '48h') as JwtSignOptions['expiresIn'],
         },
       }),
     }),

@@ -675,9 +675,10 @@ export class TemplatesService {
           } as Prisma.InputJsonValue,
           successTemplate: '',
           rejectDuplicatePhone: true,
+          duplicateCheckFieldId: phone.id,
         },
       });
-      // 与 seedSerialClaim 对齐：查找未领码 → 改状态 → 发消息（成功页读 stepOutputs.序列号）
+      // 查找 → 修改 → 发送消息给填写者（成功页用 消息内容；匿名填写不投递给管理员）
       await tx.automation.create({
         data: {
           baseId: base.id,

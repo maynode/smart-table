@@ -237,6 +237,12 @@ export class FormsService implements OnModuleDestroy {
           successTemplate,
           rejectDuplicatePhone:
             dto.rejectDuplicatePhone ?? existing.rejectDuplicatePhone,
+          duplicateCheckFieldId: this.resolveDuplicateCheckFieldId(
+            dto,
+            configured,
+            sheet.fields,
+            existing.duplicateCheckFieldId,
+          ),
         },
       });
       await this.live.emit({
@@ -270,6 +276,12 @@ export class FormsService implements OnModuleDestroy {
         shareToken: randomBytes(12).toString('base64url'),
         successTemplate,
         rejectDuplicatePhone: dto.rejectDuplicatePhone ?? true,
+        duplicateCheckFieldId: this.resolveDuplicateCheckFieldId(
+          dto,
+          configured,
+          sheet.fields,
+          null,
+        ),
       },
     });
     await this.live.emit({
@@ -827,24 +839,30 @@ export class FormsService implements OnModuleDestroy {
     const committed = await this.prisma.$transaction(
       async (tx) => {
         if (form.rejectDuplicatePhone) {
-          const phoneField = form.sheet.fields.find(
-            (field) =>
-              field.type === 'phone' &&
-              Object.prototype.hasOwnProperty.call(sanitized, field.id),
-          );
-          const phone = phoneField
-            ? String(sanitized[phoneField.id] ?? '').trim()
+          const uniqueField =
+            (form.duplicateCheckFieldId
+              ? form.sheet.fields.find(
+                  (field) => field.id === form.duplicateCheckFieldId,
+                )
+              : null) ??
+            form.sheet.fields.find(
+              (field) =>
+                field.type === 'phone' &&
+                Object.prototype.hasOwnProperty.call(sanitized, field.id),
+            );
+          const uniqueValue = uniqueField
+            ? String(sanitized[uniqueField.id] ?? '').trim()
             : '';
-          if (phoneField && phone) {
-            // Serialize same-phone submissions so the guard cannot race.
+          if (uniqueField && uniqueValue) {
+            // Serialize same-value submissions so the guard cannot race.
             await tx.$executeRaw(
-              Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${form.sheetId}:${phone}`}))`,
+              Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${form.sheetId}:${uniqueField.id}:${uniqueValue}`}))`,
             );
             const existing = await tx.$queryRaw<Array<{ id: string }>>(
-              Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${form.sheetId}::uuid AND cells->>${phoneField.id} = ${phone} LIMIT 1`,
+              Prisma.sql`SELECT id FROM "records" WHERE "sheet_id" = ${form.sheetId}::uuid AND cells->>${uniqueField.id} = ${uniqueValue} LIMIT 1`,
             );
             if (existing.length > 0) {
-              const label = phoneField.name.trim() || '手机号';
+              const label = uniqueField.name.trim() || '该字段';
               throw new ConflictException(`该【${label}】不可重复提交`);
             }
           }
@@ -999,6 +1017,7 @@ export class FormsService implements OnModuleDestroy {
         formId: form.id,
         formName: form.name,
         baseId: base.id,
+        workspaceId: base.workspaceId,
         sheetId: form.sheetId,
         submissionId,
         recordId: outcome.recordId,
@@ -1237,6 +1256,35 @@ export class FormsService implements OnModuleDestroy {
     this.submitHits.set(key, hits);
   }
 
+  private resolveDuplicateCheckFieldId(
+    dto: { duplicateCheckFieldId?: string | null; rejectDuplicatePhone?: boolean },
+    configured: Array<{ fieldId: string }>,
+    sheetFields: Array<{ id: string; type: string }>,
+    previous: string | null,
+  ): string | null {
+    const configuredIds = new Set(configured.map((item) => item.fieldId));
+    const requested =
+      dto.duplicateCheckFieldId === undefined
+        ? previous
+        : dto.duplicateCheckFieldId;
+    if (requested) {
+      if (!configuredIds.has(requested)) {
+        throw new BadRequestException('去重字段须已加入表单');
+      }
+      if (!sheetFields.some((field) => field.id === requested)) {
+        throw new BadRequestException('去重字段不在当前工作表中');
+      }
+      return requested;
+    }
+    const reject =
+      dto.rejectDuplicatePhone ?? true;
+    if (!reject) return null;
+    const phoneOnForm = configured
+      .map((item) => sheetFields.find((field) => field.id === item.fieldId))
+      .find((field) => field?.type === 'phone');
+    return phoneOnForm?.id ?? null;
+  }
+
   private async toDto(form: Form) {
     const share = (form.share ?? {}) as ShareConfig;
     const qrUrl = `${this.publicBase}/fill/${form.shareToken}`;
@@ -1262,6 +1310,7 @@ export class FormsService implements OnModuleDestroy {
       },
       successPage: { templateHtml: form.successTemplate },
       rejectDuplicatePhone: form.rejectDuplicatePhone,
+      duplicateCheckFieldId: form.duplicateCheckFieldId,
       createdAt: form.createdAt,
       updatedAt: form.updatedAt,
     };

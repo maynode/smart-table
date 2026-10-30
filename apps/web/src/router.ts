@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import { resolvePostLoginPath } from './auth/post-login-path';
 import { auth } from './stores/auth';
 
 export const router = createRouter({
@@ -23,6 +24,16 @@ export const router = createRouter({
       path: '/admin/feedback',
       name: 'admin-feedback',
       component: () => import('./views/AdminFeedbackView.vue'),
+    },
+    {
+      path: '/admin/users',
+      name: 'admin-users',
+      component: () => import('./views/AdminUsersView.vue'),
+    },
+    {
+      path: '/admin/activity',
+      name: 'admin-activity',
+      component: () => import('./views/AdminActivityView.vue'),
     },
     {
       path: '/workspaces/:workspaceId',
@@ -66,7 +77,28 @@ router.beforeEach((to) => {
     return { path: '/login', query: { redirect: to.fullPath } };
   }
   if (to.path === '/login' && hasToken) {
-    return '/';
+    return resolvePostLoginPath(to.query.redirect, auth.state.user);
   }
   return true;
+});
+
+router.afterEach((to) => {
+  if (!auth.state.token) return;
+  if (to.path.startsWith('/admin') || to.path === '/login') return;
+  if (to.path.startsWith('/dev/')) return;
+  void import('./activity/track').then(({ trackActivity }) => {
+    const title =
+      typeof to.name === 'string'
+        ? (
+            {
+              home: '首页',
+              notifications: '消息中心',
+              base: '智能表',
+              'form-fill': '填写表单',
+              'public-view': '公开视图',
+            } as Record<string, string>
+          )[to.name] || to.name
+        : undefined;
+    trackActivity('page.view', { path: to.fullPath, title });
+  });
 });

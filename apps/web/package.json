@@ -15,6 +15,7 @@
     "@dicebear/core": "9.2.4",
     "echarts": "^6.0.0",
     "fflate": "^0.8.3",
+    "html2canvas": "^1.4.1",
     "qrcode": "^1.5.4",
     "shared": "workspace:*",
     "vue": "^3.5.22",

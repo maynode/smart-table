@@ -7,6 +7,7 @@ import { liveBus } from '../sync/live-bus';
 import { copyText } from '../ui/clipboard';
 import { rewritePublicUrl } from '../ui/public-url';
 import { toast } from '../ui/toast';
+import PageLoading from './PageLoading.vue';
 import type {
   PublicViewDto,
   PublicViewScopeOption,
@@ -552,7 +553,12 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
-          <p v-if="!views.length && !loading" class="empty-hint">
+          <PageLoading
+            v-if="loading && !views.length"
+            variant="inline"
+            label="加载公开链接…"
+          />
+          <p v-else-if="!views.length && !loading" class="empty-hint">
             暂无公开链接。
           </p>
         </div>

@@ -6,6 +6,7 @@
  */
 export const FIELD_TYPES = [
   'text',
+  'longText',
   'title',
   'select',
   'multiSelect',
@@ -39,6 +40,7 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 
 export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: '文本',
+  longText: '多行文本',
   title: '标题',
   select: '单选',
   multiSelect: '多选',

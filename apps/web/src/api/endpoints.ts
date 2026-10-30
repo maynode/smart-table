@@ -34,6 +34,8 @@ import type {
   UserDto,
   NotificationDto,
   FeedbackDto,
+  AdminUserDto,
+  ActivityLogDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
   AnalysisMessageAttachmentDto,
@@ -823,6 +825,66 @@ export const endpoints = {
       method: 'PATCH',
       body: { status },
     }),
+
+  deleteAdminFeedback: (id: string) =>
+    api<{ deleted: true; id: string }>(`/admin/feedback/${id}`, {
+      method: 'DELETE',
+    }),
+
+  listAdminUsers: (q?: string) =>
+    api<{ items: AdminUserDto[] }>(
+      `/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+    ),
+
+  impersonateAdminUser: (id: string) =>
+    api<{ accessToken: string; user: UserDto }>(
+      `/admin/users/${id}/impersonate`,
+      { method: 'POST' },
+    ),
+
+  setAdminUserBlacklist: (id: string, blacklisted: boolean) =>
+    api<AdminUserDto>(`/admin/users/${id}/blacklist`, {
+      method: 'POST',
+      body: { blacklisted },
+    }),
+
+  sendAdminUserMessage: (id: string, content: string) =>
+    api<{ ok: true }>(`/admin/users/${id}/message`, {
+      method: 'POST',
+      body: { content },
+    }),
+
+  trackActivity: (body: {
+    event: string;
+    path?: string;
+    title?: string;
+    meta?: Record<string, unknown>;
+  }) =>
+    api<{ ok: true }>('/activity/track', {
+      method: 'POST',
+      body,
+    }),
+
+  listAdminActivityLogs: (params: {
+    q?: string;
+    op?: string;
+    action?: string;
+    source?: string;
+    limit?: number;
+    cursor?: string;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.op) qs.set('op', params.op);
+    if (params.action) qs.set('action', params.action);
+    if (params.source) qs.set('source', params.source);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    const query = qs.toString();
+    return api<{ items: ActivityLogDto[]; nextCursor: string | null }>(
+      `/admin/activity-logs${query ? `?${query}` : ''}`,
+    );
+  },
 
   markNotificationRead: (id: string) =>
     api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),

@@ -503,7 +503,12 @@ onBeforeUnmount(() => {
     <template v-else>
       <div class="list-toolbar">
         <span class="list-count">
-          <template v-if="loading">加载中…</template>
+          <template v-if="loading">
+            <span class="page-loading page-loading-inline" style="padding: 0">
+              <span class="page-loading-spinner" aria-hidden="true" />
+              加载中…
+            </span>
+          </template>
           <template v-else>
             {{ automations.length }} 条自动化流程，{{ enabledCount }} 条运行中
           </template>

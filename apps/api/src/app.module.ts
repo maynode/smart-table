@@ -4,12 +4,14 @@ import { AuthModule } from './auth/auth.module';
 import { BasesModule } from './bases/bases.module';
 import { CommentsModule } from './comments/comments.module';
 import { AutomationsModule } from './automations/automations.module';
+import { AdminUsersModule } from './admin-users/admin-users.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { FormsModule } from './forms/forms.module';
 import { HealthController } from './health.controller';
 import { AnalysisReportsModule } from './analysis-reports/analysis-reports.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { ActivityModule } from './activity/activity.module';
 import { AuditModule } from './audit/audit.module';
 import { QuotasModule } from './quotas/quotas.module';
 import { PublicViewsModule } from './public-views/public-views.module';
@@ -42,6 +44,7 @@ import { LiveModule } from './live/live.module';
     AutomationsModule,
     FormsModule,
     FeedbackModule,
+    AdminUsersModule,
     StorageModule,
     MetricsModule,
     PermissionsModule,
@@ -52,6 +55,7 @@ import { LiveModule } from './live/live.module';
     PublicViewsModule,
     WebhooksModule,
     AuditModule,
+    ActivityModule,
     QuotasModule,
     TemplatesModule,
   ],
