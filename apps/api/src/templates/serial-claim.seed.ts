@@ -38,7 +38,6 @@ export async function seedSerialClaim(
     user = await prisma.user.create({
       data: {
         account: DEMO_ACCOUNT,
-        name: '演示管理员',
         passwordHash: await hash(DEMO_PASSWORD),
         securityQuestion: '你小学就读的学校名称是？',
         securityAnswerHash: await hash('demo'),

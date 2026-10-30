@@ -12,6 +12,12 @@ export interface SortFieldMeta {
   type?: string;
   options?: {
     choices?: Array<{ id?: unknown; name?: unknown }>;
+    aiComponent?: {
+      gridContract?: {
+        sortKey?: { path?: string; type?: string };
+        filter?: { path?: string; valueType?: string };
+      };
+    };
   } | null;
 }
 
@@ -21,11 +27,32 @@ function textOf(value: unknown): string {
   return String(value);
 }
 
-function expression(fieldId: string): Prisma.Sql {
+function expression(fieldId: string, field?: SortFieldMeta): Prisma.Sql {
+  if (field?.type === 'aiComponent') {
+    const path =
+      field.options?.aiComponent?.gridContract?.filter?.path ??
+      field.options?.aiComponent?.gridContract?.sortKey?.path ??
+      '';
+    if (path.trim()) {
+      return Prisma.sql`(cells->${fieldId}->>${path})`;
+    }
+  }
   return Prisma.sql`(cells->>${fieldId})`;
 }
 
-function numericExpression(fieldId: string): Prisma.Sql {
+function numericExpression(fieldId: string, field?: SortFieldMeta): Prisma.Sql {
+  if (field?.type === 'aiComponent') {
+    const path =
+      field.options?.aiComponent?.gridContract?.filter?.path ??
+      field.options?.aiComponent?.gridContract?.sortKey?.path ??
+      '';
+    const valueType =
+      field.options?.aiComponent?.gridContract?.filter?.valueType ??
+      field.options?.aiComponent?.gridContract?.sortKey?.type;
+    if (path.trim() && valueType === 'number') {
+      return Prisma.sql`NULLIF(cells->${fieldId}->>${path}, '')::numeric`;
+    }
+  }
   return Prisma.sql`NULLIF(cells->>${fieldId}, '')::numeric`;
 }
 
@@ -105,6 +132,23 @@ function valueOrderExpression(
   fieldId: string,
   field?: SortFieldMeta,
 ): Prisma.Sql {
+  if (field?.type === 'aiComponent') {
+    const path = field.options?.aiComponent?.gridContract?.sortKey?.path ?? '';
+    const sortType =
+      field.options?.aiComponent?.gridContract?.sortKey?.type ?? 'string';
+    if (path.trim()) {
+      if (sortType === 'number') {
+        return Prisma.sql`NULLIF(cells->${fieldId}->>${path}, '')::numeric`;
+      }
+      if (sortType === 'boolean') {
+        return Prisma.sql`(CASE
+          WHEN cells->${fieldId}->>${path} IN ('true','1','是') THEN 1
+          WHEN cells->${fieldId}->>${path} IN ('false','0','否') THEN 0
+          ELSE NULL END)`;
+      }
+      return Prisma.sql`(cells->${fieldId}->>${path})`;
+    }
+  }
   const numericTypes = new Set([
     'number',
     'percent',
@@ -113,7 +157,7 @@ function valueOrderExpression(
     'autoNumber',
   ]);
   if (field?.type && numericTypes.has(field.type)) {
-    return numericExpression(fieldId);
+    return numericExpression(fieldId, field);
   }
   return cellSortKey(fieldId);
 }
@@ -138,13 +182,17 @@ function sortClause(
   return Prisma.sql`${expr} ${dir} NULLS LAST`;
 }
 
-function nodeSql(node: FilterNode): Prisma.Sql {
+function nodeSql(
+  node: FilterNode,
+  fieldsById?: Map<string, SortFieldMeta>,
+): Prisma.Sql {
   if (Array.isArray((node as FilterGroup).conditions)) {
-    return buildFilterSql(node as FilterGroup);
+    return buildFilterSql(node as FilterGroup, fieldsById);
   }
 
   const condition = node as FilterCondition;
-  const value = expression(condition.fieldId);
+  const field = fieldsById?.get(condition.fieldId);
+  const value = expression(condition.fieldId, field);
   const expected = condition.value;
 
   switch (condition.operator) {
@@ -164,7 +212,7 @@ function nodeSql(node: FilterNode): Prisma.Sql {
     case 'gte':
     case 'lt':
     case 'lte': {
-      const numeric = numericExpression(condition.fieldId);
+      const numeric = numericExpression(condition.fieldId, field);
       if (Number.isFinite(Number(expected))) {
         const operator = Prisma.raw(
           { gt: '>', gte: '>=', lt: '<', lte: '<=' }[condition.operator],
@@ -180,7 +228,7 @@ function nodeSql(node: FilterNode): Prisma.Sql {
       if (!Array.isArray(expected) || expected.length !== 2) {
         return Prisma.sql`TRUE`;
       }
-      return Prisma.sql`${numericExpression(condition.fieldId)} BETWEEN ${Number(expected[0])} AND ${Number(expected[1])}`;
+      return Prisma.sql`${numericExpression(condition.fieldId, field)} BETWEEN ${Number(expected[0])} AND ${Number(expected[1])}`;
     }
     case 'in': {
       const items = Array.isArray(expected) ? expected : [expected];
@@ -210,11 +258,17 @@ function nodeSql(node: FilterNode): Prisma.Sql {
 }
 
 /** Translates a shared FilterGroup into a parameterized JSONB predicate. */
-export function buildFilterSql(group: FilterGroup): Prisma.Sql {
+export function buildFilterSql(
+  group: FilterGroup,
+  fields?: SortFieldMeta[] | Map<string, SortFieldMeta>,
+): Prisma.Sql {
   if (!group.conditions || group.conditions.length === 0) {
     return Prisma.sql`TRUE`;
   }
-  const parts = group.conditions.map((node) => nodeSql(node));
+  const fieldsById = Array.isArray(fields)
+    ? new Map(fields.map((field) => [field.id, field]))
+    : fields;
+  const parts = group.conditions.map((node) => nodeSql(node, fieldsById));
   const joiner = group.conjunction === 'or' ? ' OR ' : ' AND ';
   return Prisma.sql`(${Prisma.join(parts, joiner)})`;
 }

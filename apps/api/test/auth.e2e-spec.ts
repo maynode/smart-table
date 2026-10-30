@@ -35,7 +35,6 @@ describe('Auth (e2e)', () => {
       .send({
         account,
         password,
-        name: '张三',
         securityQuestion: '你小学就读的学校名称是？',
         securityAnswer: 'demo',
       });
@@ -43,6 +42,7 @@ describe('Auth (e2e)', () => {
     expect(register.status).toBe(201);
     expect(register.body.accessToken).toEqual(expect.any(String));
     expect(register.body.user.account).toBe(account);
+    expect(register.body.user.name).toBeUndefined();
     expect(register.body.user.passwordHash).toBeUndefined();
 
     const login = await request(app.getHttpServer())
@@ -59,7 +59,7 @@ describe('Auth (e2e)', () => {
 
     expect(me.status).toBe(200);
     expect(me.body.account).toBe(account);
-    expect(me.body.name).toBe('张三');
+    expect(me.body.name).toBeUndefined();
 
     const anonymous = await request(app.getHttpServer()).get('/auth/me');
     expect(anonymous.status).toBe(401);

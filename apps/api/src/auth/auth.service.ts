@@ -32,7 +32,6 @@ const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export interface PublicUser {
   id: string;
   account: string;
-  name: string;
   avatarSeed: string;
   avatarUrl: string | null;
   createdAt: Date;
@@ -83,8 +82,6 @@ export class AuthService {
         data: {
           account,
           passwordHash,
-          // 展示名直接用用户名，不再单独收集姓名
-          name: account,
           avatarSeed,
           securityQuestion,
           securityAnswerHash,
@@ -154,7 +151,7 @@ export class AuthService {
 
     if (user.blacklistedAt) {
       throw new UnauthorizedException(
-        '账号已被限制登录，请联系管理员；仍可通过右下角「反馈」留言',
+        '账号已被限制登录',
       );
     }
 
@@ -277,20 +274,23 @@ export class AuthService {
     return { ok: true };
   }
 
-  async getUser(userId: string): Promise<PublicUser> {
+  async getUser(
+    userId: string,
+    options?: { allowBlacklisted?: boolean },
+  ): Promise<PublicUser> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException('登录状态已失效');
     }
-    if (user.blacklistedAt) {
+    if (user.blacklistedAt && !options?.allowBlacklisted) {
       throw new UnauthorizedException(
-        '账号已被限制登录，请联系管理员；仍可通过右下角「反馈」留言',
+        '账号已被限制登录',
       );
     }
     return this.presentUser(user);
   }
 
-  /** 登录态修改用户名（全局唯一；同步展示名） */
+  /** 登录态修改用户名（全局唯一） */
   async updateUsername(
     userId: string,
     accountRaw: string,
@@ -316,7 +316,7 @@ export class AuthService {
     try {
       updated = await this.prisma.user.update({
         where: { id: userId },
-        data: { account, name: account },
+        data: { account },
       });
     } catch (error) {
       if (
@@ -412,7 +412,6 @@ export class AuthService {
             workspaceId: m.workspaceId,
             action,
             account: user.account,
-            name: user.name,
             avatarSeed: user.avatarSeed,
             avatarUrl: user.avatarUrl,
           },
@@ -425,7 +424,6 @@ export class AuthService {
       const collab = this.moduleRef.get(CollabRoomService, { strict: false });
       collab.updateUserProfile(user.id, {
         account: user.account,
-        name: user.name,
         avatarSeed: user.avatarSeed,
         avatarUrl: user.avatarUrl,
       });
@@ -500,14 +498,23 @@ export class AuthService {
     return { ok: true };
   }
 
-  async issueForUser(user: User): Promise<AuthResult> {
-    return this.issueToken(user);
+  async issueForUser(
+    user: User,
+    options?: { impersonatorId?: string },
+  ): Promise<AuthResult> {
+    return this.issueToken(user, options);
   }
 
-  private async issueToken(user: User): Promise<AuthResult> {
+  private async issueToken(
+    user: User,
+    options?: { impersonatorId?: string },
+  ): Promise<AuthResult> {
     const accessToken = await this.jwt.signAsync({
       sub: user.id,
       account: user.account,
+      ...(options?.impersonatorId
+        ? { impersonatorId: options.impersonatorId }
+        : {}),
     });
     return { accessToken, user: await this.presentUser(user) };
   }
@@ -516,7 +523,6 @@ export class AuthService {
     return {
       id: user.id,
       account: user.account,
-      name: user.name,
       avatarSeed: user.avatarSeed || user.account,
       avatarUrl: user.avatarUrl ?? null,
       createdAt: user.createdAt,
@@ -532,7 +538,6 @@ export function toPublicUser(
   return {
     id: user.id,
     account: user.account,
-    name: user.name,
     avatarSeed: user.avatarSeed || user.account,
     avatarUrl: user.avatarUrl ?? null,
     createdAt: user.createdAt,

@@ -11,11 +11,13 @@ import { PrismaService } from '../prisma/prisma.service';
 export interface JwtPayload {
   sub: string;
   account: string;
+  /** 管理员模拟登录时写入；有此字段则跳过目标账号黑名单拦截 */
+  impersonatorId?: string;
 }
 
 export type AuthenticatedRequest = FastifyRequest & { user?: JwtPayload };
 
-const BLACKLIST_MESSAGE = '账号已被限制登录，请联系管理员；仍可通过「反馈」留言';
+const BLACKLIST_MESSAGE = '账号已被限制登录';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -48,7 +50,7 @@ export class JwtAuthGuard implements CanActivate {
     if (!user) {
       throw new UnauthorizedException('访问令牌无效或已过期');
     }
-    if (user.blacklistedAt) {
+    if (user.blacklistedAt && !payload.impersonatorId) {
       throw new UnauthorizedException(BLACKLIST_MESSAGE);
     }
 

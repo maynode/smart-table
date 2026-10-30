@@ -32,8 +32,7 @@ describe('Workspace rename / pin / delete (e2e)', () => {
       .send({
         account: `ws_manage${stamp}`,
         password: 'Passw0rd!123',
-        name: '工作区管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     token = owner.body.accessToken;
   });

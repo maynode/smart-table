@@ -81,4 +81,29 @@ describe('buildSortSql', () => {
     expect(text).toContain('regexp_matches');
     expect(text).toContain('NULLS LAST');
   });
+
+  it('aiComponent value mode sorts by gridContract.sortKey JSON path', () => {
+    const text = sqlPreview(
+      buildSortSql(
+        [{ fieldId: 'fld-rate', direction: 'desc', mode: 'value' }],
+        [
+          {
+            id: 'fld-rate',
+            type: 'aiComponent',
+            options: {
+              aiComponent: {
+                gridContract: {
+                  sortKey: { path: 'rating', type: 'number' },
+                  filter: { path: 'rating', valueType: 'number' },
+                },
+              },
+            },
+          },
+        ],
+      ),
+    );
+    expect(text).toContain('cells->');
+    expect(text).toContain('::numeric');
+    expect(text).toContain('DESC');
+  });
 });

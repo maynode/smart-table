@@ -11,9 +11,12 @@ import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 
 const router = useRouter();
+type IdentityFilter = '' | 'admin' | 'user' | 'blacklisted' | 'locked';
+
 const items = ref<AdminUserDto[]>([]);
 const loading = ref(true);
 const query = ref('');
+const identity = ref<IdentityFilter>('');
 const busyId = ref<string | null>(null);
 const messageTarget = ref<AdminUserDto | null>(null);
 const messageBusy = ref(false);
@@ -24,7 +27,6 @@ async function ensureAdmin(): Promise<boolean> {
     auth.updateUser({
       id: user.id,
       account: user.account,
-      name: user.name,
       avatarSeed: user.avatarSeed,
       avatarUrl: user.avatarUrl,
       installAdmin: user.installAdmin,
@@ -45,7 +47,10 @@ async function ensureAdmin(): Promise<boolean> {
 async function load(): Promise<void> {
   loading.value = true;
   try {
-    const result = await endpoints.listAdminUsers(query.value.trim() || undefined);
+    const result = await endpoints.listAdminUsers({
+      q: query.value.trim() || undefined,
+      identity: identity.value || undefined,
+    });
     items.value = result.items;
   } catch (error) {
     toast(messageOf(error) || '加载失败');
@@ -66,16 +71,14 @@ function formatTime(iso: string): string {
 }
 
 async function impersonate(row: AdminUserDto): Promise<void> {
-  if (row.blacklistedAt) {
-    toast('该用户在黑名单中，请先移出');
-    return;
-  }
   const ok = await confirmDialog(
-    `确定以「${row.account}」身份登录？当前管理员会话将被替换。`,
+    row.blacklistedAt
+      ? `「${row.account}」已被禁止登录，确定仍以该身份模拟登录？当前管理员会话将被替换。`
+      : `确定以「${row.account}」身份登录？当前管理员会话将被替换。`,
     {
       title: '模拟登录',
       confirmLabel: '进入',
-      danger: false,
+      danger: Boolean(row.blacklistedAt),
     },
   );
   if (!ok) return;
@@ -85,7 +88,6 @@ async function impersonate(row: AdminUserDto): Promise<void> {
     auth.startImpersonation(result.accessToken, {
       id: result.user.id,
       account: result.user.account,
-      name: result.user.name,
       avatarSeed: result.user.avatarSeed,
       avatarUrl: result.user.avatarUrl,
       installAdmin: result.user.installAdmin,
@@ -103,11 +105,11 @@ async function toggleBlacklist(row: AdminUserDto): Promise<void> {
   const into = !row.blacklistedAt;
   const ok = await confirmDialog(
     into
-      ? `确定将「${row.account}」加入黑名单？加入后无法登录。`
-      : `确定将「${row.account}」移出黑名单？`,
+      ? `确定禁止「${row.account}」登录？禁止后对方无法自行登录。`
+      : `确定允许「${row.account}」登录？`,
     {
-      title: into ? '加入黑名单' : '移出黑名单',
-      confirmLabel: into ? '加入' : '移出',
+      title: into ? '禁止登录' : '允许登录',
+      confirmLabel: into ? '禁止登录' : '允许登录',
       danger: into,
     },
   );
@@ -118,7 +120,7 @@ async function toggleBlacklist(row: AdminUserDto): Promise<void> {
     items.value = items.value.map((item) =>
       item.id === updated.id ? updated : item,
     );
-    toast(into ? '已加入黑名单' : '已移出黑名单');
+    toast(into ? '已禁止登录' : '已允许登录');
   } catch (error) {
     toast(messageOf(error) || '操作失败');
   } finally {
@@ -148,6 +150,37 @@ async function unlockLogin(row: AdminUserDto): Promise<void> {
     toast('已解除登录锁定');
   } catch (error) {
     toast(messageOf(error) || '解锁失败');
+  } finally {
+    busyId.value = null;
+  }
+}
+
+async function toggleInstallAdmin(row: AdminUserDto): Promise<void> {
+  const into = !row.installAdmin;
+  if (into && row.blacklistedAt) {
+    toast('已禁止登录的用户不能设为系统管理员，请先允许登录');
+    return;
+  }
+  const ok = await confirmDialog(
+    into
+      ? `确定将「${row.account}」设为系统管理员？对方将可访问用户管理、日志、反馈等后台。`
+      : `确定取消「${row.account}」的系统管理员身份？`,
+    {
+      title: into ? '设为系统管理员' : '取消系统管理员',
+      confirmLabel: into ? '设为管理员' : '取消管理员',
+      danger: !into,
+    },
+  );
+  if (!ok) return;
+  busyId.value = row.id;
+  try {
+    const updated = await endpoints.setAdminUserInstallAdmin(row.id, into);
+    items.value = items.value.map((item) =>
+      item.id === updated.id ? updated : item,
+    );
+    toast(into ? '已设为系统管理员' : '已取消系统管理员');
+  } catch (error) {
+    toast(messageOf(error) || '操作失败');
   } finally {
     busyId.value = null;
   }
@@ -229,6 +262,20 @@ onMounted(async () => {
             @keydown.enter="load"
           />
         </label>
+        <label>
+          身份
+          <select
+            v-model="identity"
+            data-testid="admin-users-identity"
+            @change="load"
+          >
+            <option value="">全部</option>
+            <option value="admin">系统管理员</option>
+            <option value="user">普通用户</option>
+            <option value="blacklisted">禁止登录</option>
+            <option value="locked">登录锁定</option>
+          </select>
+        </label>
         <button type="button" class="btn" :disabled="loading" @click="load">
           查询
         </button>
@@ -261,7 +308,7 @@ onMounted(async () => {
               <td>
                 <div class="admin-users-name">
                   <strong>{{ row.account }}</strong>
-                  <span v-if="row.blacklistedAt" class="admin-users-tag">黑名单</span>
+                  <span v-if="row.blacklistedAt" class="admin-users-tag">禁止登录</span>
                   <span
                     v-if="isLoginLocked(row)"
                     class="admin-users-tag"
@@ -280,7 +327,7 @@ onMounted(async () => {
                   <button
                     type="button"
                     class="btn"
-                    :disabled="busyId === row.id || Boolean(row.blacklistedAt)"
+                    :disabled="busyId === row.id"
                     @click="impersonate(row)"
                   >
                     模拟登录
@@ -306,11 +353,23 @@ onMounted(async () => {
                   <button
                     type="button"
                     class="btn"
+                    :disabled="
+                      busyId === row.id ||
+                      (Boolean(row.blacklistedAt) && !row.installAdmin)
+                    "
+                    data-testid="admin-users-install-admin"
+                    @click="toggleInstallAdmin(row)"
+                  >
+                    {{ row.installAdmin ? '取消系统管理员' : '设为系统管理员' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
                     :class="row.blacklistedAt ? 'btn-ghost' : 'btn-danger'"
                     :disabled="busyId === row.id || row.installAdmin"
                     @click="toggleBlacklist(row)"
                   >
-                    {{ row.blacklistedAt ? '移出黑名单' : '加入黑名单' }}
+                    {{ row.blacklistedAt ? '允许登录' : '禁止登录' }}
                   </button>
                 </div>
               </td>

@@ -2097,10 +2097,7 @@ const mentionCandidates = computed(() => {
   const q = mentionQuery.value.toLowerCase();
   return members.value
     .filter(
-      (member) =>
-        !q ||
-        member.name.toLowerCase().includes(q) ||
-        member.account.toLowerCase().includes(q),
+      (member) => !q || member.account.toLowerCase().includes(q),
     )
     .slice(0, 8);
 });
@@ -2120,10 +2117,10 @@ function insertMention(member: MemberDto): void {
   const text = commentDraft.value;
   const match = /(^|[\s])@([^\s@]*)$/.exec(text);
   if (!match) {
-    commentDraft.value = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@${member.name} `;
+    commentDraft.value = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@${member.account} `;
   } else {
     const start = text.length - (match[2]?.length ?? 0) - 1;
-    commentDraft.value = `${text.slice(0, start)}@${member.name} ${text.slice(text.length)}`;
+    commentDraft.value = `${text.slice(0, start)}@${member.account} ${text.slice(text.length)}`;
   }
   if (!commentMentions.value.includes(member.userId)) {
     commentMentions.value = [...commentMentions.value, member.userId];
@@ -2155,10 +2152,7 @@ function onCommentKeydown(event: KeyboardEvent): void {
 function resolveMentionIds(body: string): string[] {
   const ids = new Set(commentMentions.value);
   for (const member of members.value) {
-    if (
-      body.includes(`@${member.name}`) ||
-      body.includes(`@${member.account}`)
-    ) {
+    if (body.includes(`@${member.account}`)) {
       ids.add(member.userId);
     }
   }
@@ -2171,10 +2165,10 @@ function formatCommentBody(body: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
   const sorted = [...members.value].sort(
-    (a, b) => b.name.length - a.name.length,
+    (a, b) => b.account.length - a.account.length,
   );
   for (const member of sorted) {
-    const token = `@${member.name}`;
+    const token = `@${member.account}`;
     html = html.split(token).join(`<span class="mention">${token}</span>`);
   }
   return html.replace(/\n/g, '<br />');
@@ -2471,7 +2465,6 @@ function onLiveSidebar(event: LiveEvent): void {
     ) {
       collabSocket.patchPeerProfile(event.entityId, {
         account: typeof meta.account === 'string' ? meta.account : undefined,
-        name: typeof meta.name === 'string' ? meta.name : undefined,
         avatarSeed:
           typeof meta.avatarSeed === 'string' ? meta.avatarSeed : undefined,
         avatarUrl:
@@ -2486,8 +2479,6 @@ function onLiveSidebar(event: LiveEvent): void {
             typeof meta.account === 'string'
               ? meta.account
               : auth.state.user.account,
-          name:
-            typeof meta.name === 'string' ? meta.name : auth.state.user.name,
           avatarSeed:
             typeof meta.avatarSeed === 'string'
               ? meta.avatarSeed
@@ -2638,13 +2629,13 @@ onBeforeUnmount(() => {
           v-if="collabPeers.length"
           class="collab-presence"
           data-testid="collab-presence"
-          :title="collabPeers.map((p) => p.name || p.account).join('、')"
+          :title="collabPeers.map((p) => p.account).join('、')"
         >
           <span
             v-for="peer in collabPeers.slice(0, 5)"
             :key="peer.userId"
             class="collab-avatar"
-            :title="peer.name || peer.account"
+            :title="peer.account"
           >
             <img
               class="collab-avatar-img"
@@ -2656,7 +2647,7 @@ onBeforeUnmount(() => {
                   size: 48,
                 })
               "
-              :alt="peer.name || peer.account"
+              :alt="peer.account"
             />
           </span>
           <span
@@ -3293,7 +3284,7 @@ onBeforeUnmount(() => {
       </header>
       <ul class="comment-list">
         <li v-for="comment in comments" :key="comment.id">
-          <div class="comment-author">{{ comment.author.name }}</div>
+          <div class="comment-author">{{ comment.author.account }}</div>
           <p class="comment-body" v-html="formatCommentBody(comment.body)"></p>
         </li>
         <li v-if="comments.length === 0" class="muted">还没有评论，在下方输入开始讨论。</li>
@@ -3320,8 +3311,7 @@ onBeforeUnmount(() => {
               :data-testid="`mention-option-${member.userId}`"
               @mousedown.prevent="insertMention(member)"
             >
-              <strong>{{ member.name }}</strong>
-              <span>{{ member.account }}</span>
+              <strong>{{ member.account }}</strong>
             </li>
           </ul>
           <p

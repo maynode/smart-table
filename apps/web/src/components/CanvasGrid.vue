@@ -14,7 +14,12 @@ import {
   type GridColumn,
   type GridStats,
 } from '../grid-canvas/engine';
-import { peerColorFromUserId } from 'shared';
+import {
+  formatExportDisplay,
+  parseGridContract,
+  peerColorFromUserId,
+  type AiComponentOptions,
+} from 'shared';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
 import { fieldTypeIcon } from '../ui/field-icons';
@@ -24,6 +29,7 @@ import {
   type CellLockAcquireResult,
   type CollabCellLock,
 } from '../sync/collab-socket';
+import AiComponentHost from '../ai-component/AiComponentHost.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -130,6 +136,7 @@ const emit = defineEmits<{
   ];
   deleteRecords: [recordIds: string[]];
   deleteField: [field: FieldDto];
+  openAiComponent: [payload: { record: RecordDto; field: FieldDto }];
   peerCursor: [
     payload: {
       recordId?: string;
@@ -338,6 +345,58 @@ function styleForEditorCell(row: number, col: number, fieldType: string): Record
     style.height = `${rect.height}px`;
   }
   return style;
+}
+
+/** 智能组件：叠在格子上，略放大给 AI 生成的控件呼吸空间 */
+function styleForAiComponentCell(row: number, col: number): Record<string, string> {
+  if (!engine) return {};
+  const rect = engine.cellRect(row, col);
+  return {
+    left: `${rect.x}px`,
+    top: `${rect.y}px`,
+    width: `${Math.max(rect.width, 260)}px`,
+    height: `${Math.max(rect.height, 40)}px`,
+  };
+}
+
+const aiComponentHost = ref<{
+  record: RecordDto;
+  field: FieldDto;
+  row: number;
+  col: number;
+} | null>(null);
+
+const liveAiComponentStyle = computed(() => {
+  void layoutEpoch.value;
+  const current = aiComponentHost.value;
+  if (!current || !engine) return {};
+  return styleForAiComponentCell(current.row, current.col);
+});
+
+async function aiComponentGetCell(): Promise<unknown> {
+  const host = aiComponentHost.value;
+  if (!host) return null;
+  return host.record.cells?.[host.field.id] ?? null;
+}
+
+async function aiComponentSetCell(value: unknown): Promise<void> {
+  const host = aiComponentHost.value;
+  if (!host) return;
+  const previous = host.record.cells?.[host.field.id];
+  emit('commit', {
+    record: host.record,
+    field: host.field,
+    value,
+    previous,
+  });
+  host.record = {
+    ...host.record,
+    cells: { ...host.record.cells, [host.field.id]: value },
+  };
+}
+
+function closeAiComponentHost(): void {
+  aiComponentHost.value = null;
 }
 
 /** Follow cellRect on scroll (editing.style alone is snapshotted at beginEdit). */
@@ -583,6 +642,23 @@ function formatCell(field: FieldDto, value: unknown): CellRender | null {
     return { text: textOf(value) };
   }
 
+  if (field.type === 'aiComponent') {
+    const opts = (field.options?.aiComponent ?? {}) as AiComponentOptions;
+    const contract = parseGridContract(opts.gridContract);
+    if (contract) {
+      const display = formatExportDisplay(value, contract).trim();
+      if (display) return { text: display };
+    }
+    if (value && typeof value === 'object') {
+      try {
+        return { text: JSON.stringify(value) };
+      } catch {
+        return { text: '组件' };
+      }
+    }
+    return { text: textOf(value) };
+  }
+
   // groupChat 已停用新建/编辑，旧数据仅只读展示。
   if (field.type === 'groupChat') {
     const ids = Array.isArray(value) ? value.map(String) : [];
@@ -636,6 +712,16 @@ function emitPeerCursorAt(row: number, col: number): void {
 }
 
 async function beginEdit(row: number, col: number): Promise<void> {
+  const prevAi = aiComponentHost.value;
+  if (
+    prevAi &&
+    (prevAi.row !== row ||
+      prevAi.col !== col ||
+      visibleFields.value[col]?.type !== 'aiComponent')
+  ) {
+    aiComponentHost.value = null;
+  }
+
   if (!props.editable || !engine) return;
   if (columns.value[col]?.id === ADD_FIELD_COLUMN_ID) return;
   const record = recordAt(row);
@@ -653,8 +739,18 @@ async function beginEdit(row: number, col: number): Promise<void> {
     field.type === 'lastEditedAt' ||
     field.type === 'autoNumber' ||
     field.type === 'ai' ||
+    field.type === 'aiComponent' ||
     field.type === 'groupChat'
   ) {
+    if (field.type === 'aiComponent') {
+      const opts = (field.options?.aiComponent ?? {}) as AiComponentOptions;
+      if (opts.status !== 'published' || !opts.bundle?.html) {
+        emit('openAiComponent', { record, field });
+        return;
+      }
+      editing.value = null;
+      aiComponentHost.value = { record, field, row, col };
+    }
     return;
   }
 
@@ -963,6 +1059,7 @@ function isReadonlyField(field: FieldDto): boolean {
     field.type === 'lookup' ||
     field.type === 'autoNumber' ||
     field.type === 'ai' ||
+    field.type === 'aiComponent' ||
     field.type === 'createdBy' ||
     field.type === 'lastEditedBy' ||
     field.type === 'createdAt' ||
@@ -1515,7 +1612,7 @@ const peerCursorOverlays = computed(() => {
       ) {
         return null;
       }
-      const fullName = (peer.name || peer.account || '?').trim();
+      const fullName = (peer.account || '?').trim();
       const color =
         peer.color || peerColorFromUserId(peer.userId);
       return {
@@ -1561,7 +1658,7 @@ const peerCellLockOverlays = computed(() => {
     }
     out.push({
       key: `${lock.userId}:${lock.recordId}:${lock.fieldId}`,
-      label: `${(lock.name || lock.account || '?').trim()} 编辑中`,
+      label: `${(lock.account || '?').trim()} 编辑中`,
       style: {
         left: `${rect.x}px`,
         top: `${rect.y}px`,
@@ -1789,6 +1886,30 @@ defineExpose({
       @change="onUploadFile"
     />
     <div v-if="uploading" class="upload-hint">上传中…</div>
+
+    <AiComponentHost
+      v-if="aiComponentHost"
+      placement="cell"
+      :open="Boolean(aiComponentHost)"
+      :cell-style="liveAiComponentStyle"
+      :title="aiComponentHost.field.name"
+      :html="
+        ((aiComponentHost.field.options?.aiComponent as AiComponentOptions)
+          ?.bundle?.html) ?? ''
+      "
+      :css="
+        (aiComponentHost.field.options?.aiComponent as AiComponentOptions)
+          ?.bundle?.css
+      "
+      :js="
+        (aiComponentHost.field.options?.aiComponent as AiComponentOptions)
+          ?.bundle?.js
+      "
+      :value="aiComponentHost.record.cells?.[aiComponentHost.field.id] ?? null"
+      :get-cell="aiComponentGetCell"
+      :set-cell="aiComponentSetCell"
+      @close="closeAiComponentHost"
+    />
 
     <select
       v-if="editing && editorKind === 'person'"

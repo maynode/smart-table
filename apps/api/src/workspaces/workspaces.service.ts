@@ -31,7 +31,6 @@ export interface MemberView {
   userId: string;
   inviteId?: string;
   account: string;
-  name: string;
   avatarSeed?: string;
   avatarUrl?: string | null;
   role: WorkspaceRole;
@@ -243,7 +242,6 @@ export class WorkspacesService {
     const active: MemberView[] = members.map((member) => ({
       userId: member.userId,
       account: member.user.account,
-      name: member.user.name,
       avatarSeed: member.user.avatarSeed || member.user.account,
       avatarUrl: member.user.avatarUrl ?? null,
       role: member.role,
@@ -255,7 +253,6 @@ export class WorkspacesService {
       userId: '',
       inviteId: invite.id,
       account: invite.account,
-      name: invite.account,
       role: invite.role,
       createdAt: invite.createdAt,
       registered: false,
@@ -332,7 +329,6 @@ export class WorkspacesService {
         return {
           userId: user.id,
           account: user.account,
-          name: user.name,
           avatarSeed: user.avatarSeed || user.account,
           avatarUrl: user.avatarUrl ?? null,
           role: member.role,
@@ -378,7 +374,6 @@ export class WorkspacesService {
         userId: '',
         inviteId: invite.id,
         account: invite.account,
-        name: invite.account,
         role: invite.role,
         createdAt: invite.createdAt,
         registered: false,
@@ -464,7 +459,6 @@ export class WorkspacesService {
       return {
         userId: updated.userId,
         account: user?.account ?? '',
-        name: user?.name ?? '',
         avatarSeed: user?.avatarSeed || user?.account || '',
         avatarUrl: user?.avatarUrl ?? null,
         role: updated.role,
@@ -506,7 +500,6 @@ export class WorkspacesService {
       userId: '',
       inviteId: updatedInvite.id,
       account: updatedInvite.account,
-      name: updatedInvite.account,
       role: updatedInvite.role,
       createdAt: updatedInvite.createdAt,
       registered: false,

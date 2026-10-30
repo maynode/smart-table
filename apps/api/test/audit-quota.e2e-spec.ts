@@ -38,7 +38,6 @@ describe('Audit log and quotas (e2e)', () => {
       .post('/auth/register')
       .send({ account: ownerAccount,
         password: 'Passw0rd!123',
-        name: '配额管理员',
       })
       .expect(201);
     token = owner.body.accessToken;
@@ -132,8 +131,7 @@ describe('Audit log and quotas (e2e)', () => {
       .send({
         account: `audit_quota_second${stamp}`,
         password: 'Passw0rd!123',
-        name: '第二成员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         })
       .expect(201);
     const invite = await http()

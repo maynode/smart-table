@@ -1,10 +1,9 @@
 export interface UserDto {
   id: string;
   account: string;
-  name: string;
   avatarSeed: string;
   avatarUrl?: string | null;
-  /** 系统管理员（反馈后台 / 配额）；对应 INSTALL_ADMIN_* */
+  /** 系统管理员（用户表标志或 INSTALL_ADMIN_*） */
   installAdmin?: boolean;
 }
 
@@ -17,13 +16,12 @@ export interface FeedbackDto {
   status: 'open' | 'done';
   createdAt: string;
   updatedAt: string;
-  user: { id: string; account: string; name: string } | null;
+  user: { id: string; account: string } | null;
 }
 
 export interface AdminUserDto {
   id: string;
   account: string;
-  name: string;
   createdAt: string;
   blacklistedAt: string | null;
   loginLockedUntil: string | null;
@@ -163,7 +161,6 @@ export interface MemberDto {
   /** 未注册待加入时有值，改角色/移除用此 id */
   inviteId?: string;
   account: string;
-  name: string;
   avatarSeed?: string;
   avatarUrl?: string | null;
   role: string;
@@ -245,7 +242,7 @@ export interface PublicFormDto {
   qrUrl: string;
   fields: PublicFormFieldDto[];
   /** Present when the form has person fields. */
-  members?: Array<{ userId: string; name: string }>;
+  members?: Array<{ userId: string; account: string }>;
   /** Relation fieldId → target-sheet record choices. */
   relationChoices?: Record<string, Array<{ id: string; label: string }>>;
 }
@@ -365,10 +362,9 @@ export interface PermissionSettingsDto {
     fieldRule: AclFieldRule | null;
   };
   everyone: AclConfig | null;
-  members: Array<AclConfig & { userId: string; name: string; account: string }>;
+  members: Array<AclConfig & { userId: string; account: string }>;
   workspaceMembers: Array<{
     userId: string;
-    name: string;
     account: string;
     role: string;
   }>;

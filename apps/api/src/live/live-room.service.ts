@@ -65,7 +65,7 @@ export class LiveRoomService implements OnModuleInit {
       return;
     }
 
-    let payload: { sub: string };
+    let payload: { sub: string; impersonatorId?: string };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
@@ -82,7 +82,7 @@ export class LiveRoomService implements OnModuleInit {
       where: { id: payload.sub },
       select: { blacklistedAt: true },
     });
-    if (!authUser || authUser.blacklistedAt) {
+    if (!authUser || (authUser.blacklistedAt && !payload.impersonatorId)) {
       this.send(socket, {
         type: 'error',
         code: 'UNAUTHORIZED',

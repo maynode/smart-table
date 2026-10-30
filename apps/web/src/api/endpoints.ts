@@ -412,6 +412,108 @@ export const endpoints = {
   ) =>
     api<FieldDto>(`/fields/${fieldId}`, { method: 'PATCH', body: patch }),
 
+  getAiComponentSession: (fieldId: string) =>
+    api<{
+      fieldId: string;
+      status: string;
+      version: number;
+      messages: Array<{
+        role: string;
+        content: string;
+        attachments?: Array<{
+          url: string;
+          name: string;
+          mimetype: string;
+          size: number;
+        }>;
+      }>;
+      gridContract: unknown;
+      bundle: { html: string; css?: string; js?: string } | null;
+      bridgeManifest: unknown;
+      valueSchema: unknown;
+      hasBundle: boolean;
+      llmConfigured: boolean;
+    }>(`/fields/${fieldId}/ai-component/session`),
+
+  uploadAiComponentAttachment: async (fieldId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const token = getToken();
+    const response = await fetch(
+      `${API_BASE}/fields/${fieldId}/ai-component/attachments`,
+      {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      },
+    );
+    const text = await response.text();
+    const data = text ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as {
+      url: string;
+      name: string;
+      mimetype: string;
+      size: number;
+    };
+  },
+
+  chatAiComponent: (
+    fieldId: string,
+    text: string,
+    attachments?: Array<{
+      url: string;
+      name: string;
+      mimetype: string;
+      size: number;
+    }>,
+  ) =>
+    api<{
+      reply: string;
+      messages: Array<{
+        role: string;
+        content: string;
+        attachments?: Array<{
+          url: string;
+          name: string;
+          mimetype: string;
+          size: number;
+        }>;
+      }>;
+      llmConfigured: boolean;
+      canGenerate: boolean;
+    }>(`/fields/${fieldId}/ai-component/chat`, {
+      method: 'POST',
+      body: { text, attachments },
+    }),
+
+  generateAiComponent: (fieldId: string) =>
+    api<{
+      status: 'draft';
+      gridContract: unknown;
+      previewHint: string;
+      bundleBytes: number;
+      bundle: { html: string; css?: string; js?: string };
+      bridgeManifest: unknown;
+      valueSchema: unknown;
+      source?: 'llm' | 'fallback';
+    }>(`/fields/${fieldId}/ai-component/generate`, {
+      method: 'POST',
+      body: {},
+    }),
+
+  publishAiComponent: (fieldId: string) =>
+    api<{
+      status: 'published';
+      version: number;
+      gridContract: unknown;
+      bundle?: { html: string; css?: string; js?: string };
+      bridgeManifest?: unknown;
+    }>(`/fields/${fieldId}/ai-component/publish`, {
+      method: 'POST',
+      body: {},
+    }),
+
   listComments: (sheetId: string) =>
     api<CommentDto[]>(`/sheets/${sheetId}/comments`),
 
@@ -832,10 +934,18 @@ export const endpoints = {
       method: 'DELETE',
     }),
 
-  listAdminUsers: (q?: string) =>
-    api<{ items: AdminUserDto[] }>(
-      `/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`,
-    ),
+  listAdminUsers: (params?: {
+    q?: string;
+    identity?: 'admin' | 'user' | 'blacklisted' | 'locked' | '';
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.q?.trim()) search.set('q', params.q.trim());
+    if (params?.identity) search.set('identity', params.identity);
+    const qs = search.toString();
+    return api<{ items: AdminUserDto[] }>(
+      `/admin/users${qs ? `?${qs}` : ''}`,
+    );
+  },
 
   impersonateAdminUser: (id: string) =>
     api<{ accessToken: string; user: UserDto }>(
@@ -858,6 +968,12 @@ export const endpoints = {
   unlockAdminUserLogin: (id: string) =>
     api<AdminUserDto>(`/admin/users/${id}/unlock-login`, {
       method: 'POST',
+    }),
+
+  setAdminUserInstallAdmin: (id: string, installAdmin: boolean) =>
+    api<AdminUserDto>(`/admin/users/${id}/install-admin`, {
+      method: 'POST',
+      body: { installAdmin },
     }),
 
   trackActivity: (body: {

@@ -47,8 +47,7 @@ describe('Excel import/export roundtrip (e2e)', () => {
       .send({
         account: `excel${stamp}`,
         password: 'Passw0rd!123',
-        name: 'Excel 管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     token = owner.body.accessToken;
 

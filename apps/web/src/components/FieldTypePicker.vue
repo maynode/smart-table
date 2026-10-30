@@ -64,7 +64,7 @@ const nameInput = ref<HTMLInputElement | null>(null);
 const mobilePhotoOnly = ref(false);
 
 const MENU_GROUPS: FieldType[][] = [
-  ['ai'],
+  ['ai', 'aiComponent'],
   [
     'text',
     'longText',
@@ -172,6 +172,15 @@ function defaultOptions(type: FieldType): Record<string, unknown> | undefined {
   if (type === 'ai') {
     return {
       ai: { prompt: '', sourceFieldIds: [] as string[], provider: 'local' },
+    };
+  }
+  if (type === 'aiComponent') {
+    return {
+      aiComponent: {
+        status: 'draft',
+        version: 0,
+        bridgeManifest: { cell: true, rowFields: '*', automations: '*' },
+      },
     };
   }
   if (type === 'progress') return { min: 0, max: 100 };
@@ -322,6 +331,7 @@ const style = computed(() => {
 function iconFor(type: FieldType): string {
   const map: Partial<Record<FieldType, string>> = {
     ai: '✦',
+    aiComponent: '◆',
     text: 'T',
     title: '题',
     select: '◉',

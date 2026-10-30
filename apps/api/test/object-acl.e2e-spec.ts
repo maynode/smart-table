@@ -40,8 +40,7 @@ describe('Content permissions object ACL (e2e)', () => {
       .send({
         account: `acl_owner${stamp}`,
         password: 'Passw0rd!123',
-        name: '权限所有者',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     ownerToken = owner.body.accessToken;
 
@@ -50,8 +49,7 @@ describe('Content permissions object ACL (e2e)', () => {
       .send({
         account: `acl_editor${stamp}`,
         password: 'Passw0rd!123',
-        name: '编辑成员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     editorToken = editor.body.accessToken;
     editorId = editor.body.user.id;
@@ -61,8 +59,7 @@ describe('Content permissions object ACL (e2e)', () => {
       .send({
         account: `acl_viewer${stamp}`,
         password: 'Passw0rd!123',
-        name: '只读成员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     viewerToken = viewer.body.accessToken;
     viewerId = viewer.body.user.id;

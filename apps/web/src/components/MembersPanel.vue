@@ -255,7 +255,9 @@ async function changeRole(
 
 async function remove(member: MemberDto): Promise<void> {
   if (!props.canManage) return;
-  const label = member.registered ? member.name : member.account;
+  const label = member.registered
+    ? member.account
+    : member.account;
   const ok = await confirmDialog(
     member.registered
       ? `将「${label}」移出工作区？`
@@ -407,12 +409,12 @@ onUnmounted(() => {
             draggable="false"
           />
           <template v-else>
-            {{ (member.name || member.account).slice(0, 1) }}
+            {{ member.account.slice(0, 1) }}
           </template>
         </span>
         <span class="member-main">
           <strong>
-            {{ member.registered ? member.name : member.account }}
+            {{ member.account }}
             <span
               v-if="!member.registered"
               class="pending-tag"
@@ -421,9 +423,6 @@ onUnmounted(() => {
               未注册
             </span>
           </strong>
-          <small v-if="member.registered && member.account !== member.name">
-            {{ member.account }}
-          </small>
         </span>
         <div
           v-if="canManage && member.role !== 'owner'"

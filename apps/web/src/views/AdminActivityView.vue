@@ -58,7 +58,6 @@ async function ensureAdmin(): Promise<boolean> {
     auth.updateUser({
       id: user.id,
       account: user.account,
-      name: user.name,
       avatarSeed: user.avatarSeed,
       avatarUrl: user.avatarUrl,
       installAdmin: user.installAdmin,

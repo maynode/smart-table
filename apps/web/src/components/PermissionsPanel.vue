@@ -68,6 +68,13 @@ function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : String(error);
 }
 
+function memberLabel(userId: string): string {
+  const member = settings.value?.workspaceMembers.find(
+    (item) => item.userId === userId,
+  );
+  return member?.account || userId;
+}
+
 function accessOf(fieldId: string): AclFieldAccess {
   return (
     access.value[fieldId] ?? {
@@ -490,7 +497,7 @@ onBeforeUnmount(() => {
                 :key="member.userId"
                 :value="member.userId"
               >
-                {{ member.name || member.account }}
+                {{ member.account }}
               </option>
             </select>
             <select v-model="addMemberLevel">
@@ -509,10 +516,7 @@ onBeforeUnmount(() => {
             data-testid="permission-member-row"
           >
             <span>
-              {{
-                settings.workspaceMembers.find((member) => member.userId === row.userId)
-                  ?.name || row.userId
-              }}
+              {{ memberLabel(row.userId) }}
             </span>
             <select v-model="row.level" data-testid="permission-member-level">
               <option v-for="item in levels" :key="item.value" :value="item.value">

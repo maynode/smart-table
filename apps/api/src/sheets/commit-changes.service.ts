@@ -17,6 +17,7 @@ import {
 } from 'shared';
 import { FormsService } from '../forms/forms.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { applyAiFields } from './ai-field';
 import type { CommitChangesDto } from './dto/commit-changes.dto';
 import {
   SheetCommitQueue,
@@ -198,7 +199,12 @@ export class CommitChangesService {
           continue;
         }
         const currentCells = (record.cells ?? {}) as Record<string, unknown>;
-        const merged = { ...currentCells, ...mutation.cells };
+        let merged: Record<string, unknown> = {
+          ...currentCells,
+          ...mutation.cells,
+        };
+        // 与 HTTP updateRecord 对齐：源字段变更时重算 AI 填值列
+        merged = await applyAiFields(tx, sheetId, merged, currentCells);
         const expectedVersion = mutation.baseVersion;
         if (expectedVersion !== undefined) {
           const updated = await tx.recordRow.updateMany({

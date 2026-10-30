@@ -435,7 +435,7 @@ export class PermissionsService {
     });
     const members = await this.prisma.workspaceMember.findMany({
       where: { workspaceId: object.workspaceId },
-      include: { user: { select: { id: true, name: true, account: true } } },
+      include: { user: { select: { id: true, account: true } } },
       orderBy: { createdAt: 'asc' },
     });
     const userById = new Map(
@@ -465,7 +465,6 @@ export class PermissionsService {
         : null,
       members: memberRows.map((row) => ({
         userId: row.subjectId,
-        name: userById.get(row.subjectId)?.name ?? '',
         account: userById.get(row.subjectId)?.account ?? '',
         level: row.level,
         recordRule: row.recordRule,
@@ -473,7 +472,6 @@ export class PermissionsService {
       })),
       workspaceMembers: members.map((member) => ({
         userId: member.userId,
-        name: member.user.name,
         account: member.user.account,
         role: member.role,
       })),

@@ -33,7 +33,6 @@ async function ensureAdmin(): Promise<boolean> {
     auth.updateUser({
       id: user.id,
       account: user.account,
-      name: user.name,
       avatarSeed: user.avatarSeed,
       avatarUrl: user.avatarUrl,
       installAdmin: user.installAdmin,
@@ -185,8 +184,7 @@ watch(statusFilter, () => {
       <ul v-else class="admin-feedback-list">
         <li v-for="row in items" :key="row.id" class="admin-feedback-card">
           <div class="admin-feedback-meta">
-            <strong>{{ row.user?.name || row.user?.account || '匿名' }}</strong>
-            <span v-if="row.user?.account" class="muted">{{ row.user.account }}</span>
+            <strong v-if="row.user?.account">{{ row.user.account }}</strong>
             <span v-else class="muted">未登录</span>
             <span class="muted">{{ formatTime(row.createdAt) }}</span>
             <span

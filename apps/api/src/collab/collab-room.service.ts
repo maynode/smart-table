@@ -133,7 +133,7 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     token: string,
     sheetId: string,
   ): Promise<void> {
-    let payload: { sub: string; account?: string };
+    let payload: { sub: string; account?: string; impersonatorId?: string };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
@@ -150,7 +150,10 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       where: { id: payload.sub },
       select: { blacklistedAt: true },
     });
-    if (!authUser || authUser.blacklistedAt) {
+    if (
+      !authUser ||
+      (authUser.blacklistedAt && !payload.impersonatorId)
+    ) {
       this.send(socket, {
         type: 'error',
         code: 'UNAUTHORIZED',
@@ -200,7 +203,7 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       socket,
       userId: payload.sub,
       account: user?.account ?? payload.account ?? payload.sub,
-      name: user?.name ?? user?.account ?? payload.sub,
+      name: user?.account ?? payload.account ?? payload.sub,
       color: peerColorFromUserId(payload.sub),
       avatarSeed: user?.avatarSeed || user?.account || payload.sub,
       avatarUrl: user?.avatarUrl ?? null,
@@ -239,7 +242,6 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     profile: {
       account?: string;
-      name?: string;
       avatarSeed?: string;
       avatarUrl?: string | null;
     },
@@ -249,8 +251,10 @@ export class CollabRoomService implements OnModuleInit, OnModuleDestroy {
       let changed = false;
       for (const c of room) {
         if (c.userId !== userId) continue;
-        if (profile.account !== undefined) c.account = profile.account;
-        if (profile.name !== undefined) c.name = profile.name;
+        if (profile.account !== undefined) {
+          c.account = profile.account;
+          c.name = profile.account;
+        }
         if (profile.avatarSeed !== undefined) c.avatarSeed = profile.avatarSeed;
         if (profile.avatarUrl !== undefined) c.avatarUrl = profile.avatarUrl;
         changed = true;

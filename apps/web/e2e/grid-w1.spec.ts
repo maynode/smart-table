@@ -208,7 +208,7 @@ test.describe('W1 grid parity features', () => {
       await page.keyboard.press('Enter');
     }
     await expect(personEditor).toBeVisible({ timeout: 10_000 });
-    const memberLabel = session.user.name ?? session.user.account ?? account;
+    const memberLabel = session.user.account ?? account;
     await expect(personEditor.locator('option')).toContainText([
       '未指定成员',
       memberLabel,

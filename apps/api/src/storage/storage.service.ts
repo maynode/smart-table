@@ -6,11 +6,13 @@ import { ConfigService } from '@nestjs/config';
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   writeFileSync,
 } from 'node:fs';
 import { extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -217,6 +219,32 @@ export class StorageService {
         MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream',
       downloadName: name,
     };
+  }
+
+  /** Read an uploaded object for LLM multimodal (data URL) use. */
+  async readUploadBuffer(
+    urlOrName: string,
+  ): Promise<{ buffer: Buffer; mimetype: string; name: string }> {
+    const name = urlOrName.includes('/')
+      ? urlOrName.split('/').pop()!
+      : urlOrName;
+    if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9]+)?$/.test(name)) {
+      throw new NotFoundException('文件不存在');
+    }
+    const key = `uploads/${name}`;
+    const mimetype =
+      MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream';
+    if (this.driver === 'minio' && this.s3) {
+      const out = await this.s3.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const bytes = await out.Body?.transformToByteArray();
+      if (!bytes) throw new NotFoundException('文件不存在');
+      return { buffer: Buffer.from(bytes), mimetype, name };
+    }
+    const path = join(this.localDir, 'uploads', name);
+    if (!existsSync(path)) throw new NotFoundException('文件不存在');
+    return { buffer: readFileSync(path), mimetype, name };
   }
 
   resolveCover(name: string): {

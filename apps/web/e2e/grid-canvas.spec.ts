@@ -38,7 +38,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     expect(registerResponse.ok()).toBeTruthy();
     const session = (await registerResponse.json()) as {
       accessToken: string;
-      user: { id: string; account: string; name: string };
+      user: { id: string; account: string };
     };
     const headers = { Authorization: `Bearer ${session.accessToken}` };
 

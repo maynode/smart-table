@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import type { AiComponentOptions } from 'shared';
 import { computed, onMounted, ref, watch } from 'vue';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, FieldOptionChoice, SheetDto } from '../api/types';
 import { useFloatDrag } from '../composables/useFloatDrag';
 import { newId } from '../ui/id';
+import AiComponentFieldPanel from './AiComponentFieldPanel.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -30,6 +32,7 @@ const COLORS = [
 const choices = ref<FieldOptionChoice[]>([]);
 const aiPrompt = ref('');
 const aiSourceIds = ref<string[]>([]);
+const aiComponentOptions = ref<AiComponentOptions>({ status: 'draft' });
 const formulaText = ref('=1');
 const relationTargetSheetId = ref('');
 const relationBidirectional = ref(false);
@@ -60,6 +63,7 @@ watch(
 
 const fieldType = computed(() => props.field?.type ?? '');
 const isAi = computed(() => fieldType.value === 'ai');
+const isAiComponent = computed(() => fieldType.value === 'aiComponent');
 const isChoice = computed(
   () => fieldType.value === 'select' || fieldType.value === 'multiSelect',
 );
@@ -71,6 +75,7 @@ const mobilePhotoOnly = ref(false);
 const needsConfig = computed(
   () =>
     isAi.value ||
+    isAiComponent.value ||
     isChoice.value ||
     isFormula.value ||
     isRelation.value ||
@@ -92,6 +97,7 @@ const sheetOptions = computed(() => props.sheets ?? []);
 
 const title = computed(() => {
   if (isAi.value) return '编辑 AI 字段';
+  if (isAiComponent.value) return '编辑智能组件';
   if (isFormula.value) return '编辑公式';
   if (isRelation.value) return '编辑关联';
   if (isLookup.value) return '编辑查找引用';
@@ -132,6 +138,14 @@ watch(
       aiSourceIds.value = Array.isArray(ai.sourceFieldIds)
         ? [...ai.sourceFieldIds]
         : [];
+      return;
+    }
+
+    if (isAiComponent.value) {
+      aiComponentOptions.value = {
+        status: 'draft',
+        ...((opts.aiComponent as AiComponentOptions | undefined) ?? {}),
+      };
       return;
     }
 
@@ -258,6 +272,14 @@ function save(): void {
     return;
   }
 
+  if (isAiComponent.value) {
+    emit('save', {
+      ...base,
+      aiComponent: { ...aiComponentOptions.value },
+    });
+    return;
+  }
+
   if (isImage.value) {
     emit('save', {
       ...base,
@@ -370,6 +392,9 @@ onMounted(() => {
               {{ field?.name }} · 提示词支持
               <code v-text="'{{字段名}}'"></code>
             </template>
+            <template v-else-if="isAiComponent">
+              {{ field?.name }} · 对话生成沙箱组件并自动对接单元格
+            </template>
             <template v-else-if="isFormula">
               {{ field?.name }} · 以
               <code>=</code>
@@ -428,6 +453,15 @@ onMounted(() => {
             暂无其它字段可引用
           </p>
         </div>
+      </template>
+
+      <template v-else-if="isAiComponent">
+        <AiComponentFieldPanel
+          v-if="field?.id"
+          v-model="aiComponentOptions"
+          :field-id="field.id"
+          :field-name="field?.name ?? '智能组件'"
+        />
       </template>
 
       <template v-else-if="isFormula">

@@ -56,8 +56,7 @@ async function main(): Promise<void> {
       .send({
         account: `load${stamp}`,
         password: 'Passw0rd!123',
-        name: '压测管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     const token = owner.body.accessToken;
     const auth = { Authorization: `Bearer ${token}` };

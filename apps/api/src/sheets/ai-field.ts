@@ -45,7 +45,7 @@ export async function stripAiFieldInputs(
 
 /**
  * Fills empty (or source-changed) AI cells.
- * Default provider is local template rendering; set AI_FIELD_URL for HTTP fill.
+ * Priority: AI_FIELD_URL → ANALYSIS_LLM_* chat → local {{字段名}} template.
  */
 export async function applyAiFields(
   tx: FieldQueryClient,
@@ -76,7 +76,7 @@ export async function applyAiFields(
     const sourcesChanged =
       previousCells !== undefined &&
       sourceIds.some(
-        (id) => String(previousCells[id] ?? '') !== String(nextCells[id] ?? ''),
+        (id) => !cellValuesEqual(previousCells[id], nextCells[id]),
       );
 
     if (hasValue && !sourcesChanged) {
@@ -123,39 +123,59 @@ async function fillAiValue(input: {
   );
 
   const endpoint = process.env.AI_FIELD_URL?.trim();
-  if (!endpoint) {
-    return (
-      rendered || localFallback(input.sourceIds, input.cells, input.nameById)
-    );
+  if (endpoint) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: rendered,
+          model: input.model ?? process.env.AI_FIELD_MODEL ?? 'local',
+          values,
+        }),
+      });
+      if (response.ok) {
+        const data = (await response.json()) as {
+          text?: string;
+          content?: string;
+        };
+        const text = (data.text ?? data.content ?? '').trim();
+        if (text) return text;
+      }
+    } catch {
+      // fall through to ANALYSIS_LLM / local
+    }
   }
 
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: rendered,
-        model: input.model ?? process.env.AI_FIELD_MODEL ?? 'local',
-        values,
-      }),
-    });
-    if (!response.ok) {
-      return (
-        rendered || localFallback(input.sourceIds, input.cells, input.nameById)
+  const { callOpenAiChat, getAnalysisLlmConfig } = await import(
+    '../ai/openai-compatible'
+  );
+  const llm = getAnalysisLlmConfig();
+  if (llm) {
+    try {
+      const text = await callOpenAiChat(
+        llm.baseUrl,
+        llm.apiKey,
+        [
+          {
+            role: 'system',
+            content:
+              '你是表格 AI 填值助手。根据用户提示与单元格上下文，只输出应写入该单元格的最终文本，不要解释。',
+          },
+          { role: 'user', content: rendered },
+        ],
+        0.3,
+        input.model ?? process.env.AI_FIELD_MODEL ?? llm.model,
       );
+      if (text.trim()) return text.trim();
+    } catch {
+      // fall through to local
     }
-    const data = (await response.json()) as { text?: string; content?: string };
-    const text = (data.text ?? data.content ?? '').trim();
-    return (
-      text ||
-      rendered ||
-      localFallback(input.sourceIds, input.cells, input.nameById)
-    );
-  } catch {
-    return (
-      rendered || localFallback(input.sourceIds, input.cells, input.nameById)
-    );
   }
+
+  return (
+    rendered || localFallback(input.sourceIds, input.cells, input.nameById)
+  );
 }
 
 function renderPrompt(
@@ -193,6 +213,22 @@ function localFallback(
     .join('；');
 }
 
+function cellValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === undefined || a === null || a === '') {
+    return b === undefined || b === null || b === '';
+  }
+  if (b === undefined || b === null || b === '') return false;
+  if (typeof a !== 'object' && typeof b !== 'object') {
+    return String(a) === String(b);
+  }
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return String(a) === String(b);
+  }
+}
+
 function stringifyCell(value: unknown): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -201,6 +237,11 @@ function stringifyCell(value: unknown): string {
   }
   if (Array.isArray(value)) {
     return value.map(stringifyCell).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.rating === 'number') return `${obj.rating} 星`;
+    if (typeof obj.on === 'boolean') return obj.on ? '是' : '否';
   }
   try {
     return JSON.stringify(value);

@@ -1,8 +1,16 @@
 export type ChatRole = 'system' | 'user' | 'assistant';
 
+export type ChatTextPart = { type: 'text'; text: string };
+export type ChatImagePart = {
+  type: 'image_url';
+  image_url: { url: string; detail?: 'auto' | 'low' | 'high' };
+};
+export type ChatContentPart = ChatTextPart | ChatImagePart;
+
 export type ChatMessage = {
   role: ChatRole;
-  content: string;
+  /** Plain string or OpenAI-compatible multimodal parts. */
+  content: string | ChatContentPart[];
 };
 
 /** Returns credentials when ANALYSIS_LLM_* is configured. */
@@ -46,7 +54,10 @@ export async function callOpenAiChat(
     }),
   });
   if (!response.ok) {
-    throw new Error(`LLM HTTP ${response.status}`);
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `LLM HTTP ${response.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`,
+    );
   }
   const data = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;

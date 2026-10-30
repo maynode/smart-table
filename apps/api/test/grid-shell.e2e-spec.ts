@@ -34,8 +34,7 @@ describe('Grid shell support APIs (e2e)', () => {
       .send({
         account: `shell${stamp}`,
         password: 'Passw0rd!123',
-        name: '壳层用户',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     token = user.body.accessToken;
 
@@ -44,8 +43,7 @@ describe('Grid shell support APIs (e2e)', () => {
       .send({
         account: `shell_out${stamp}`,
         password: 'Passw0rd!123',
-        name: '外部人',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     outsiderToken = outsider.body.accessToken;
 
@@ -107,7 +105,8 @@ describe('Grid shell support APIs (e2e)', () => {
       .send({ body: '这里的序列号需要复核' });
     expect(comment.status).toBe(201);
     expect(comment.body.body).toBe('这里的序列号需要复核');
-    expect(comment.body.author.name).toBe('壳层用户');
+    expect(comment.body.author.account).toBe(`shell${stamp}`);
+    expect(comment.body.author.name).toBeUndefined();
 
     const comments = await request(app.getHttpServer())
       .get(`/sheets/${sheetId}/comments`)

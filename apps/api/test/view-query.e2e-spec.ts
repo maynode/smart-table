@@ -34,8 +34,7 @@ describe('View query (e2e)', () => {
       .send({
         account: `views${stamp}`,
         password: 'Passw0rd!123',
-        name: '视图管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     token = owner.body.accessToken;
 
@@ -289,8 +288,7 @@ describe('View query (e2e)', () => {
       .send({
         account: `views_outsider${stamp}`,
         password: 'Passw0rd!123',
-        name: '外部用户',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     await http()
       .post(`/sheets/${sheetId}/query`)

@@ -29,7 +29,7 @@ export class CommentsService {
     const trimmed = body.trim();
     const comment = await this.prisma.comment.create({
       data: { sheetId, authorId: userId, body: trimmed },
-      include: { author: { select: { id: true, name: true, account: true } } },
+      include: { author: { select: { id: true, account: true } } },
     });
 
     await this.live.emit({
@@ -43,7 +43,7 @@ export class CommentsService {
     await this.notifyMentions({
       sheetId,
       authorId: userId,
-      authorName: comment.author.name,
+      authorName: comment.author.account,
       commentId: comment.id,
       body: trimmed,
       mentionedUserIds,
@@ -65,7 +65,7 @@ export class CommentsService {
     const comments = await this.prisma.comment.findMany({
       where: { sheetId },
       orderBy: { createdAt: 'asc' },
-      include: { author: { select: { id: true, name: true, account: true } } },
+      include: { author: { select: { id: true, account: true } } },
     });
 
     return comments.map((comment) => ({
@@ -100,7 +100,7 @@ export class CommentsService {
 
       const members = await this.prisma.workspaceMember.findMany({
         where: { workspaceId: sheet.base.workspaceId },
-        include: { user: { select: { id: true, name: true, account: true } } },
+        include: { user: { select: { id: true, account: true } } },
       });
 
       const byId = new Map(members.map((row) => [row.userId, row.user]));
@@ -110,18 +110,13 @@ export class CommentsService {
         if (byId.has(id) && id !== input.authorId) recipients.add(id);
       }
 
-      // Also resolve `@Name` / `@account` tokens from the body.
+      // Resolve `@account` tokens from the body (longest first).
       const sorted = [...members].sort(
-        (a, b) => b.user.name.length - a.user.name.length,
+        (a, b) => b.user.account.length - a.user.account.length,
       );
       for (const row of sorted) {
         if (row.userId === input.authorId) continue;
-        const nameToken = `@${row.user.name}`;
-        const accountToken = `@${row.user.account}`;
-        if (
-          input.body.includes(nameToken) ||
-          input.body.includes(accountToken)
-        ) {
+        if (input.body.includes(`@${row.user.account}`)) {
           recipients.add(row.userId);
         }
       }

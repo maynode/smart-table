@@ -53,7 +53,6 @@ async function submit(): Promise<void> {
     auth.signIn(result.accessToken, {
       id: result.user.id,
       account: result.user.account,
-      name: result.user.name,
       avatarSeed: result.user.avatarSeed,
       avatarUrl: result.user.avatarUrl,
       installAdmin: result.user.installAdmin,

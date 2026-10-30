@@ -294,7 +294,6 @@ export class CollabSocket {
     userId: string,
     profile: {
       account?: string;
-      name?: string;
       avatarSeed?: string;
       avatarUrl?: string | null;
     },
@@ -305,8 +304,9 @@ export class CollabSocket {
       changed = true;
       return {
         ...peer,
-        ...(profile.account !== undefined ? { account: profile.account } : {}),
-        ...(profile.name !== undefined ? { name: profile.name } : {}),
+        ...(profile.account !== undefined
+          ? { account: profile.account, name: profile.account }
+          : {}),
         ...(profile.avatarSeed !== undefined
           ? { avatarSeed: profile.avatarSeed }
           : {}),
@@ -320,8 +320,9 @@ export class CollabSocket {
       if (c.userId !== userId) return c;
       return {
         ...c,
-        ...(profile.account !== undefined ? { account: profile.account } : {}),
-        ...(profile.name !== undefined ? { name: profile.name } : {}),
+        ...(profile.account !== undefined
+          ? { account: profile.account, name: profile.account }
+          : {}),
       };
     });
   }
@@ -450,7 +451,7 @@ export class CollabSocket {
         } else {
           waiter.resolve({
             ok: false,
-            holderName: msg.holder?.name || msg.holder?.account || '其他成员',
+            holderName: msg.holder?.account || '其他成员',
             holderUserId: msg.holder?.userId,
           });
         }

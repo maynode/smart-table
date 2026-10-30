@@ -16,7 +16,6 @@ model User {
   /// 登录账号（小写存储，不区分大小写）
   account             String   @unique
   passwordHash        String   @map("password_hash")
-  name                String
   /// 3D 卡通头像种子（DiceBear adventurer）
   avatarSeed          String   @default("") @map("avatar_seed")
   /// 自定义上传头像 URL（方图；有值时优先于种子）
@@ -32,6 +31,8 @@ model User {
   loginFailedCount    Int       @default(0) @map("login_failed_count")
   /// 登录锁定截止时间；未过期则拒绝登录
   loginLockedUntil    DateTime? @map("login_locked_until") @db.Timestamptz(6)
+  /// 系统管理员（后台用户/日志/反馈等）；亦可由 INSTALL_ADMIN_* 指定
+  installAdmin        Boolean   @default(false) @map("install_admin")
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

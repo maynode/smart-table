@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
-import { isInstallAdmin } from '../auth/install-admin';
+import {
+  configuredInstallAdminAccounts,
+  isEnvInstallAdminAccount,
+  isInstallAdmin,
+} from '../auth/install-admin';
 import { LiveBusService } from '../live/live-bus.service';
 import { notifyUser } from '../notifications/user-notify';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,7 +18,6 @@ import { PrismaService } from '../prisma/prisma.service';
 export type AdminUserRow = {
   id: string;
   account: string;
-  name: string;
   createdAt: Date;
   blacklistedAt: Date | null;
   loginLockedUntil: Date | null;
@@ -22,6 +25,17 @@ export type AdminUserRow = {
   workspaceCount: number;
   baseCount: number;
   installAdmin: boolean;
+};
+
+type UserAdminSelect = {
+  id: string;
+  account: string;
+  createdAt: Date;
+  blacklistedAt: Date | null;
+  loginLockedUntil: Date | null;
+  loginFailedCount: number;
+  installAdmin: boolean;
+  _count?: { memberships: number };
 };
 
 @Injectable()
@@ -32,15 +46,17 @@ export class AdminUsersService {
     private readonly live: LiveBusService,
   ) {}
 
-  async list(adminUserId: string, q?: string): Promise<{ items: AdminUserRow[] }> {
+  async list(
+    adminUserId: string,
+    q?: string,
+    identity?: string,
+  ): Promise<{ items: AdminUserRow[] }> {
     await this.assertInstallAdmin(adminUserId);
     const keyword = q?.trim() ?? '';
+    const identityKey = normalizeIdentity(identity);
     const where: Prisma.UserWhereInput = keyword
       ? {
-          OR: [
-            { account: { contains: keyword, mode: 'insensitive' } },
-            { name: { contains: keyword, mode: 'insensitive' } },
-          ],
+          account: { contains: keyword, mode: 'insensitive' },
         }
       : {};
 
@@ -51,49 +67,33 @@ export class AdminUsersService {
       select: {
         id: true,
         account: true,
-        name: true,
         createdAt: true,
         blacklistedAt: true,
         loginLockedUntil: true,
         loginFailedCount: true,
+        installAdmin: true,
         _count: { select: { memberships: true } },
       },
     });
 
     const ids = users.map((u) => u.id);
     const baseCountByUser = await this.countBasesByUser(ids);
+    const flags = await this.resolveInstallAdminFlags(users);
+    const now = Date.now();
 
-    const adminAccounts = (
-      process.env.INSTALL_ADMIN_ACCOUNTS ??
-      process.env.INSTALL_ADMIN_EMAILS ??
-      ''
-    )
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
-    let firstUserId: string | null = null;
-    if (!adminAccounts.length) {
-      const first = await this.prisma.user.findFirst({
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      firstUserId = first?.id ?? null;
+    let items: AdminUserRow[] = users.map((user) =>
+      this.toRow(user, {
+        workspaceCount: user._count.memberships,
+        baseCount: baseCountByUser.get(user.id) ?? 0,
+        installAdmin: flags.get(user.id) ?? false,
+      }),
+    );
+
+    if (identityKey) {
+      items = items.filter((row) =>
+        matchesIdentity(row, identityKey, now),
+      );
     }
-
-    const items: AdminUserRow[] = users.map((user) => ({
-      id: user.id,
-      account: user.account,
-      name: user.name,
-      createdAt: user.createdAt,
-      blacklistedAt: user.blacklistedAt,
-      loginLockedUntil: user.loginLockedUntil,
-      loginFailedCount: user.loginFailedCount,
-      workspaceCount: user._count.memberships,
-      baseCount: baseCountByUser.get(user.id) ?? 0,
-      installAdmin: adminAccounts.length
-        ? adminAccounts.includes(user.account.toLowerCase())
-        : user.id === firstUserId,
-    }));
     return { items };
   }
 
@@ -105,24 +105,7 @@ export class AdminUsersService {
     });
     if (!user) throw new NotFoundException('用户不存在');
     await this.auth.clearLoginLock(targetUserId);
-    const updated = await this.prisma.user.findUniqueOrThrow({
-      where: { id: targetUserId },
-      select: {
-        id: true,
-        account: true,
-        name: true,
-        createdAt: true,
-        blacklistedAt: true,
-        loginLockedUntil: true,
-        loginFailedCount: true,
-      },
-    });
-    return {
-      ...updated,
-      workspaceCount: 0,
-      baseCount: 0,
-      installAdmin: false,
-    } satisfies AdminUserRow;
+    return this.loadRow(targetUserId);
   }
 
   async impersonate(adminUserId: string, targetUserId: string) {
@@ -134,10 +117,8 @@ export class AdminUsersService {
       where: { id: targetUserId },
     });
     if (!user) throw new NotFoundException('用户不存在');
-    if (user.blacklistedAt) {
-      throw new BadRequestException('该用户在黑名单中，请先移出后再模拟登录');
-    }
-    return this.auth.issueForUser(user);
+    // 黑名单仅拦正常登录；管理员模拟登录仍可进入排查
+    return this.auth.issueForUser(user, { impersonatorId: adminUserId });
   }
 
   async setBlacklisted(
@@ -147,10 +128,10 @@ export class AdminUsersService {
   ) {
     await this.assertInstallAdmin(adminUserId);
     if (adminUserId === targetUserId) {
-      throw new BadRequestException('不能将自己加入黑名单');
+      throw new BadRequestException('不能禁止自己登录');
     }
     if (await isInstallAdmin(this.prisma, targetUserId)) {
-      throw new BadRequestException('不能将系统管理员加入黑名单');
+      throw new BadRequestException('不能禁止系统管理员登录');
     }
     const user = await this.prisma.user.findUnique({
       where: { id: targetUserId },
@@ -158,33 +139,68 @@ export class AdminUsersService {
     });
     if (!user) throw new NotFoundException('用户不存在');
 
-    const updated = await this.prisma.user.update({
+    await this.prisma.user.update({
       where: { id: targetUserId },
       data: { blacklistedAt: blacklisted ? new Date() : null },
+    });
+    return this.loadRow(targetUserId);
+  }
+
+  async setInstallAdmin(
+    adminUserId: string,
+    targetUserId: string,
+    installAdmin: boolean,
+  ) {
+    await this.assertInstallAdmin(adminUserId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
       select: {
         id: true,
         account: true,
-        name: true,
-        createdAt: true,
+        installAdmin: true,
         blacklistedAt: true,
-        loginLockedUntil: true,
-        loginFailedCount: true,
-        _count: { select: { memberships: true } },
       },
     });
-    const baseCountByUser = await this.countBasesByUser([updated.id]);
-    return {
-      id: updated.id,
-      account: updated.account,
-      name: updated.name,
-      createdAt: updated.createdAt,
-      blacklistedAt: updated.blacklistedAt,
-      loginLockedUntil: updated.loginLockedUntil,
-      loginFailedCount: updated.loginFailedCount,
-      workspaceCount: updated._count.memberships,
-      baseCount: baseCountByUser.get(updated.id) ?? 0,
-      installAdmin: false,
-    } satisfies AdminUserRow;
+    if (!user) throw new NotFoundException('用户不存在');
+
+    if (installAdmin) {
+      if (user.blacklistedAt) {
+        throw new BadRequestException(
+          '已禁止登录的用户不能设为系统管理员，请先允许登录',
+        );
+      }
+      if (user.installAdmin || isEnvInstallAdminAccount(user.account)) {
+        return this.loadRow(targetUserId);
+      }
+      await this.prisma.user.update({
+        where: { id: targetUserId },
+        data: { installAdmin: true },
+      });
+      return this.loadRow(targetUserId);
+    }
+
+    if (adminUserId === targetUserId) {
+      throw new BadRequestException('不能取消自己的系统管理员身份');
+    }
+    if (isEnvInstallAdminAccount(user.account)) {
+      throw new BadRequestException(
+        '该账号由环境变量 INSTALL_ADMIN_ACCOUNTS 指定，无法在此取消',
+      );
+    }
+    if (!user.installAdmin) {
+      return this.loadRow(targetUserId);
+    }
+
+    const remaining = await this.countEffectiveAdminsExcluding(targetUserId);
+    if (remaining < 1) {
+      throw new BadRequestException('至少保留一名系统管理员');
+    }
+
+    await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: { installAdmin: false },
+    });
+    return this.loadRow(targetUserId);
   }
 
   async sendMessage(
@@ -215,6 +231,114 @@ export class AdminUsersService {
       this.live,
     );
     return { ok: true as const };
+  }
+
+  private async loadRow(userId: string): Promise<AdminUserRow> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: {
+        id: true,
+        account: true,
+        createdAt: true,
+        blacklistedAt: true,
+        loginLockedUntil: true,
+        loginFailedCount: true,
+        installAdmin: true,
+        _count: { select: { memberships: true } },
+      },
+    });
+    const baseCountByUser = await this.countBasesByUser([user.id]);
+    const flags = await this.resolveInstallAdminFlags([user]);
+    return this.toRow(user, {
+      workspaceCount: user._count.memberships,
+      baseCount: baseCountByUser.get(user.id) ?? 0,
+      installAdmin: flags.get(user.id) ?? false,
+    });
+  }
+
+  private toRow(
+    user: UserAdminSelect,
+    extra: {
+      workspaceCount: number;
+      baseCount: number;
+      installAdmin: boolean;
+    },
+  ): AdminUserRow {
+    return {
+      id: user.id,
+      account: user.account,
+      createdAt: user.createdAt,
+      blacklistedAt: user.blacklistedAt,
+      loginLockedUntil: user.loginLockedUntil,
+      loginFailedCount: user.loginFailedCount,
+      workspaceCount: extra.workspaceCount,
+      baseCount: extra.baseCount,
+      installAdmin: extra.installAdmin,
+    };
+  }
+
+  /** 批量判定列表展示用的系统管理员标记（含 env / 首用户回退） */
+  private async resolveInstallAdminFlags(
+    users: Array<{ id: string; account: string; installAdmin: boolean }>,
+  ): Promise<Map<string, boolean>> {
+    const map = new Map<string, boolean>();
+    if (!users.length) return map;
+
+    const configured = configuredInstallAdminAccounts();
+    let firstUserId: string | null = null;
+    let anyDbAdmin = false;
+    if (!configured.length) {
+      anyDbAdmin = Boolean(
+        await this.prisma.user.findFirst({
+          where: { installAdmin: true },
+          select: { id: true },
+        }),
+      );
+      if (!anyDbAdmin) {
+        const first = await this.prisma.user.findFirst({
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        });
+        firstUserId = first?.id ?? null;
+      }
+    }
+
+    for (const user of users) {
+      const byDb = user.installAdmin;
+      const byEnv = configured.includes(user.account.toLowerCase());
+      const byFirst =
+        !configured.length && !anyDbAdmin && user.id === firstUserId;
+      map.set(user.id, byDb || byEnv || byFirst);
+    }
+    return map;
+  }
+
+  /** 取消某人后，系统是否仍至少有一名有效管理员 */
+  private async countEffectiveAdminsExcluding(
+    excludeUserId: string,
+  ): Promise<number> {
+    const configured = configuredInstallAdminAccounts();
+    const dbAdmins = await this.prisma.user.findMany({
+      where: {
+        installAdmin: true,
+        id: { not: excludeUserId },
+      },
+      select: { id: true, account: true },
+    });
+    const ids = new Set(dbAdmins.map((u) => u.id));
+
+    if (configured.length) {
+      const envUsers = await this.prisma.user.findMany({
+        where: {
+          account: { in: configured, mode: 'insensitive' },
+          id: { not: excludeUserId },
+        },
+        select: { id: true },
+      });
+      for (const u of envUsers) ids.add(u.id);
+    }
+
+    return ids.size;
   }
 
   private async countBasesByUser(
@@ -256,5 +380,46 @@ export class AdminUsersService {
         message: '仅系统管理员可访问',
       });
     }
+  }
+}
+
+export type AdminUserIdentity =
+  | 'admin'
+  | 'user'
+  | 'blacklisted'
+  | 'locked';
+
+function normalizeIdentity(raw?: string): AdminUserIdentity | null {
+  const value = raw?.trim().toLowerCase();
+  if (
+    value === 'admin' ||
+    value === 'user' ||
+    value === 'blacklisted' ||
+    value === 'locked'
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function matchesIdentity(
+  row: AdminUserRow,
+  identity: AdminUserIdentity,
+  nowMs: number,
+): boolean {
+  const locked =
+    row.loginLockedUntil != null &&
+    row.loginLockedUntil.getTime() > nowMs;
+  switch (identity) {
+    case 'admin':
+      return row.installAdmin;
+    case 'user':
+      return !row.installAdmin;
+    case 'blacklisted':
+      return row.blacklistedAt != null;
+    case 'locked':
+      return locked;
+    default:
+      return true;
   }
 }

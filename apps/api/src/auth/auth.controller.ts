@@ -67,7 +67,9 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: JwtPayload): Promise<PublicUser> {
-    return this.authService.getUser(user.sub);
+    return this.authService.getUser(user.sub, {
+      allowBlacklisted: Boolean(user.impersonatorId),
+    });
   }
 
   @Post('username')

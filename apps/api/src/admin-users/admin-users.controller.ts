@@ -21,8 +21,9 @@ export class AdminUsersController {
   list(
     @CurrentUser() user: JwtPayload,
     @Query('q') q?: string,
+    @Query('identity') identity?: string,
   ) {
-    return this.users.list(user.sub, q);
+    return this.users.list(user.sub, q, identity);
   }
 
   @Post(':id/impersonate')
@@ -61,5 +62,18 @@ export class AdminUsersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.users.unlockLogin(user.sub, id);
+  }
+
+  @Post(':id/install-admin')
+  setInstallAdmin(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { installAdmin?: boolean },
+  ) {
+    return this.users.setInstallAdmin(
+      user.sub,
+      id,
+      body.installAdmin !== false,
+    );
   }
 }

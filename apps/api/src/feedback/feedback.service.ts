@@ -95,7 +95,7 @@ export class FeedbackService {
       take: 200,
       include: {
         user: {
-          select: { id: true, account: true, name: true },
+          select: { id: true, account: true },
         },
       },
     });
@@ -107,7 +107,6 @@ export class FeedbackService {
             ? {
                 id: row.user.id,
                 account: row.user.account,
-                name: row.user.name,
               }
             : null,
         ),
@@ -130,7 +129,7 @@ export class FeedbackService {
         data: { status },
         include: {
           user: {
-            select: { id: true, account: true, name: true },
+            select: { id: true, account: true },
           },
         },
       });
@@ -140,7 +139,6 @@ export class FeedbackService {
           ? {
               id: row.user.id,
               account: row.user.account,
-              name: row.user.name,
             }
           : null,
       );
@@ -216,7 +214,7 @@ export class FeedbackService {
       createdAt: Date;
       updatedAt: Date;
     },
-    user: { id: string; account: string; name: string } | null,
+    user: { id: string; account: string } | null,
   ) {
     return {
       id: row.id,

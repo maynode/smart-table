@@ -4,7 +4,7 @@ import type { FieldOptions } from '../api/types';
 
 export interface FormControlMember {
   userId: string;
-  name: string;
+  account: string;
 }
 
 export interface FormControlRelationChoice {
@@ -226,7 +226,7 @@ function clearAttachment(): void {
         :key="member.userId"
         :value="member.userId"
       >
-        {{ member.name }}
+        {{ member.account }}
       </option>
     </select>
 

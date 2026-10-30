@@ -20,6 +20,7 @@ import { TemplatesModule } from './templates/templates.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { AiComponentModule } from './ai-component/ai-component.module';
 import { SheetsModule } from './sheets/sheets.module';
 import { StorageModule } from './storage/storage.module';
 import { ViewsModule } from './views/views.module';
@@ -39,6 +40,7 @@ import { LiveModule } from './live/live.module';
     WorkspacesModule,
     BasesModule,
     SheetsModule,
+    AiComponentModule,
     CollabModule,
     CommentsModule,
     AutomationsModule,

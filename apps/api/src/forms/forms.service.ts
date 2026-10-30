@@ -430,12 +430,12 @@ export class FormsService implements OnModuleDestroy {
       ? (
           await this.prisma.workspaceMember.findMany({
             where: { workspaceId: form.base.workspaceId },
-            include: { user: { select: { id: true, name: true } } },
+            include: { user: { select: { id: true, account: true } } },
             take: 500,
           })
         ).map((item) => ({
           userId: item.user.id,
-          name: item.user.name,
+          account: item.user.account,
         }))
       : [];
 

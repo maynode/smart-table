@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { AiComponentOptions } from 'shared';
 import CanvasGrid from './CanvasGrid.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FieldOptionsEditor from './FieldOptionsEditor.vue';
@@ -139,6 +140,17 @@ const emit = defineEmits<{
 }>();
 
 const gridRef = ref<InstanceType<typeof CanvasGrid> | null>(null);
+function openAiComponentHost(payload: {
+  record: RecordDto;
+  field: FieldDto;
+}): void {
+  const opts = (payload.field.options?.aiComponent ??
+    {}) as AiComponentOptions;
+  if (opts.status !== 'published' || !opts.bundle?.html) {
+    toast('请先在字段配置中发布智能组件');
+    openOptions(payload.field);
+  }
+}
 const settingsOpen = ref(false);
 const fieldPickerOpen = ref(false);
 const automationButtons = ref<
@@ -262,7 +274,7 @@ const COLORS = [
 const visibleFields = computed(() => props.fields.filter((field) => !field.hidden));
 const personNames = computed<Record<string, string>>(() =>
   Object.fromEntries(
-    (props.members ?? []).map((member) => [member.userId, member.name]),
+    (props.members ?? []).map((member) => [member.userId, member.account]),
   ),
 );
 
@@ -772,10 +784,39 @@ function sortColumn(field: FieldDto, direction: 'asc' | 'desc'): void {
   closeColumnMenu();
 }
 
+function fieldNeedsOptionsEditor(type: string): boolean {
+  return (
+    type === 'aiComponent' ||
+    type === 'ai' ||
+    type === 'formula' ||
+    type === 'relation' ||
+    type === 'lookup' ||
+    type === 'select' ||
+    type === 'multiSelect' ||
+    type === 'image'
+  );
+}
+
+function editColumnLabel(field: FieldDto): string {
+  if (field.type === 'aiComponent') return '编辑智能组件';
+  if (field.type === 'ai') return '编辑 AI 配置';
+  if (field.type === 'formula') return '编辑公式';
+  if (field.type === 'relation') return '编辑关联';
+  if (field.type === 'lookup') return '编辑查找引用';
+  if (field.type === 'select' || field.type === 'multiSelect') return '编辑选项';
+  if (field.type === 'image') return '编辑图片设置';
+  return '编辑字段';
+}
+
 function editColumnFromMenu(field: FieldDto): void {
   if (!props.editable) return;
   const menu = columnMenu.value;
   closeColumnMenu();
+  // 智能组件 / AI / 公式等：进配置坞，而不是只改名的类型选择器
+  if (fieldNeedsOptionsEditor(field.type)) {
+    openOptions(field);
+    return;
+  }
   openFieldEditor({
     field,
     anchor: menu
@@ -1355,6 +1396,7 @@ defineExpose({
                   field.type === 'select' ||
                   field.type === 'multiSelect' ||
                   field.type === 'ai' ||
+                  field.type === 'aiComponent' ||
                   field.type === 'formula' ||
                   field.type === 'relation' ||
                   field.type === 'lookup'
@@ -1368,13 +1410,15 @@ defineExpose({
                 {{
                   field.type === 'ai'
                     ? '编辑 AI 配置'
-                    : field.type === 'formula'
-                      ? '编辑公式'
-                      : field.type === 'relation'
-                        ? '编辑关联'
-                        : field.type === 'lookup'
-                          ? '编辑查找引用'
-                          : '编辑选项'
+                    : field.type === 'aiComponent'
+                      ? '编辑智能组件'
+                      : field.type === 'formula'
+                        ? '编辑公式'
+                        : field.type === 'relation'
+                          ? '编辑关联'
+                          : field.type === 'lookup'
+                            ? '编辑查找引用'
+                            : '编辑选项'
                 }}
               </button>
               <button
@@ -1709,6 +1753,7 @@ defineExpose({
         @delete-records="emit('deleteRecords', $event)"
         @delete-field="deletingField = $event"
         @peer-cursor="emit('peerCursor', $event)"
+        @open-ai-component="openAiComponentHost"
       />
     </div>
 
@@ -1786,7 +1831,9 @@ defineExpose({
         @click="editColumnFromMenu(columnMenu.field)"
       >
         <span class="column-menu-icon">✎</span>
-        <span class="column-menu-label">编辑字段</span>
+        <span class="column-menu-label">{{
+          editColumnLabel(columnMenu.field)
+        }}</span>
       </button>
       <div
         class="column-menu-row has-sub"
@@ -2432,11 +2479,11 @@ defineExpose({
 .column-menu-mask {
   position: fixed;
   inset: 0;
-  z-index: 55;
+  z-index: 90;
 }
 .column-menu {
   position: fixed;
-  z-index: 56;
+  z-index: 91;
   min-width: 200px;
   padding: 6px 0 8px;
   background: #fff;

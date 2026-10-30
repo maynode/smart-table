@@ -24,11 +24,15 @@ describe('Workspace + Base + members (e2e)', () => {
 
   async function register(
     account: string,
-    name: string,
   ): Promise<{ token: string; userId: string }> {
     const res = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ account, password: 'Passw0rd!123', name, securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo' });
+      .send({
+        account,
+        password: 'Passw0rd!123',
+        securityQuestion: '你小学就读的学校名称是？',
+        securityAnswer: 'demo',
+      });
 
     expect(res.status).toBe(201);
     return { token: res.body.accessToken, userId: res.body.user.id };
@@ -46,11 +50,11 @@ describe('Workspace + Base + members (e2e)', () => {
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
-    ownerToken = (await register(ownerAccount, '所有者')).token;
-    const member = await register(memberAccount, '成员');
+    ownerToken = (await register(ownerAccount)).token;
+    const member = await register(memberAccount);
     memberToken = member.token;
     memberUserId = member.userId;
-    outsiderToken = (await register(outsiderAccount, '外部人')).token;
+    outsiderToken = (await register(outsiderAccount)).token;
   });
 
   afterAll(async () => {

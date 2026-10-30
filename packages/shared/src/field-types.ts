@@ -34,6 +34,7 @@ export const FIELD_TYPES = [
   'createdAt',
   'lastEditedAt',
   'ai',
+  'aiComponent',
 ] as const;
 
 export type FieldType = (typeof FIELD_TYPES)[number];
@@ -68,6 +69,7 @@ export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   createdAt: '创建时间',
   lastEditedAt: '最后编辑时间',
   ai: 'AI 字段',
+  aiComponent: '智能组件',
 };
 
 /** Fields maintained by the system, not typed in by users. */
@@ -118,6 +120,7 @@ export function isChoiceFieldType(type: FieldType): boolean {
 export const FORM_NON_FILLABLE_FIELD_TYPES: readonly FieldType[] = [
   ...SYSTEM_FIELD_TYPES,
   ...COMPUTED_FIELD_TYPES,
+  'aiComponent',
 ];
 
 export function isFormFillableFieldType(type: string): boolean {
@@ -170,6 +173,13 @@ export interface AiFieldOptions {
   sourceFieldIds?: string[];
 }
 
+export type {
+  AiComponentBridgeManifest,
+  AiComponentBundle,
+  AiComponentGridContract,
+  AiComponentOptions,
+} from './ai-component-contract';
+
 export interface FieldOptions {
   choices?: FieldOption[];
   precision?: number;
@@ -183,6 +193,8 @@ export interface FieldOptions {
   relation?: RelationOptions;
   autoNumber?: AutoNumberOptions;
   ai?: AiFieldOptions;
+  /** 对话生成的可交互沙箱组件（与填值型 `ai` 分开） */
+  aiComponent?: import('./ai-component-contract').AiComponentOptions;
   min?: number;
   max?: number;
   [key: string]: unknown;

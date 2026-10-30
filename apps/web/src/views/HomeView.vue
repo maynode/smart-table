@@ -866,14 +866,12 @@ function refreshAvatarCandidates(): void {
 function applyAvatarUser(user: {
   id: string;
   account: string;
-  name: string;
   avatarSeed: string;
   avatarUrl?: string | null;
 }): void {
   auth.updateUser({
     id: user.id,
     account: user.account,
-    name: user.name,
     avatarSeed: user.avatarSeed,
     avatarUrl: user.avatarUrl ?? null,
   });
@@ -955,7 +953,7 @@ async function submitAvatarCrop(blob: Blob): Promise<void> {
 }
 
 function openUsernameEditor(): void {
-  usernameDraft.value = auth.state.user?.account ?? auth.state.user?.name ?? '';
+  usernameDraft.value = auth.state.user?.account ?? '';
   usernameBusy.value = false;
   usernameOpen.value = true;
 }
@@ -979,7 +977,6 @@ async function submitUsername(): Promise<void> {
     auth.updateUser({
       id: user.id,
       account: user.account,
-      name: user.name,
       avatarSeed: user.avatarSeed,
       avatarUrl: user.avatarUrl ?? null,
     });
@@ -1111,8 +1108,6 @@ function onHomeLive(event: LiveEvent): void {
           typeof meta.account === 'string'
             ? meta.account
             : auth.state.user.account,
-        name:
-          typeof meta.name === 'string' ? meta.name : auth.state.user.name,
         avatarSeed:
           typeof meta.avatarSeed === 'string'
             ? meta.avatarSeed
@@ -1196,7 +1191,7 @@ onUnmounted(() => {
             @click="toggleUserMenu"
           >
             <span class="user-name-text">
-              {{ auth.state.user?.name || auth.state.user?.account }}
+              {{ auth.state.user?.account }}
             </span>
             <span class="avatar-btn" aria-hidden="true">
               <img

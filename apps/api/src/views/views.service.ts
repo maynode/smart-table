@@ -64,8 +64,21 @@ export class ViewsService {
     );
 
     const fields = sheet.fields as Field[];
+    const fieldMeta = fields.map((field) => ({
+      id: field.id,
+      type: field.type,
+      options: field.options as {
+        choices?: Array<{ id?: unknown; name?: unknown }>;
+        aiComponent?: {
+          gridContract?: {
+            sortKey?: { path?: string; type?: string };
+            filter?: { path?: string; valueType?: string };
+          };
+        };
+      } | null,
+    }));
     const where = query.filters
-      ? buildFilterSql(query.filters)
+      ? buildFilterSql(query.filters, fieldMeta)
       : Prisma.sql`TRUE`;
     const searchRaw = (query.search ?? '').trim();
     const searchSql = searchRaw
@@ -73,16 +86,7 @@ export class ViewsService {
       : Prisma.sql``;
     const order =
       query.sorts && query.sorts.length > 0
-        ? buildSortSql(
-            query.sorts,
-            fields.map((field) => ({
-              id: field.id,
-              type: field.type,
-              options: field.options as {
-                choices?: Array<{ id?: unknown; name?: unknown }>;
-              } | null,
-            })),
-          )
+        ? buildSortSql(query.sorts, fieldMeta)
         : Prisma.sql`ORDER BY id ASC`;
 
     // 无分页截断：按视图排序一次取齐；Canvas 侧虚拟滚动承载渲染性能

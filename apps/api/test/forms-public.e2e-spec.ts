@@ -72,8 +72,7 @@ describe('Forms public share and submit (e2e)', () => {
       .send({
         account: `forms${stamp}`,
         password: 'Passw0rd!123',
-        name: '表单管理员',
-        securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
+                securityQuestion: '你小学就读的学校名称是？', securityAnswer: 'demo',
         });
     token = user.body.accessToken;
 

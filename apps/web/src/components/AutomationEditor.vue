@@ -766,7 +766,9 @@ function removeButton(step: UiStep, index: number): void {
 }
 
 function memberName(userId: string): string {
-  return members.value.find((member) => member.userId === userId)?.name ?? userId;
+  return (
+    members.value.find((member) => member.userId === userId)?.account ?? userId
+  );
 }
 
 function toggleUser(step: UiStep, userId: string): void {
@@ -1778,7 +1780,7 @@ onMounted(load);
                       :checked="step.userIds.includes(member.userId)"
                       @change="toggleUser(step, member.userId)"
                     />
-                    {{ member.name }}
+                    {{ member.account }}
                   </label>
                 </div>
               </div>

@@ -43,9 +43,9 @@ export async function actorDisplayName(
 ): Promise<string> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { name: true, account: true },
+    select: { account: true },
   });
-  return user?.name?.trim() || user?.account || '管理员';
+  return user?.account || '管理员';
 }
 
 /**

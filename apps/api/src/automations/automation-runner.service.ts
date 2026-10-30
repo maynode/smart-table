@@ -878,11 +878,11 @@ export class AutomationRunnerService {
       flatValues['操作人'] = context.submitterUserId;
       const submitter = await tx.user.findUnique({
         where: { id: context.submitterUserId },
-        select: { name: true },
+        select: { account: true },
       });
-      if (submitter?.name) {
-        flatValues['填写者'] = submitter.name;
-        flatValues['操作人'] = submitter.name;
+      if (submitter?.account) {
+        flatValues['填写者'] = submitter.account;
+        flatValues['操作人'] = submitter.account;
       }
     }
     for (const [name, value] of triggerByName.entries()) {

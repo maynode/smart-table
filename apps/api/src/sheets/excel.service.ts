@@ -5,6 +5,11 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import {
+  formatExportDisplay,
+  parseGridContract,
+  type AiComponentOptions,
+} from 'shared';
 import { LiveBusService } from '../live/live-bus.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -210,6 +215,24 @@ export class ExcelService {
 
   private toExcelValue(field: SheetField, value: unknown): unknown {
     if (value === undefined || value === null || value === '') return null;
+
+    if (field.type === 'aiComponent') {
+      const opts =
+        field.options && typeof field.options === 'object'
+          ? ((field.options as { aiComponent?: AiComponentOptions })
+              .aiComponent ?? {})
+          : {};
+      const contract = parseGridContract(opts.gridContract);
+      if (contract) return formatExportDisplay(value, contract);
+      if (typeof value === 'object') {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return null;
+        }
+      }
+      return value;
+    }
 
     if (field.type === 'select') {
       return this.choiceName(field.options, value);

@@ -223,7 +223,7 @@ const availableFields = computed(() =>
       !configuredIds.value.has(field.id) && isFormFillableFieldType(field.type),
   ),
 );
-const previewMembers = ref<Array<{ userId: string; name: string }>>([]);
+const previewMembers = ref<Array<{ userId: string; account: string }>>([]);
 const previewRelationChoices = ref<
   Record<string, Array<{ id: string; label: string }>>
 >({});
@@ -243,7 +243,7 @@ async function loadPreviewExtras(): Promise<void> {
       const members = await endpoints.listMembers(workspaceId);
       previewMembers.value = members.map((item: MemberDto) => ({
         userId: item.userId,
-        name: item.name,
+        account: item.account,
       }));
     } catch {
       previewMembers.value = [];

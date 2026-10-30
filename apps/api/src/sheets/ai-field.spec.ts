@@ -75,4 +75,30 @@ describe('ai-field', () => {
     );
     expect(next['f-ai']).toBe('旧摘要');
   });
+
+  it('refills when object source (aiComponent) changes', async () => {
+    const objectFields: FieldRow[] = [
+      { id: 'f-rate', name: '满意度', type: 'aiComponent', options: null },
+      {
+        id: 'f-ai',
+        name: '摘要',
+        type: 'ai',
+        options: {
+          ai: {
+            prompt: '评分{{满意度}}',
+            sourceFieldIds: ['f-rate'],
+            provider: 'local',
+          },
+        },
+      },
+    ];
+    const tx = mockTx(objectFields);
+    const next = await applyAiFields(
+      tx as never,
+      'sheet-1',
+      { 'f-rate': { rating: 5 }, 'f-ai': '旧摘要' },
+      { 'f-rate': { rating: 4 }, 'f-ai': '旧摘要' },
+    );
+    expect(next['f-ai']).toBe('评分5 星');
+  });
 });

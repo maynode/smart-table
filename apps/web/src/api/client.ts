@@ -1,7 +1,6 @@
 export interface StoredUser {
   id: string;
   account: string;
-  name: string;
   avatarSeed?: string;
   avatarUrl?: string | null;
   installAdmin?: boolean;

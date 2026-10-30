@@ -1,4 +1,5 @@
 export * from './field-types';
+export * from './ai-component-contract';
 export * from './automation-types';
 export * from './form-success';
 export * from './form-display';
