@@ -17,6 +17,8 @@ export type AdminUserRow = {
   name: string;
   createdAt: Date;
   blacklistedAt: Date | null;
+  loginLockedUntil: Date | null;
+  loginFailedCount: number;
   workspaceCount: number;
   baseCount: number;
   installAdmin: boolean;
@@ -52,6 +54,8 @@ export class AdminUsersService {
         name: true,
         createdAt: true,
         blacklistedAt: true,
+        loginLockedUntil: true,
+        loginFailedCount: true,
         _count: { select: { memberships: true } },
       },
     });
@@ -82,6 +86,8 @@ export class AdminUsersService {
       name: user.name,
       createdAt: user.createdAt,
       blacklistedAt: user.blacklistedAt,
+      loginLockedUntil: user.loginLockedUntil,
+      loginFailedCount: user.loginFailedCount,
       workspaceCount: user._count.memberships,
       baseCount: baseCountByUser.get(user.id) ?? 0,
       installAdmin: adminAccounts.length
@@ -89,6 +95,34 @@ export class AdminUsersService {
         : user.id === firstUserId,
     }));
     return { items };
+  }
+
+  async unlockLogin(adminUserId: string, targetUserId: string) {
+    await this.assertInstallAdmin(adminUserId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('用户不存在');
+    await this.auth.clearLoginLock(targetUserId);
+    const updated = await this.prisma.user.findUniqueOrThrow({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        account: true,
+        name: true,
+        createdAt: true,
+        blacklistedAt: true,
+        loginLockedUntil: true,
+        loginFailedCount: true,
+      },
+    });
+    return {
+      ...updated,
+      workspaceCount: 0,
+      baseCount: 0,
+      installAdmin: false,
+    } satisfies AdminUserRow;
   }
 
   async impersonate(adminUserId: string, targetUserId: string) {
@@ -133,6 +167,8 @@ export class AdminUsersService {
         name: true,
         createdAt: true,
         blacklistedAt: true,
+        loginLockedUntil: true,
+        loginFailedCount: true,
         _count: { select: { memberships: true } },
       },
     });
@@ -143,6 +179,8 @@ export class AdminUsersService {
       name: updated.name,
       createdAt: updated.createdAt,
       blacklistedAt: updated.blacklistedAt,
+      loginLockedUntil: updated.loginLockedUntil,
+      loginFailedCount: updated.loginFailedCount,
       workspaceCount: updated._count.memberships,
       baseCount: baseCountByUser.get(updated.id) ?? 0,
       installAdmin: false,

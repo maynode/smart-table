@@ -8,37 +8,51 @@
 | --- | --- |
 | `ActivityLogService` | 写库 / 管理端查询（失败只打 warn，不阻断业务） |
 | `ActivityInterceptor` | 全局拦截前台 HTTP；成功响应后按路由生成中文摘要 |
-| `POST /activity/track` | 前端埋点（页面打开、面板等；有简易限流） |
+| `POST /activity/track` | 前端埋点（页面打开等；有简易限流） |
 | 协同 `user_changes` | 同一用户同一表 8s 内合并为一条 `sheet.collab.commit` |
+| `ActivityCleanupService` | 定时/手动清理过期日志 |
 
 表：`activity_logs`（与工作区合规审计 `audit_logs` 分开）。
 
-**记录策略**
+## 记录策略
 
 - 写操作（POST/PUT/PATCH/DELETE）默认记
-- GET 默认不记（避免 live/列表轮询刷屏）；白名单：表格导出
+- GET 默认不记；白名单：表格导出
 - 「打开页面」靠前端 `page.view`
-- 名义写、实为查询的接口跳过：视图 query、仪表盘 widget query、通知已读、密保问询、公开视图校验、表单成功页预览
+- 查询类写接口跳过（widget query、通知已读等）
 - `/admin/*` 永不记
-- `workspaceId` / `baseId` / `sheetId` 仅在合法 UUID 时落库，避免整行写失败
 
-## 摘要示例
+## 定时清理（保留窗口）
 
-- `alice 新建了数据表「销售明细」`
-- `bob 提交了表格变更`
-- `carol 在协同编辑中提交了 12 处变更`
-- `dave 打开了页面「智能表」`
+按 **Asia/Shanghai** 自然月：
 
-机器字段：`action` / `op(create|update|delete|read|other)` / `source(api|client|collab)`。
+| 配置 | 默认 | 含义 |
+| --- | --- | --- |
+| `enabled` | true | 是否启用 |
+| `dayOfMonth` | 1 | 每月几号跑 |
+| `hour`/`minute`/`second` | 02:00:00 | 当天开始时间（上海时区） |
+| `retentionMonths` | 2 | 保留月数（**含当月**） |
+
+**`retentionMonths=2`：** 保留「本月 + 上月」；每月 1 日 02:00 删除 **上上个月及更早**  
+（例：10 月 1 日 → cutoff = 9 月 1 日 00:00 上海 → 删 8 月及更早）。
+
+同一自然月只执行一次；管理员可在「日志管理」页改配置或「立即清理」。  
+页面会展示：**下一次清理时间**、**将清理「某时刻及之前」的日志**。  
+环境变量：`ACTIVITY_LOG_CLEANUP_TIME=02:00:00` 等；调度可用 `ACTIVITY_LOG_CLEANUP_SCHEDULER=false` 关闭。
 
 ## API
 
 ```http
-POST /activity/track
-Authorization: Bearer …
-{ "event": "page.view", "path": "/", "title": "首页" }
-
-GET /admin/activity-logs?q=&op=create&source=api&limit=50&cursor=
+GET  /admin/activity-logs?q=&op=&source=&from=&to=&limit=&cursor=
 ```
 
-列表游标格式：`{createdAtISO}|{id}`。仅安装管理员可查。UI：`/admin/activity`。
+`from` / `to`：ISO 时间或 `YYYY-MM-DD`（按日起止）。
+
+```http
+GET  /admin/activity-logs/cleanup-settings
+PATCH /admin/activity-logs/cleanup-settings
+POST /admin/activity-logs/cleanup-run
+POST /activity/track
+```
+
+列表游标：`{createdAtISO}|{id}`。仅安装管理员。UI：`/admin/activity`。

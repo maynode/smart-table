@@ -28,6 +28,10 @@ model User {
   wecomUserId         String?  @unique @map("wecom_user_id")
   /// 加入黑名单时间；非空则禁止登录
   blacklistedAt       DateTime? @map("blacklisted_at") @db.Timestamptz(6)
+  /// 连续登录失败次数（成功登录清零）
+  loginFailedCount    Int       @default(0) @map("login_failed_count")
+  /// 登录锁定截止时间；未过期则拒绝登录
+  loginLockedUntil    DateTime? @map("login_locked_until") @db.Timestamptz(6)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -633,6 +637,16 @@ model ActivityLog {
   @@index([action, createdAt])
   @@index([op, createdAt])
   @@map("activity_logs")
+}
+
+/// 安装级键值配置（操作日志清理策略等）
+model AppSetting {
+  key       String   @id
+  value     Json     @default("{}")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_settings")
 }
 
 model QuotaPolicy {

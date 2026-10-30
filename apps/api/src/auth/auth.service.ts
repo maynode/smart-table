@@ -158,12 +158,68 @@ export class AuthService {
       );
     }
 
+    const lockedUntil = user.loginLockedUntil;
+    if (lockedUntil && lockedUntil.getTime() > Date.now()) {
+      const mins = Math.max(
+        1,
+        Math.ceil((lockedUntil.getTime() - Date.now()) / 60_000),
+      );
+      throw new UnauthorizedException(
+        `登录失败次数过多，请 ${mins} 分钟后再试，或联系管理员解锁`,
+      );
+    }
+
     const valid = await verifyPassword(user.passwordHash, password);
     if (!valid) {
+      await this.registerLoginFailure(user.id, user.loginFailedCount ?? 0);
       throw new UnauthorizedException('密码错误');
     }
 
+    if ((user.loginFailedCount ?? 0) > 0 || user.loginLockedUntil) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { loginFailedCount: 0, loginLockedUntil: null },
+      });
+    }
+
     return this.issueToken(user);
+  }
+
+  /** 管理员解除登录锁定 */
+  async clearLoginLock(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { loginFailedCount: 0, loginLockedUntil: null },
+    });
+  }
+
+  private async registerLoginFailure(
+    userId: string,
+    previousCount: number,
+  ): Promise<void> {
+    const maxFails = Math.min(
+      Math.max(Number(process.env.LOGIN_MAX_FAILURES ?? 5) || 5, 3),
+      20,
+    );
+    const lockMinutes = Math.min(
+      Math.max(Number(process.env.LOGIN_LOCK_MINUTES ?? 15) || 15, 1),
+      24 * 60,
+    );
+    const nextCount = previousCount + 1;
+    if (nextCount >= maxFails) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          loginFailedCount: nextCount,
+          loginLockedUntil: new Date(Date.now() + lockMinutes * 60_000),
+        },
+      });
+      return;
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { loginFailedCount: nextCount, loginLockedUntil: null },
+    });
   }
 
   async getRecoveryQuestion(accountRaw: string): Promise<{ question: string }> {

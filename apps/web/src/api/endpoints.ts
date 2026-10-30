@@ -36,6 +36,7 @@ import type {
   FeedbackDto,
   AdminUserDto,
   ActivityLogDto,
+  ActivityCleanupSettingsDto,
   AnalysisReportDto,
   AnalysisReportListItemDto,
   AnalysisMessageAttachmentDto,
@@ -854,6 +855,11 @@ export const endpoints = {
       body: { content },
     }),
 
+  unlockAdminUserLogin: (id: string) =>
+    api<AdminUserDto>(`/admin/users/${id}/unlock-login`, {
+      method: 'POST',
+    }),
+
   trackActivity: (body: {
     event: string;
     path?: string;
@@ -870,6 +876,8 @@ export const endpoints = {
     op?: string;
     action?: string;
     source?: string;
+    from?: string;
+    to?: string;
     limit?: number;
     cursor?: string;
   } = {}) => {
@@ -878,6 +886,8 @@ export const endpoints = {
     if (params.op) qs.set('op', params.op);
     if (params.action) qs.set('action', params.action);
     if (params.source) qs.set('source', params.source);
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
     if (params.limit) qs.set('limit', String(params.limit));
     if (params.cursor) qs.set('cursor', params.cursor);
     const query = qs.toString();
@@ -885,6 +895,44 @@ export const endpoints = {
       `/admin/activity-logs${query ? `?${query}` : ''}`,
     );
   },
+
+  getActivityCleanupSettings: (params?: {
+    dayOfMonth?: number;
+    time?: string;
+    retentionMonths?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.dayOfMonth != null) {
+      qs.set('dayOfMonth', String(params.dayOfMonth));
+    }
+    if (params?.time) qs.set('time', params.time);
+    if (params?.retentionMonths != null) {
+      qs.set('retentionMonths', String(params.retentionMonths));
+    }
+    const query = qs.toString();
+    return api<{
+      settings: ActivityCleanupSettingsDto;
+      nextRunAt: string;
+      deleteBefore: string;
+    }>(`/admin/activity-logs/cleanup-settings${query ? `?${query}` : ''}`);
+  },
+
+  updateActivityCleanupSettings: (body: {
+    enabled?: boolean;
+    dayOfMonth?: number;
+    time?: string;
+    retentionMonths?: number;
+  }) =>
+    api<ActivityCleanupSettingsDto>(
+      '/admin/activity-logs/cleanup-settings',
+      { method: 'PATCH', body },
+    ),
+
+  runActivityCleanup: () =>
+    api<{ deleted: number; cutoff: string }>(
+      '/admin/activity-logs/cleanup-run',
+      { method: 'POST' },
+    ),
 
   markNotificationRead: (id: string) =>
     api<{ read: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),

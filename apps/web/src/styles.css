@@ -485,6 +485,11 @@ body,
   background: var(--bg);
 }
 
+.admin-toolbar input[type='datetime-local'] {
+  min-width: 190px;
+  width: auto;
+}
+
 .admin-toolbar-spacer {
   flex: 1;
 }
@@ -718,6 +723,98 @@ body,
   gap: 8px;
   padding-top: 12px;
   border-top: 1px solid #eef0f3;
+}
+
+.admin-cleanup-card {
+  margin-bottom: 14px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.04);
+}
+
+.admin-cleanup-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.admin-cleanup-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+}
+
+.admin-cleanup-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.admin-cleanup-grid input[type='number'],
+.admin-cleanup-grid input[type='time'] {
+  width: 88px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.admin-cleanup-grid input[type='time'] {
+  width: 128px;
+}
+
+.admin-cleanup-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  height: 32px;
+  color: var(--text) !important;
+  font-size: 13px !important;
+}
+
+.admin-cleanup-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.admin-cleanup-explain {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--bg-muted);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.admin-cleanup-explain p {
+  margin: 0 0 4px;
+}
+
+.admin-cleanup-explain p:last-child {
+  margin-bottom: 0;
+}
+
+.admin-cleanup-label {
+  display: inline-block;
+  min-width: 7.5em;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.admin-cleanup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* 操作日志 */

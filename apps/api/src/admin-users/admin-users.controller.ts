@@ -54,4 +54,12 @@ export class AdminUsersController {
   ) {
     return this.users.sendMessage(user.sub, id, body.content ?? '');
   }
+
+  @Post(':id/unlock-login')
+  unlockLogin(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.users.unlockLogin(user.sub, id);
+  }
 }

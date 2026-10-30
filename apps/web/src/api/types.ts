@@ -26,9 +26,23 @@ export interface AdminUserDto {
   name: string;
   createdAt: string;
   blacklistedAt: string | null;
+  loginLockedUntil: string | null;
+  loginFailedCount: number;
   workspaceCount: number;
   baseCount: number;
   installAdmin: boolean;
+}
+
+export interface ActivityCleanupSettingsDto {
+  enabled: boolean;
+  dayOfMonth: number;
+  hour: number;
+  minute: number;
+  second: number;
+  retentionMonths: number;
+  lastRunAt: string | null;
+  lastDeleted: number;
+  lastCutoff: string | null;
 }
 
 export interface ActivityLogDto {

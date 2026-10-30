@@ -206,6 +206,8 @@ export class ActivityLogService implements OnModuleDestroy {
       action?: string;
       actorId?: string;
       source?: string;
+      from?: string;
+      to?: string;
       limit?: string;
       cursor?: string;
     },
@@ -215,6 +217,8 @@ export class ActivityLogService implements OnModuleDestroy {
     }
     const limit = Math.min(Math.max(Number(filter.limit ?? 50) || 50, 1), 200);
     const cursor = parseListCursor(filter.cursor);
+    const fromAt = parseBoundDate(filter.from, 'start');
+    const toAt = parseBoundDate(filter.to, 'end');
     const where: Prisma.ActivityLogWhereInput = {
       AND: [
         {
@@ -222,6 +226,14 @@ export class ActivityLogService implements OnModuleDestroy {
           ...(filter.action ? { action: filter.action } : {}),
           ...(filter.actorId ? { actorId: filter.actorId } : {}),
           ...(filter.source ? { source: filter.source } : {}),
+          ...(fromAt || toAt
+            ? {
+                createdAt: {
+                  ...(fromAt ? { gte: fromAt } : {}),
+                  ...(toAt ? { lte: toAt } : {}),
+                },
+              }
+            : {}),
         },
         filter.q
           ? {
@@ -316,6 +328,22 @@ function parseListCursor(
   if (Number.isNaN(createdAt.getTime())) return null;
   if (!asUuidOrNull(id)) return null;
   return { createdAt, id };
+}
+
+/** 支持 ISO 或 `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm`；日期无时分按日界处理 */
+function parseBoundDate(
+  raw: string | undefined,
+  edge: 'start' | 'end',
+): Date | null {
+  if (!raw?.trim()) return null;
+  const text = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return edge === 'start'
+      ? new Date(`${text}T00:00:00.000`)
+      : new Date(`${text}T23:59:59.999`);
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function sanitizeMeta(

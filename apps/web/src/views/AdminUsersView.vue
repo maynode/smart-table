@@ -126,6 +126,33 @@ async function toggleBlacklist(row: AdminUserDto): Promise<void> {
   }
 }
 
+function isLoginLocked(row: AdminUserDto): boolean {
+  if (!row.loginLockedUntil) return false;
+  return new Date(row.loginLockedUntil).getTime() > Date.now();
+}
+
+async function unlockLogin(row: AdminUserDto): Promise<void> {
+  if (!isLoginLocked(row)) return;
+  const ok = await confirmDialog(`确定解除「${row.account}」的登录锁定？`, {
+    title: '解除登录锁定',
+    confirmLabel: '解锁',
+    danger: false,
+  });
+  if (!ok) return;
+  busyId.value = row.id;
+  try {
+    const updated = await endpoints.unlockAdminUserLogin(row.id);
+    items.value = items.value.map((item) =>
+      item.id === updated.id ? { ...item, ...updated } : item,
+    );
+    toast('已解除登录锁定');
+  } catch (error) {
+    toast(messageOf(error) || '解锁失败');
+  } finally {
+    busyId.value = null;
+  }
+}
+
 function openMessage(row: AdminUserDto): void {
   messageTarget.value = row;
 }
@@ -236,6 +263,10 @@ onMounted(async () => {
                   <strong>{{ row.account }}</strong>
                   <span v-if="row.blacklistedAt" class="admin-users-tag">黑名单</span>
                   <span
+                    v-if="isLoginLocked(row)"
+                    class="admin-users-tag"
+                  >登录锁定</span>
+                  <span
                     v-if="row.installAdmin"
                     class="admin-users-tag admin"
                   >系统管理员</span>
@@ -261,6 +292,16 @@ onMounted(async () => {
                     @click="openMessage(row)"
                   >
                     发消息
+                  </button>
+                  <button
+                    v-if="isLoginLocked(row)"
+                    type="button"
+                    class="btn"
+                    :disabled="busyId === row.id"
+                    data-testid="admin-users-unlock"
+                    @click="unlockLogin(row)"
+                  >
+                    解锁登录
                   </button>
                   <button
                     type="button"

@@ -467,6 +467,13 @@ onBeforeUnmount(() => {
                   >
                     重试
                   </button>
+                  <div
+                    v-if="run.status === 'failed' && run.error && expandedRunId !== run.id"
+                    class="run-error-inline"
+                    :title="run.error"
+                  >
+                    {{ run.error }}
+                  </div>
                 </td>
                 <td>{{ formatDuration(run.durationMs) }}</td>
                 <td>
@@ -949,6 +956,16 @@ onBeforeUnmount(() => {
   margin: 0 0 8px;
   color: #b42318;
   font-size: 12px;
+}
+.run-error-inline {
+  margin-top: 4px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .run-status {
   display: inline-flex;
