@@ -76,7 +76,13 @@ export function buildSrcDoc(bundle: {
 }): string {
   const css = bundle.css ? `<style>${bundle.css}</style>` : '';
   const userJs = bundle.js ? `<script>${bundle.js}</script>` : '';
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/>${css}</head><body>
+  // Host is a fixed-size popover; keep generated UI inside without escaping the iframe.
+  const baseCss = `<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:auto;box-sizing:border-box}
+*,*:before,*:after{box-sizing:inherit}
+body{font:13px/1.4 system-ui,sans-serif;padding:8px;background:#fff}
+</style>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/>${baseCss}${css}</head><body>
 ${bundle.html}
 <script>${bridgeBootstrapScript()}<\/script>
 ${userJs}

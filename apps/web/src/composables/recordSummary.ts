@@ -46,6 +46,27 @@ export function pickSummaryFields(
   return { titleFieldId, summaryFieldIds };
 }
 
+const AI_STATUS_LABELS: Record<string, string> = {
+  approved: '通过',
+  rejected: '驳回',
+  pending: '待定',
+};
+
+function localizeAiStatus(status: string): string {
+  return AI_STATUS_LABELS[status] ?? status;
+}
+
+/** Localize enum tokens + drop trailing empty separators from export templates. */
+export function polishAiExportDisplay(display: string): string {
+  if (!display) return display;
+  let s = display
+    .replace(/\bapproved\b/gi, '通过')
+    .replace(/\brejected\b/gi, '驳回')
+    .replace(/\bpending\b/gi, '待定');
+  s = s.replace(/\s*[：:]\s*$/, '').trim();
+  return s;
+}
+
 function choiceLabel(
   value: unknown,
   options: unknown,
@@ -110,14 +131,52 @@ export function formatCellSummary(
       ?.aiComponent;
     const contract = parseGridContract(ac?.gridContract);
     if (contract) {
-      const display = formatExportDisplay(value, contract).trim();
-      if (display) return display;
+      const display = polishAiExportDisplay(
+        formatExportDisplay(value, contract).trim(),
+      );
+      // Skip unresolved templates like "已完成 /" or empty placeholders
+      if (display && !/(^|\/)\s*$/.test(display) && !/\{\{/.test(display)) {
+        return display;
+      }
     }
     if (value && typeof value === 'object') {
       const obj = value as Record<string, unknown>;
+      if (typeof obj.displayText === 'string' && obj.displayText.trim()) {
+        return obj.displayText.trim();
+      }
+      if (typeof obj.display === 'string' && obj.display.trim()) {
+        return obj.display.trim();
+      }
       if (typeof obj.rating === 'number') return `${obj.rating} 星`;
       if (typeof obj.on === 'boolean') return obj.on ? '开' : '关';
       if (typeof obj.progress === 'number') return `${obj.progress}%`;
+      if (typeof obj.status === 'string') {
+        const label = localizeAiStatus(obj.status);
+        const note =
+          typeof obj.note === 'string' && obj.note.trim()
+            ? `：${obj.note.trim()}`
+            : '';
+        return `${label}${note}`;
+      }
+      if (Array.isArray(obj.items)) {
+        const items = obj.items as Array<{ done?: boolean }>;
+        const done = items.filter((i) => i?.done).length;
+        return `已完成 ${done}/${items.length}`;
+      }
+      if (typeof obj.remainingHours === 'number') {
+        return obj.remainingHours < 0
+          ? `已超时 ${Math.abs(obj.remainingHours)}h`
+          : `剩余 ${obj.remainingHours}h`;
+      }
+      if (typeof obj.deadline === 'string') {
+        const t = Date.parse(obj.deadline);
+        if (Number.isFinite(t)) {
+          const rem = (t - Date.now()) / 3600000;
+          return rem < 0
+            ? `已超时 ${Math.abs(Math.round(rem * 10) / 10)}h`
+            : `剩余 ${Math.round(rem * 10) / 10}h`;
+        }
+      }
     }
     return '组件';
   }

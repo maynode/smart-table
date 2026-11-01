@@ -15,13 +15,12 @@ import {
   type GridStats,
 } from '../grid-canvas/engine';
 import {
-  formatExportDisplay,
-  parseGridContract,
   peerColorFromUserId,
   type AiComponentOptions,
 } from 'shared';
 import { endpoints } from '../api/endpoints';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
+import { formatCellSummary } from '../composables/recordSummary';
 import { fieldTypeIcon } from '../ui/field-icons';
 import { toast } from '../ui/toast';
 import {
@@ -30,6 +29,7 @@ import {
   type CollabCellLock,
 } from '../sync/collab-socket';
 import AiComponentHost from '../ai-component/AiComponentHost.vue';
+import { styleForAiComponentHost } from '../ai-component/hostLayout';
 
 const props = withDefaults(
   defineProps<{
@@ -347,16 +347,15 @@ function styleForEditorCell(row: number, col: number, fieldType: string): Record
   return style;
 }
 
-/** 智能组件：叠在格子上，略放大给 AI 生成的控件呼吸空间 */
+/** 智能组件：浮层锚定格子，不按行高挤压（见 design §5.4） */
 function styleForAiComponentCell(row: number, col: number): Record<string, string> {
   if (!engine) return {};
   const rect = engine.cellRect(row, col);
-  return {
-    left: `${rect.x}px`,
-    top: `${rect.y}px`,
-    width: `${Math.max(rect.width, 260)}px`,
-    height: `${Math.max(rect.height, 40)}px`,
-  };
+  const stats = engine.lastFrameStats;
+  return styleForAiComponentHost(rect, {
+    width: stats.hostWidth || host.value?.clientWidth || 800,
+    height: stats.hostHeight || host.value?.clientHeight || 600,
+  });
 }
 
 const aiComponentHost = ref<{
@@ -643,20 +642,8 @@ function formatCell(field: FieldDto, value: unknown): CellRender | null {
   }
 
   if (field.type === 'aiComponent') {
-    const opts = (field.options?.aiComponent ?? {}) as AiComponentOptions;
-    const contract = parseGridContract(opts.gridContract);
-    if (contract) {
-      const display = formatExportDisplay(value, contract).trim();
-      if (display) return { text: display };
-    }
-    if (value && typeof value === 'object') {
-      try {
-        return { text: JSON.stringify(value) };
-      } catch {
-        return { text: '组件' };
-      }
-    }
-    return { text: textOf(value) };
+    const summary = formatCellSummary(value, 'aiComponent', field.options);
+    return { text: summary === '—' ? '组件' : summary };
   }
 
   // groupChat 已停用新建/编辑，旧数据仅只读展示。

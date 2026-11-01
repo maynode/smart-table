@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatCellSummary,
+  polishAiExportDisplay,
   pickSummaryFields,
   resolveRecordPrimaryText,
 } from './recordSummary';
@@ -67,6 +68,76 @@ describe('formatCellSummary', () => {
       ),
     ).toBe('4星');
     expect(formatCellSummary({ on: true }, 'aiComponent', {})).toBe('开');
+    expect(
+      formatCellSummary(
+        { status: 'rejected', note: '缺流水凭证' },
+        'aiComponent',
+        {},
+      ),
+    ).toBe('驳回：缺流水凭证');
+    // Export templates often emit English enums — polish for idle cells
+    expect(
+      formatCellSummary(
+        { status: 'pending', note: '' },
+        'aiComponent',
+        {
+          aiComponent: {
+            status: 'published',
+            gridContract: {
+              exportDisplay: { template: '{{status}}：{{note}}' },
+            },
+          },
+        },
+      ),
+    ).toBe('待定');
+    expect(
+      formatCellSummary(
+        { status: 'approved', note: '可合入' },
+        'aiComponent',
+        {
+          aiComponent: {
+            status: 'published',
+            gridContract: {
+              exportDisplay: { template: '{{status}}：{{note}}' },
+            },
+          },
+        },
+      ),
+    ).toBe('通过：可合入');
+    expect(polishAiExportDisplay('rejected：缺流水凭证')).toBe(
+      '驳回：缺流水凭证',
+    );
+    expect(
+      formatCellSummary(
+        {
+          items: [
+            { id: 'a', done: true },
+            { id: 'b', done: false },
+            { id: 'c', done: true },
+          ],
+        },
+        'aiComponent',
+        {},
+      ),
+    ).toBe('已完成 2/3');
+    // Unresolved trailing template must not win over derived deadline
+    expect(
+      formatCellSummary(
+        {
+          deadline: new Date(Date.now() + 6 * 3600_000).toISOString(),
+          hoursTotal: 24,
+        },
+        'aiComponent',
+        {
+          aiComponent: {
+            status: 'published',
+            gridContract: {
+              exportDisplay: { template: '已完成 /' },
+            },
+          },
+        },
+      ),
+    ).toMatch(/^剩余 /);
   });
 });
 

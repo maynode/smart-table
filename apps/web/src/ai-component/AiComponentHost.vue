@@ -315,10 +315,10 @@ onBeforeUnmount(() => {
   z-index: 30;
   box-sizing: border-box;
   border: 2px solid #1d6fdc;
-  border-radius: 2px;
+  border-radius: 6px;
   background: #fff;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(31, 35, 41, 0.12);
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.18);
 }
 .ai-component-frame {
   border: 0;
