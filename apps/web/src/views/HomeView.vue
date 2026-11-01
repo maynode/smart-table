@@ -2091,7 +2091,10 @@ onUnmounted(() => {
 
 <style scoped>
 .hub {
-  height: 100vh;
+  /* Filled by .app-shell-main > * { flex:1 }; avoid 100vh/100% which clips with banners */
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   background: #f5f6f8;
@@ -2336,7 +2339,9 @@ onUnmounted(() => {
   flex: 1;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
+  align-items: stretch;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -2352,6 +2357,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -2525,9 +2531,13 @@ onUnmounted(() => {
 
 .main {
   min-height: 0;
+  min-width: 0;
+  height: 100%;
   overflow-y: auto;
   padding: 28px 36px 40px;
   max-width: 1080px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .main-onboard {

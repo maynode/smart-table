@@ -13,8 +13,11 @@ export function viewportModeFromWidth(width: number): ViewportMode {
 export function shouldShowStationNav(opts: {
   authed: boolean;
   path: string;
+  /** Desktop/tablet keep existing top chrome; bottom nav is phone-only. */
+  mode?: ViewportMode;
 }): boolean {
   if (!opts.authed) return false;
+  if (opts.mode && opts.mode !== 'phone') return false;
   const p = opts.path;
   if (p === '/login' || p.startsWith('/login/')) return false;
   if (p.startsWith('/fill/')) return false;

@@ -45,14 +45,35 @@ describe('shouldShowStationNav', () => {
     ).toBe(false);
   });
 
-  it('shows on station routes including admin', () => {
-    expect(shouldShowStationNav({ authed: true, path: '/' })).toBe(true);
+  it('shows on station routes including admin (phone)', () => {
     expect(
-      shouldShowStationNav({ authed: true, path: '/notifications' }),
+      shouldShowStationNav({ authed: true, path: '/', mode: 'phone' }),
     ).toBe(true);
-    expect(shouldShowStationNav({ authed: true, path: '/me' })).toBe(true);
     expect(
-      shouldShowStationNav({ authed: true, path: '/admin/users' }),
+      shouldShowStationNav({
+        authed: true,
+        path: '/notifications',
+        mode: 'phone',
+      }),
     ).toBe(true);
+    expect(
+      shouldShowStationNav({ authed: true, path: '/me', mode: 'phone' }),
+    ).toBe(true);
+    expect(
+      shouldShowStationNav({
+        authed: true,
+        path: '/admin/users',
+        mode: 'phone',
+      }),
+    ).toBe(true);
+  });
+
+  it('hides bottom nav on tablet/desktop', () => {
+    expect(
+      shouldShowStationNav({ authed: true, path: '/', mode: 'desktop' }),
+    ).toBe(false);
+    expect(
+      shouldShowStationNav({ authed: true, path: '/', mode: 'tablet' }),
+    ).toBe(false);
   });
 });

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
+import { useViewport } from '../composables/useViewport';
 import { shouldShowStationNav } from '../composables/viewport';
 import { auth } from '../stores/auth';
 
 const route = useRoute();
+const { mode } = useViewport();
 
 const visible = computed(() =>
   shouldShowStationNav({
     authed: Boolean(auth.state.token),
     path: route.path,
+    mode: mode.value,
   }),
 );
 

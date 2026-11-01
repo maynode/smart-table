@@ -7,15 +7,18 @@ import ImpersonationBanner from './components/ImpersonationBanner.vue';
 import LoginModal from './components/LoginModal.vue';
 import PreviewNoticeBanner from './components/PreviewNoticeBanner.vue';
 import StationBottomNav from './components/StationBottomNav.vue';
+import { useViewport } from './composables/useViewport';
 import { shouldShowStationNav } from './composables/viewport';
 import { auth } from './stores/auth';
 import { toasts } from './ui/toast';
 
 const route = useRoute();
+const { mode } = useViewport();
 const showStationNav = computed(() =>
   shouldShowStationNav({
     authed: Boolean(auth.state.token),
     path: route.path,
+    mode: mode.value,
   }),
 );
 </script>
