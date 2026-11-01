@@ -99,6 +99,17 @@ test.describe('responsive phone shell + surfaces', () => {
     await expect(page.getByTestId('compact-record-table')).toBeVisible();
     await page.getByTestId('phone-layout-list').click();
 
+    await page.getByTestId('face-tab-form').click();
+    await expect(page.getByTestId('face-tab-form')).toHaveAttribute(
+      'aria-selected',
+      'true',
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId('form-object-tabs')).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId('form-builder')).toBeVisible();
+
     await page.getByTestId('face-tab-automation').click();
     await expect(page.getByTestId('automation-face')).toBeVisible();
     await expect(page.getByTestId('automation-create')).toBeVisible();

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatCellSummary, pickSummaryFields } from './recordSummary';
+import {
+  formatCellSummary,
+  pickSummaryFields,
+  resolveRecordPrimaryText,
+} from './recordSummary';
 
 describe('pickSummaryFields', () => {
   const fields = [
@@ -29,5 +33,28 @@ describe('formatCellSummary', () => {
     expect(formatCellSummary(null, 'text')).toBe('—');
     expect(formatCellSummary('hi', 'text')).toBe('hi');
     expect(formatCellSummary(['a', 'b'], 'multiSelect')).toBe('a、b');
+  });
+
+  it('resolves select choice ids to labels', () => {
+    const opts = {
+      choices: [
+        { id: 'new', name: '新客' },
+        { id: 'won', name: '成交' },
+      ],
+    };
+    expect(formatCellSummary('won', 'select', opts)).toBe('成交');
+  });
+});
+
+describe('resolveRecordPrimaryText', () => {
+  it('falls back to first non-empty cell when title empty', () => {
+    const fields = [
+      { id: 't', name: '标题', type: 'title' },
+      { id: 'n', name: '姓名', type: 'text' },
+    ];
+    const layout = pickSummaryFields(fields, null, 2);
+    expect(
+      resolveRecordPrimaryText({ t: '', n: '王敏' }, fields, layout),
+    ).toBe('王敏');
   });
 });

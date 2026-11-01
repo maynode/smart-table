@@ -297,9 +297,11 @@ function selectFace(face: BaseFace): void {
   } else if (face === 'form') {
     const sheet = formSheets.value[0];
     if (sheet) void selectSheet(sheet.id);
-    else {
+    else if (isPhone.value) {
+      // Phone: avoid promptDialog blocking face switch; create with default name.
+      void ensureFormSheetForFace();
+    } else {
       void openOrCreateFormSheet();
-      if (isPhone.value) sidebarDrawerOpen.value = true;
     }
   } else if (face === 'dashboard') {
     const dash = dashboards.value[0];
@@ -1902,6 +1904,34 @@ function onQueryChange(query: ViewQuery): void {
   }
 }
 
+async function createFormSheetNamed(name: string): Promise<void> {
+  const sheet = await endpoints.createSheet(baseId.value, name);
+  sheets.value = [...sheets.value, sheet];
+  markFormSheet(sheet.id);
+  // 尚无 Form 记录时靠本地标记识别为表单视图；保存后 listForms 会挂上
+  mainView.value = 'form';
+  await selectSheet(sheet.id);
+}
+
+async function ensureFormSheetForFace(): Promise<void> {
+  if (!canEditByRole.value) {
+    toast('当前为只读权限，无法新建表单');
+    if (isPhone.value) sidebarDrawerOpen.value = true;
+    return;
+  }
+  sectionCollapsed.value = { ...sectionCollapsed.value, forms: false };
+  const formCount = sheets.value.filter((sheet) => isFormSheet(sheet)).length;
+  const defaultName =
+    formCount === 0 ? '收集表单' : `收集表单 ${formCount + 1}`;
+  try {
+    await createFormSheetNamed(defaultName);
+    syncFaceQuery();
+  } catch (error) {
+    toast(messageOf(error));
+    if (isPhone.value) sidebarDrawerOpen.value = true;
+  }
+}
+
 async function openOrCreateFormSheet(): Promise<void> {
   if (!canEditByRole.value) {
     toast('当前为只读权限，无法新建表单');
@@ -1914,12 +1944,7 @@ async function openOrCreateFormSheet(): Promise<void> {
   const name = (await promptDialog('新收集表单名称', defaultName))?.trim();
   if (!name) return;
   try {
-    const sheet = await endpoints.createSheet(baseId.value, name);
-    sheets.value = [...sheets.value, sheet];
-    markFormSheet(sheet.id);
-    // 尚无 Form 记录时靠本地标记识别为表单视图；保存后 listForms 会挂上
-    mainView.value = 'form';
-    await selectSheet(sheet.id);
+    await createFormSheetNamed(name);
   } catch (error) {
     toast(messageOf(error));
   }

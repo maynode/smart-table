@@ -4,6 +4,7 @@ import type { FieldDto, RecordDto } from '../api/types';
 import {
   formatCellSummary,
   pickSummaryFields,
+  resolveRecordPrimaryText,
 } from '../composables/recordSummary';
 
 const props = defineProps<{
@@ -28,10 +29,6 @@ const layout = computed(() =>
   pickSummaryFields(props.fields, props.viewFieldIds ?? null, 3),
 );
 
-const titleField = computed(() =>
-  props.fields.find((f) => f.id === layout.value.titleFieldId) ?? null,
-);
-
 const summaryFields = computed(() =>
   layout.value.summaryFieldIds
     .map((id) => props.fields.find((f) => f.id === id))
@@ -39,11 +36,10 @@ const summaryFields = computed(() =>
 );
 
 function titleText(record: RecordDto): string {
-  const id = layout.value.titleFieldId;
-  if (!id) return record.id.slice(0, 8);
-  return formatCellSummary(
-    record.cells?.[id],
-    titleField.value?.type ?? 'text',
+  return resolveRecordPrimaryText(
+    record.cells,
+    props.fields,
+    layout.value,
   );
 }
 
@@ -104,7 +100,13 @@ function onCardClick(id: string): void {
           class="meta-chip"
         >
           <span class="meta-label">{{ field.name }}</span>
-          {{ formatCellSummary(record.cells?.[field.id], field.type) }}
+          {{
+            formatCellSummary(
+              record.cells?.[field.id],
+              field.type,
+              field.options,
+            )
+          }}
         </span>
       </div>
     </button>

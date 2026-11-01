@@ -40,11 +40,48 @@ export function pickSummaryFields(
   return { titleFieldId, summaryFieldIds };
 }
 
+function choiceLabel(
+  value: unknown,
+  options: unknown,
+): string | null {
+  const choices = (
+    options as { choices?: Array<{ id: string; name: string }> } | null
+  )?.choices;
+  if (!choices?.length) return null;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const hit = choices.find(
+      (c) => c.id === String(value) || c.name === String(value),
+    );
+    return hit?.name ?? null;
+  }
+  if (Array.isArray(value)) {
+    const labels = value
+      .map((v) => {
+        const hit = choices.find(
+          (c) => c.id === String(v) || c.name === String(v),
+        );
+        return hit?.name ?? String(v);
+      })
+      .filter(Boolean);
+    return labels.length ? labels.join('、') : null;
+  }
+  return null;
+}
+
 export function formatCellSummary(
   value: unknown,
   fieldType: string,
+  options?: unknown,
 ): string {
   if (value == null || value === '') return '—';
+  if (
+    fieldType === 'select' ||
+    fieldType === 'singleSelect' ||
+    fieldType === 'multiSelect'
+  ) {
+    const labeled = choiceLabel(value, options);
+    if (labeled) return labeled;
+  }
   if (typeof value === 'string' || typeof value === 'number') {
     return String(value);
   }
@@ -57,6 +94,9 @@ export function formatCellSummary(
     return `${value.length} 项`;
   }
   if (fieldType === 'person' || fieldType === 'createdBy') {
+    if (typeof value === 'object' && value && 'account' in value) {
+      return String((value as { account?: string }).account ?? '人员');
+    }
     return '人员';
   }
   try {
@@ -64,4 +104,29 @@ export function formatCellSummary(
   } catch {
     return '—';
   }
+}
+
+/** Prefer title field, then first non-empty summary / usable cell. */
+export function resolveRecordPrimaryText(
+  cells: Record<string, unknown> | null | undefined,
+  fields: SummaryFieldLike[],
+  layout: { titleFieldId: string | null; summaryFieldIds: string[] },
+  fallback = '未命名记录',
+): string {
+  const map = new Map(fields.map((f) => [f.id, f]));
+  const tryIds = [
+    layout.titleFieldId,
+    ...layout.summaryFieldIds,
+    ...fields.map((f) => f.id),
+  ].filter((id): id is string => Boolean(id));
+  const seen = new Set<string>();
+  for (const id of tryIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const field = map.get(id);
+    if (!field || SYSTEMISH.has(field.type)) continue;
+    const text = formatCellSummary(cells?.[id], field.type, field.options);
+    if (text && text !== '—') return text;
+  }
+  return fallback;
 }
