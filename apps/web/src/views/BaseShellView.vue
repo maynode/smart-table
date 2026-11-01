@@ -529,11 +529,21 @@ async function applyRouteDeepLink(
     }
   }
   if (faceQuery.face === 'data') {
-    const dataOid =
+    const fromOid =
       faceQuery.oid &&
       sheetList.some((s) => s.id === faceQuery.oid && !isFormSheet(s))
         ? faceQuery.oid
-        : sheetList.find((s) => !isFormSheet(s))?.id ?? sheetList[0]?.id;
+        : null;
+    const fromSheet =
+      requestedSheet &&
+      sheetList.some((s) => s.id === requestedSheet && !isFormSheet(s))
+        ? requestedSheet
+        : null;
+    const dataOid =
+      fromOid ??
+      fromSheet ??
+      sheetList.find((s) => !isFormSheet(s))?.id ??
+      sheetList[0]?.id;
     if (dataOid) await selectSheet(dataOid, false);
     return;
   }

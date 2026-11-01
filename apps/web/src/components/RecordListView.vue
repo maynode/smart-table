@@ -43,6 +43,24 @@ function titleText(record: RecordDto): string {
   );
 }
 
+function metaChips(
+  record: RecordDto,
+): { id: string; label: string; value: string }[] {
+  return summaryFields.value
+    .map((field) => {
+      const value = formatCellSummary(
+        record.cells?.[field.id],
+        field.type,
+        field.options,
+      );
+      if (!value || value === '—') return null;
+      return { id: field.id, label: field.name, value };
+    })
+    .filter((x): x is { id: string; label: string; value: string } =>
+      Boolean(x),
+    );
+}
+
 function toggle(id: string): void {
   const next = new Set(selected.value);
   if (next.has(id)) next.delete(id);
@@ -93,28 +111,18 @@ function onCardClick(id: string): void {
       @click="onCardClick(record.id)"
     >
       <div class="record-card-title">{{ titleText(record) }}</div>
-      <div v-if="summaryFields.length" class="record-card-meta">
-        <template v-for="field in summaryFields" :key="field.id">
-          <span
-            v-if="
-              formatCellSummary(
-                record.cells?.[field.id],
-                field.type,
-                field.options,
-              ) !== '—'
-            "
-            class="meta-chip"
-          >
-            <span class="meta-label">{{ field.name }}</span>
-            <span class="meta-value">{{
-              formatCellSummary(
-                record.cells?.[field.id],
-                field.type,
-                field.options,
-              )
-            }}</span>
-          </span>
-        </template>
+      <div
+        v-if="metaChips(record).length"
+        class="record-card-meta"
+      >
+        <span
+          v-for="chip in metaChips(record)"
+          :key="chip.id"
+          class="meta-chip"
+        >
+          <span class="meta-label">{{ chip.label }}</span>
+          <span class="meta-value">{{ chip.value }}</span>
+        </span>
       </div>
     </button>
   </div>
@@ -124,8 +132,10 @@ function onCardClick(id: string): void {
 .record-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 8px 8px 24px;
   height: 100%;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
@@ -135,15 +145,19 @@ function onCardClick(id: string): void {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .record-card {
+  /* Must not shrink: parent is a column flex with height:100%, default
+     flex-shrink:1 crushed cards so meta overflowed under the next card. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
   gap: 6px;
+  box-sizing: border-box;
   width: 100%;
   min-height: var(--touch-min);
   height: auto;
@@ -153,7 +167,7 @@ function onCardClick(id: string): void {
   background: var(--bg);
   padding: 12px 14px;
   cursor: pointer;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .record-card.selected {
