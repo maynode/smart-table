@@ -371,17 +371,20 @@ onMounted(() => {
     <section
       ref="modalRoot"
       class="options-modal"
+      :class="{ 'options-modal--ai-component': isAiComponent }"
       :style="modalDragStyle"
       :data-testid="
         isAi
           ? 'ai-field-options-editor'
-          : isFormula
-            ? 'formula-field-options-editor'
-            : isRelation
-              ? 'relation-field-options-editor'
-              : isLookup
-                ? 'lookup-field-options-editor'
-                : 'field-options-editor'
+          : isAiComponent
+            ? 'ai-component-options-editor'
+            : isFormula
+              ? 'formula-field-options-editor'
+              : isRelation
+                ? 'relation-field-options-editor'
+                : isLookup
+                  ? 'lookup-field-options-editor'
+                  : 'field-options-editor'
       "
     >
       <header class="panel-drag-handle" @pointerdown="onModalDrag">
@@ -616,14 +619,22 @@ onMounted(() => {
 
       <p v-if="error" class="error">{{ error }}</p>
       <footer>
-        <button class="btn" type="button" @click="emit('close')">取消</button>
+        <button class="btn" type="button" @click="emit('close')">
+          {{ isAiComponent ? '关闭' : '取消' }}
+        </button>
         <button
           class="btn btn-primary"
           type="button"
-          :data-testid="isAi ? 'ai-field-option-save' : 'field-option-save'"
+          :data-testid="
+            isAi
+              ? 'ai-field-option-save'
+              : isAiComponent
+                ? 'ai-component-option-done'
+                : 'field-option-save'
+          "
           @click="save"
         >
-          保存
+          {{ isAiComponent ? '完成' : '保存' }}
         </button>
       </footer>
     </section>
@@ -648,6 +659,30 @@ onMounted(() => {
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.16);
+}
+.options-modal--ai-component {
+  width: min(640px, 96vw);
+  max-height: min(92vh, 860px);
+  display: flex;
+  flex-direction: column;
+}
+.options-modal--ai-component :deep(.ai-component-panel) {
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 767.98px) {
+  .options-modal--ai-component {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .options-mask {
+    align-items: stretch;
+    padding: 0;
+  }
 }
 .options-modal header {
   display: flex;

@@ -7,6 +7,7 @@ import {
   ref,
   watch,
 } from 'vue';
+import { useViewport } from '../composables/useViewport';
 import {
   AI_COMPONENT_CHANNEL,
   buildSrcDoc,
@@ -17,7 +18,7 @@ import {
 const props = withDefaults(
   defineProps<{
     open: boolean;
-    /** modal=配置预览；cell=叠在格子上（默认） */
+    /** modal=配置预览/手机；cell=叠在格子上（默认） */
     placement?: 'cell' | 'modal';
     /** cell 模式：相对画布的 left/top/width/height */
     cellStyle?: Record<string, string>;
@@ -40,6 +41,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{ close: [] }>();
+const { isPhone } = useViewport();
 
 const iframeRef = ref<HTMLIFrameElement | null>(null);
 /** ready/rpc 可能早于 Vue ref；用 message.source / load 记下窗口 */
@@ -48,6 +50,10 @@ let frameWindow: Window | null = null;
 /** 必须稳定：父级滚动重绘若每次新 string，iframe 会反复 reload，init 永远丢 */
 const srcDoc = computed(() =>
   buildSrcDoc({ html: props.html, css: props.css, js: props.js }),
+);
+
+const useFullscreenSheet = computed(
+  () => props.placement === 'modal' && isPhone.value,
 );
 
 /** Vue reactive Proxy 不能 structured clone / postMessage，需先剥成纯数据 */
@@ -118,8 +124,6 @@ function bindFrameWindow(win: Window | null): void {
 
 async function onMessage(ev: MessageEvent): Promise<void> {
   if (!isFrameMessage(ev.data)) return;
-  // sandbox 无 allow-same-origin：用 ev.source 回帖，勿与 contentWindow 做 ===。
-  // 勿探测 source 上其它属性（跨域可读面积极窄，乱读会抛错导致整段 handler 中断）。
   const sourceWin = (ev.source as Window | null) ?? null;
   if (sourceWin) bindFrameWindow(sourceWin);
 
@@ -211,7 +215,13 @@ watch(
   (open) => {
     if (!open) {
       frameWindow = null;
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = '';
+      }
       return;
+    }
+    if (props.placement === 'modal' && typeof document !== 'undefined') {
+      document.body.style.overflow = 'hidden';
     }
     void nextTick(() => {
       void pushCellValue(props.value);
@@ -220,7 +230,6 @@ watch(
   { immediate: true },
 );
 
-// setup 同步挂上，避免 srcdoc 极速 ready 赶在 onMounted 前
 window.addEventListener('message', onMessage);
 window.addEventListener('keydown', onKeydown);
 onMounted(() => {
@@ -232,6 +241,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('message', onMessage);
   window.removeEventListener('keydown', onKeydown);
   frameWindow = null;
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = '';
+  }
 });
 </script>
 
@@ -255,23 +267,38 @@ onBeforeUnmount(() => {
     />
   </div>
 
-  <!-- 仅配置预览用弹层 -->
+  <!-- 配置预览 / 手机全屏 -->
   <Teleport v-else-if="open && placement === 'modal'" to="body">
     <div
       class="ai-component-host-backdrop"
+      :class="{ 'is-phone-sheet': useFullscreenSheet }"
       data-testid="ai-component-host"
       @click.self="emit('close')"
     >
-      <div class="ai-component-host" @click.stop>
+      <div
+        class="ai-component-host"
+        :class="{ 'is-phone-sheet': useFullscreenSheet }"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="title || '智能组件'"
+        @click.stop
+      >
         <header class="ai-component-host-head">
           <strong>{{ title || '智能组件' }}</strong>
-          <button type="button" class="btn btn-ghost" @click="emit('close')">
+          <button
+            type="button"
+            class="btn btn-ghost touch-target host-close"
+            data-testid="ai-component-host-close"
+            aria-label="关闭"
+            @click="emit('close')"
+          >
             关闭
           </button>
         </header>
         <iframe
           ref="iframeRef"
           class="ai-component-frame"
+          :class="{ 'ai-component-frame--sheet': useFullscreenSheet }"
           title="ai-component"
           sandbox="allow-scripts"
           :srcdoc="srcDoc"
@@ -296,7 +323,7 @@ onBeforeUnmount(() => {
 .ai-component-frame {
   border: 0;
   width: 100%;
-  height: 280px;
+  height: 360px;
   background: #fff;
   display: block;
 }
@@ -304,18 +331,30 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 32px;
 }
+.ai-component-frame--sheet {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
 .ai-component-host-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 420;
   background: rgba(15, 23, 42, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
 }
+.ai-component-host-backdrop.is-phone-sheet {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: #fff;
+}
 .ai-component-host {
-  width: min(480px, 100%);
+  width: min(560px, 100%);
+  max-height: min(90vh, 720px);
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
@@ -323,11 +362,26 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
 }
+.ai-component-host.is-phone-sheet {
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
 .ai-component-host-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+}
+.host-close {
+  flex-shrink: 0;
 }
 </style>

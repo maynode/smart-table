@@ -1,3 +1,9 @@
+import {
+  formatExportDisplay,
+  parseGridContract,
+  type AiComponentOptions,
+} from 'shared';
+
 export type SummaryFieldLike = {
   id: string;
   name: string;
@@ -98,6 +104,22 @@ export function formatCellSummary(
       return String((value as { account?: string }).account ?? '人员');
     }
     return '人员';
+  }
+  if (fieldType === 'aiComponent') {
+    const ac = (options as { aiComponent?: AiComponentOptions } | null)
+      ?.aiComponent;
+    const contract = parseGridContract(ac?.gridContract);
+    if (contract) {
+      const display = formatExportDisplay(value, contract).trim();
+      if (display) return display;
+    }
+    if (value && typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.rating === 'number') return `${obj.rating} 星`;
+      if (typeof obj.on === 'boolean') return obj.on ? '开' : '关';
+      if (typeof obj.progress === 'number') return `${obj.progress}%`;
+    }
+    return '组件';
   }
   try {
     return JSON.stringify(value);

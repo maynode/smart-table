@@ -7,6 +7,7 @@ import FieldOptionsEditor from './FieldOptionsEditor.vue';
 import RecordListView from './RecordListView.vue';
 import RecordDetailSheet from './RecordDetailSheet.vue';
 import CompactRecordTable from './CompactRecordTable.vue';
+import AiComponentHost from '../ai-component/AiComponentHost.vue';
 import { useFloatDrag } from '../composables/useFloatDrag';
 import { useViewport } from '../composables/useViewport';
 import { endpoints } from '../api/endpoints';
@@ -165,6 +166,12 @@ function openRecordDetail(id: string): void {
 function closeRecordDetail(): void {
   detailRecordId.value = null;
 }
+/** Phone / detail：用 modal 宿主；Canvas 自己叠格内 host。 */
+const phoneAiHost = ref<{
+  record: RecordDto;
+  field: FieldDto;
+} | null>(null);
+
 function openAiComponentHost(payload: {
   record: RecordDto;
   field: FieldDto;
@@ -174,7 +181,37 @@ function openAiComponentHost(payload: {
   if (opts.status !== 'published' || !opts.bundle?.html) {
     toast('请先在字段配置中发布智能组件');
     openOptions(payload.field);
+    return;
   }
+  // Desktop canvas already mounts in-cell host; phone list/detail need modal.
+  if (isPhone.value || showPhoneList.value || showPhoneCompact.value) {
+    phoneAiHost.value = payload;
+  }
+}
+
+async function phoneAiGetCell(): Promise<unknown> {
+  const host = phoneAiHost.value;
+  if (!host) return null;
+  return host.record.cells?.[host.field.id] ?? null;
+}
+
+async function phoneAiSetCell(value: unknown): Promise<void> {
+  const host = phoneAiHost.value;
+  if (!host) return;
+  const previous = host.record.cells?.[host.field.id];
+  emit('commit', {
+    record: host.record,
+    field: host.field,
+    value,
+    previous,
+  });
+  phoneAiHost.value = {
+    ...host,
+    record: {
+      ...host.record,
+      cells: { ...host.record.cells, [host.field.id]: value },
+    },
+  };
 }
 const settingsOpen = ref(false);
 const fieldPickerOpen = ref(false);
@@ -1782,7 +1819,17 @@ defineExpose({
         :fields="fields"
         :records="displayRecords"
         @open-record="openRecordDetail"
-        @open-cell="openRecordDetail($event.recordId)"
+        @open-cell="
+          (payload) => {
+            const field = fields.find((f) => f.id === payload.fieldId);
+            const record = displayRecords.find((r) => r.id === payload.recordId);
+            if (field?.type === 'aiComponent' && record) {
+              openAiComponentHost({ record, field });
+              return;
+            }
+            openRecordDetail(payload.recordId);
+          }
+        "
       />
       <CanvasGrid
         v-else
@@ -1832,6 +1879,30 @@ defineExpose({
       :members="members"
       @close="closeRecordDetail"
       @commit="emit('commit', $event)"
+      @open-ai-component="openAiComponentHost"
+    />
+
+    <AiComponentHost
+      v-if="phoneAiHost"
+      placement="modal"
+      :open="true"
+      :title="phoneAiHost.field.name"
+      :html="
+        ((phoneAiHost.field.options?.aiComponent as AiComponentOptions | undefined)
+          ?.bundle?.html) ?? ''
+      "
+      :css="
+        (phoneAiHost.field.options?.aiComponent as AiComponentOptions | undefined)
+          ?.bundle?.css
+      "
+      :js="
+        (phoneAiHost.field.options?.aiComponent as AiComponentOptions | undefined)
+          ?.bundle?.js
+      "
+      :value="phoneAiHost.record.cells?.[phoneAiHost.field.id] ?? null"
+      :get-cell="phoneAiGetCell"
+      :set-cell="phoneAiSetCell"
+      @close="phoneAiHost = null"
     />
 
     <!-- 底栏已画在 Canvas 内；保留测试钩子 -->

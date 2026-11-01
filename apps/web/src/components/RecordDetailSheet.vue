@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { AiComponentOptions } from 'shared';
 import { computed, ref, watch } from 'vue';
 import type { FieldDto, MemberDto, RecordDto } from '../api/types';
 import MobileSheet from './MobileSheet.vue';
@@ -22,6 +23,7 @@ const emit = defineEmits<{
       previous?: unknown;
     },
   ];
+  openAiComponent: [payload: { record: RecordDto; field: FieldDto }];
 }>();
 
 const draft = ref<Record<string, unknown>>({});
@@ -70,6 +72,16 @@ function commitField(field: FieldDto): void {
     value,
     previous,
   });
+}
+
+function aiComponentReady(field: FieldDto): boolean {
+  const opts = (field.options?.aiComponent ?? {}) as AiComponentOptions;
+  return opts.status === 'published' && Boolean(opts.bundle?.html);
+}
+
+function openAiComponent(field: FieldDto): void {
+  if (!props.record) return;
+  emit('openAiComponent', { record: props.record, field });
 }
 </script>
 
@@ -142,6 +154,30 @@ function commitField(field: FieldDto): void {
           data-testid="record-detail-phone"
           @change="commitField(field)"
         />
+        <div
+          v-else-if="field.type === 'aiComponent'"
+          class="detail-ai"
+          data-testid="record-detail-ai-component"
+        >
+          <div class="detail-ai-summary">
+            {{
+              formatCellSummary(
+                draft[field.id] ?? record.cells?.[field.id],
+                field.type,
+                field.options,
+              )
+            }}
+          </div>
+          <button
+            type="button"
+            class="btn btn-primary touch-target"
+            data-testid="record-detail-ai-open"
+            :disabled="!aiComponentReady(field)"
+            @click="openAiComponent(field)"
+          >
+            {{ aiComponentReady(field) ? '打开组件' : '尚未发布' }}
+          </button>
+        </div>
         <div v-else class="detail-readonly">
           {{
             formatCellSummary(
@@ -192,5 +228,21 @@ function commitField(field: FieldDto): void {
   border-radius: 8px;
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+.detail-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-ai-summary {
+  min-height: var(--touch-min);
+  padding: 10px 12px;
+  background: var(--bg-muted);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
 }
 </style>

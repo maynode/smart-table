@@ -44,6 +44,30 @@ describe('formatCellSummary', () => {
     };
     expect(formatCellSummary('won', 'select', opts)).toBe('成交');
   });
+
+  it('formats aiComponent via gridContract or shortcuts', () => {
+    expect(
+      formatCellSummary(
+        { rating: 4 },
+        'aiComponent',
+        {
+          aiComponent: {
+            status: 'published',
+            gridContract: {
+              sortKey: { path: 'rating', type: 'number' },
+              filter: {
+                path: 'rating',
+                ops: ['eq'],
+                valueType: 'number',
+              },
+              exportDisplay: { template: '{{rating}}星' },
+            },
+          },
+        },
+      ),
+    ).toBe('4星');
+    expect(formatCellSummary({ on: true }, 'aiComponent', {})).toBe('开');
+  });
 });
 
 describe('resolveRecordPrimaryText', () => {

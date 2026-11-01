@@ -45,7 +45,13 @@ const cols = computed(() =>
             :key="field.id"
             @click.stop="emit('openCell', { recordId: record.id, fieldId: field.id })"
           >
-            {{ formatCellSummary(record.cells?.[field.id], field.type) }}
+            {{
+              formatCellSummary(
+                record.cells?.[field.id],
+                field.type,
+                field.options,
+              )
+            }}
           </td>
         </tr>
       </tbody>
