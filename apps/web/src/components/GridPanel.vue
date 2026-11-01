@@ -1123,14 +1123,14 @@ defineExpose({
   <section class="grid-panel">
     <div class="grid-toolbar">
       <button
-        v-if="editable"
+        v-if="editable && !showPhoneList"
         class="btn btn-primary"
         data-testid="add-row"
         @click="emit('addRow')"
       >
         + 添加一行
       </button>
-      <span v-if="editable" class="toolbar-divider" />
+      <span v-if="editable && !showPhoneList" class="toolbar-divider" />
       <button
         class="btn btn-ghost toolbar-filter"
         :class="{ 'btn-active': activePanel === 'filter' }"
@@ -1140,6 +1140,7 @@ defineExpose({
         筛选<em v-if="activeFilterCount">{{ activeFilterCount }}</em>
       </button>
       <button
+        v-if="!isPhone"
         class="btn btn-ghost"
         :class="{ 'btn-active': activePanel === 'group' }"
         data-testid="group-open"
@@ -1156,6 +1157,7 @@ defineExpose({
         排序<em v-if="activeSortCount">{{ activeSortCount }}</em>
       </button>
       <button
+        v-if="!isPhone"
         class="btn btn-ghost"
         :class="{ 'btn-active': activePanel === 'rowHeight' }"
         data-testid="row-height-open"
@@ -1164,6 +1166,7 @@ defineExpose({
         行高
       </button>
       <button
+        v-if="!isPhone"
         class="btn btn-ghost"
         :class="{ 'btn-active': activePanel === 'freeze' || freezeColumnCount > 0 }"
         data-testid="freeze-open"
@@ -1172,6 +1175,7 @@ defineExpose({
         冻结<em v-if="freezeColumnCount">{{ freezeColumnCount }}</em>
       </button>
       <button
+        v-if="!isPhone"
         class="btn btn-ghost"
         :class="{ 'btn-active': activePanel === 'color' }"
         data-testid="color-open"
@@ -1179,9 +1183,9 @@ defineExpose({
       >
         填色<em v-if="activeColorCount">{{ activeColorCount }}</em>
       </button>
-      <span v-if="editable" class="toolbar-divider" />
+      <span v-if="editable && !isPhone" class="toolbar-divider" />
       <button
-        v-if="editable"
+        v-if="editable && !isPhone"
         ref="addFieldBtn"
         class="btn btn-ghost"
         data-testid="add-field"
@@ -1190,7 +1194,7 @@ defineExpose({
         + 字段
       </button>
       <button
-        v-if="editable"
+        v-if="editable && !isPhone"
         class="btn btn-ghost"
         data-testid="table-settings"
         :class="{ 'btn-active': settingsOpen }"
@@ -1968,6 +1972,9 @@ defineExpose({
     flex-wrap: wrap;
     gap: 6px;
     padding: 6px 8px;
+    height: auto;
+    max-height: none;
+    min-height: 44px;
   }
   .view-panel {
     position: fixed !important;

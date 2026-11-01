@@ -455,7 +455,7 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-/** 通知 / 外链：?dashboard= | ?sheet=&view=form-results|form */
+/** 通知 / 外链：?face=&oid= | legacy ?dashboard= | ?sheet=&view=form-results|form */
 async function applyRouteDeepLink(
   sheetList: SheetDto[],
   dashboardList: DashboardDto[],
@@ -466,6 +466,14 @@ async function applyRouteDeepLink(
     typeof route.query.sheet === 'string' ? route.query.sheet : null;
   const requestedView =
     typeof route.query.view === 'string' ? route.query.view : null;
+  const faceQuery = parseFaceQuery({
+    face: typeof route.query.face === 'string' ? route.query.face : undefined,
+    oid: typeof route.query.oid === 'string' ? route.query.oid : undefined,
+    formMode:
+      typeof route.query.formMode === 'string'
+        ? route.query.formMode
+        : undefined,
+  });
 
   if (requestedDashboard) {
     if (dashboardList.some((item) => item.id === requestedDashboard)) {
@@ -476,6 +484,58 @@ async function applyRouteDeepLink(
     await router.replace({
       query: { ...route.query, dashboard: undefined },
     });
+  }
+
+  // Face-first deep link (responsive IA)
+  if (faceQuery.face === 'automation') {
+    mainView.value = 'automation';
+    automationsOpen.value = false;
+    return;
+  }
+  if (faceQuery.face === 'dashboard') {
+    const id =
+      (faceQuery.oid &&
+      dashboardList.some((item) => item.id === faceQuery.oid)
+        ? faceQuery.oid
+        : null) ?? dashboardList[0]?.id;
+    if (id) openDashboard(id, false);
+    else mainView.value = 'dashboard';
+    return;
+  }
+  if (faceQuery.face === 'analysis') {
+    const reports = analysisReports.value;
+    const id =
+      (faceQuery.oid && reports.some((item) => item.id === faceQuery.oid)
+        ? faceQuery.oid
+        : null) ?? reports[0]?.id;
+    if (id) openAnalysisReport(id);
+    else mainView.value = 'analysis';
+    return;
+  }
+  if (faceQuery.face === 'form') {
+    const formOid =
+      faceQuery.oid && sheetList.some((s) => s.id === faceQuery.oid && isFormSheet(s))
+        ? faceQuery.oid
+        : sheetList.find((s) => isFormSheet(s))?.id;
+    if (formOid) {
+      await selectSheet(formOid, false);
+      if (faceQuery.formMode === 'results') await openFormResults();
+      else mainView.value = 'form';
+      return;
+    }
+    if (isPhone.value) {
+      await ensureFormSheetForFace();
+      return;
+    }
+  }
+  if (faceQuery.face === 'data') {
+    const dataOid =
+      faceQuery.oid &&
+      sheetList.some((s) => s.id === faceQuery.oid && !isFormSheet(s))
+        ? faceQuery.oid
+        : sheetList.find((s) => !isFormSheet(s))?.id ?? sheetList[0]?.id;
+    if (dataOid) await selectSheet(dataOid, false);
+    return;
   }
 
   const sheetStillThere =
@@ -2855,12 +2915,13 @@ onBeforeUnmount(() => {
       <button
         v-if="isPhone"
         type="button"
-        class="face-tab face-tab-menu touch-target"
+        class="face-tab-menu touch-target"
         data-testid="base-sidebar-toggle"
         aria-label="对象列表"
+        title="对象列表"
         @click="sidebarDrawerOpen = !sidebarDrawerOpen"
       >
-        列表
+        ☰
       </button>
       <button
         v-for="tab in faceTabs"

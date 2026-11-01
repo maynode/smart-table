@@ -233,6 +233,11 @@ body,
     filter 0.2s ease;
 }
 
+/* Station bottom nav is outside main padding; lift FAB so it doesn't cover「我的」 */
+.app-shell.has-station-nav ~ .feedback-fab {
+  bottom: calc(var(--station-nav-height) + var(--safe-bottom) + 16px);
+}
+
 .feedback-fab:hover {
   transform: translateY(-3px);
   filter: brightness(1.05);
@@ -1549,7 +1554,17 @@ html.auth-screen #app {
 }
 
 .face-tab-menu {
+  flex: none;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
   font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
 }
 
 .sidebar-mask {

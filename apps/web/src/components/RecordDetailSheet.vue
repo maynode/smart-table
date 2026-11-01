@@ -105,10 +105,14 @@ function commitField(field: FieldDto): void {
           </option>
         </select>
         <textarea
-          v-else-if="field.type === 'text' || field.type === 'title'"
+          v-else-if="
+            field.type === 'text' ||
+            field.type === 'title' ||
+            field.type === 'longText'
+          "
           v-model="draft[field.id] as string"
           class="detail-input"
-          rows="2"
+          :rows="field.type === 'longText' ? 3 : 2"
           :disabled="!editable"
           data-testid="record-detail-text"
           @change="commitField(field)"
@@ -129,8 +133,23 @@ function commitField(field: FieldDto): void {
           :disabled="!editable"
           @change="commitField(field)"
         />
+        <input
+          v-else-if="field.type === 'phone' || field.type === 'email' || field.type === 'url'"
+          v-model="draft[field.id] as string"
+          class="detail-input"
+          :type="field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'tel'"
+          :disabled="!editable"
+          data-testid="record-detail-phone"
+          @change="commitField(field)"
+        />
         <div v-else class="detail-readonly">
-          {{ formatCellSummary(record.cells?.[field.id], field.type) }}
+          {{
+            formatCellSummary(
+              draft[field.id] ?? record.cells?.[field.id],
+              field.type,
+              field.options,
+            )
+          }}
         </div>
       </div>
     </div>

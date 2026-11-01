@@ -18,6 +18,7 @@ import NotificationBell from '../components/NotificationBell.vue';
 import PageLoading from '../components/PageLoading.vue';
 import PermissionsPanel from '../components/PermissionsPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
+import { useViewport } from '../composables/useViewport';
 import { auth } from '../stores/auth';
 import { liveBus } from '../sync/live-bus';
 import { liveSocket } from '../sync/live-socket';
@@ -35,6 +36,7 @@ const WS_STORAGE_KEY = 'smart-table.currentWorkspaceId';
 
 const route = useRoute();
 const router = useRouter();
+const { isPhone } = useViewport();
 
 const workspaces = ref<WorkspaceDto[]>([]);
 const currentWorkspaceId = ref<string>('');
@@ -1278,7 +1280,11 @@ onUnmounted(() => {
     </header>
 
     <div class="body" :class="{ 'body-onboard': hideWorkspaceSidebar }">
-      <aside v-if="!hideWorkspaceSidebar" class="sidebar" data-testid="hub-sidebar">
+      <aside
+        v-if="!hideWorkspaceSidebar && !isPhone"
+        class="sidebar"
+        data-testid="hub-sidebar"
+      >
         <div class="sidebar-title">
           <span>工作区</span>
           <button
@@ -1494,9 +1500,51 @@ onUnmounted(() => {
         <template v-else>
         <div v-if="currentWorkspace" class="main-head">
           <div class="main-head-title">
-            <div class="main-title-row">
-              <h1>{{ currentWorkspace.name }}</h1>
+            <div v-if="isPhone && workspaces.length > 0" class="phone-ws-switch">
+              <label class="phone-ws-label" for="phone-workspace-select">工作区</label>
+              <select
+                id="phone-workspace-select"
+                class="phone-ws-select"
+                data-testid="phone-workspace-select"
+                :value="currentWorkspaceId"
+                @change="
+                  selectWorkspace(
+                    ($event.target as HTMLSelectElement).value,
+                  )
+                "
+              >
+                <option
+                  v-for="ws in filteredWorkspaces"
+                  :key="ws.id"
+                  :value="ws.id"
+                >
+                  {{ ws.name }}
+                </option>
+              </select>
               <button
+                class="icon-btn plus phone-ws-add"
+                type="button"
+                title="新建工作区"
+                data-testid="create-workspace"
+                @click="createWorkspace"
+              >
+                +
+              </button>
+              <button
+                class="members-btn"
+                type="button"
+                data-testid="hub-members"
+                :aria-pressed="membersSectionOpen"
+                :class="{ active: membersSectionOpen }"
+                @click.stop="membersSectionOpen = !membersSectionOpen"
+              >
+                <span>成员</span>
+              </button>
+            </div>
+            <div class="main-title-row">
+              <h1 v-if="!isPhone">{{ currentWorkspace.name }}</h1>
+              <button
+                v-if="!isPhone"
                 class="members-btn"
                 type="button"
                 data-testid="hub-members"
@@ -3235,20 +3283,46 @@ onUnmounted(() => {
   margin-top: 18px;
 }
 
+.phone-ws-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.phone-ws-label {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.phone-ws-select {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--touch-min);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.phone-ws-add {
+  flex-shrink: 0;
+}
+
 @media (max-width: 767.98px) {
   .body {
     grid-template-columns: 1fr;
   }
 
-  .sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 220px;
-    overflow: hidden;
+  .main {
+    padding: 16px 14px 28px;
+    max-width: none;
   }
 
-  .main {
-    padding: 20px 16px 32px;
+  .main-title-row h1 {
+    font-size: 20px;
   }
 
   .crumb {
@@ -3256,7 +3330,11 @@ onUnmounted(() => {
   }
 
   .user-name-text {
-    max-width: 88px;
+    max-width: 72px;
+  }
+
+  .header-right {
+    gap: 4px;
   }
 
   .base-more {

@@ -254,7 +254,6 @@ onBeforeUnmount(() => {
         <span v-if="unreadCount > 0" class="unread-hint">
           {{ unreadCount }} 条未读
         </span>
-        <span v-else class="unread-hint muted">全部已读</span>
         <button
           class="mark-all-btn"
           type="button"
@@ -262,7 +261,7 @@ onBeforeUnmount(() => {
           :disabled="unreadCount === 0 || markingAll"
           @click="markAllRead"
         >
-          {{ markingAll ? '处理中…' : '一键已读' }}
+          {{ markingAll ? '处理中…' : '全部已读' }}
         </button>
       </div>
     </header>
@@ -640,6 +639,26 @@ onBeforeUnmount(() => {
 @media (max-width: 767.98px) {
   .notify-page {
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .notify-topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .back-btn {
+    padding: 0 6px;
+  }
+
+  .topbar-right {
+    gap: 6px;
+  }
+
+  .unread-hint {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .notify-item {

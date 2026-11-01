@@ -57,10 +57,9 @@ function onMaskClick() {
       :aria-label="title || '面板'"
       :data-testid="testId"
     >
-      <button
-        type="button"
+      <div
         class="mobile-sheet-mask"
-        aria-label="关闭"
+        aria-hidden="true"
         @click="onMaskClick"
       />
       <div class="mobile-sheet-panel">
@@ -71,6 +70,7 @@ function onMaskClick() {
           <button
             type="button"
             class="mobile-sheet-close touch-target"
+            data-testid="mobile-sheet-close"
             aria-label="关闭"
             @click="emit('close')"
           >

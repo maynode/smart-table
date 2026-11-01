@@ -87,27 +87,34 @@ function onCardClick(id: string): void {
       v-for="record in records"
       :key="record.id"
       type="button"
-      class="record-card touch-target"
+      class="record-card"
       :class="{ selected: selected.has(record.id) }"
       :data-testid="`record-card-${record.id}`"
       @click="onCardClick(record.id)"
     >
       <div class="record-card-title">{{ titleText(record) }}</div>
-      <div class="record-card-meta">
-        <span
-          v-for="field in summaryFields"
-          :key="field.id"
-          class="meta-chip"
-        >
-          <span class="meta-label">{{ field.name }}</span>
-          {{
-            formatCellSummary(
-              record.cells?.[field.id],
-              field.type,
-              field.options,
-            )
-          }}
-        </span>
+      <div v-if="summaryFields.length" class="record-card-meta">
+        <template v-for="field in summaryFields" :key="field.id">
+          <span
+            v-if="
+              formatCellSummary(
+                record.cells?.[field.id],
+                field.type,
+                field.options,
+              ) !== '—'
+            "
+            class="meta-chip"
+          >
+            <span class="meta-label">{{ field.name }}</span>
+            <span class="meta-value">{{
+              formatCellSummary(
+                record.cells?.[field.id],
+                field.type,
+                field.options,
+              )
+            }}</span>
+          </span>
+        </template>
       </div>
     </button>
   </div>
@@ -132,14 +139,21 @@ function onCardClick(id: string): void {
 }
 
 .record-card {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
   width: 100%;
+  min-height: var(--touch-min);
+  height: auto;
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg);
   padding: 12px 14px;
   cursor: pointer;
+  overflow: visible;
 }
 
 .record-card.selected {
@@ -150,20 +164,38 @@ function onCardClick(id: string): void {
 .record-card-title {
   font-weight: 600;
   font-size: 15px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .record-card-meta {
-  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
+.meta-chip {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .meta-label {
+  flex-shrink: 0;
   color: var(--text-tertiary);
   margin-right: 4px;
+}
+
+.meta-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
 }
 
 .empty,

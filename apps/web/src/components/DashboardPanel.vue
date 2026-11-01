@@ -1633,6 +1633,7 @@ function onAiApplied(): void {
   display: flex;
   gap: 10px;
   align-items: end;
+  flex-wrap: wrap;
 }
 .schedule-row {
   display: flex;
@@ -1645,6 +1646,22 @@ function onAiApplied(): void {
   border-radius: 8px;
   background: #f8f9fb;
   font-size: 13px;
+}
+@media (max-width: 767.98px) {
+  .schedule-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .schedule-form label {
+    width: 100%;
+  }
+  .schedule-form .btn {
+    width: 100%;
+  }
+  .schedule-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 .schedule-row small {
   margin-left: 8px;

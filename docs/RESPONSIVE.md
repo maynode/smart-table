@@ -17,9 +17,10 @@
 
 - **站外底栏**：仅 **phone** 显示（首页 / 通知 / 我的；`/admin/*` 同）；平板/桌面用顶栏，避免挤坏 hub 双栏。
 - Base、登录、公开页始终隐藏底栏。
-- **Base 面 Tab**：数据 | 表单 | 自动化 | 仪表盘 | 分析；侧栏按面过滤；phone 侧栏为抽屉。
-- **深链**：`?face=&oid=&formMode=`。
-- 首页 `.hub` 用 flex 填满 `app-shell-main`，禁止 `100vh`（会与顶栏横幅/底栏叠加裁切）。
+- **Base 面 Tab**：数据 | 表单 | 自动化 | 仪表盘 | 分析；侧栏按面过滤；phone 侧栏为抽屉（☰，非面 Tab）。
+- **深链**：`?face=&oid=&formMode=`（`applyRouteDeepLink` 必须读取并切换面，不可只写不读）。
+- 首页 `.hub` 用 flex 填满 `app-shell-main`，禁止 `100vh`；phone 隐藏工作区侧栏，改用顶栏 select 切换。
+- 反馈 FAB 在有站外底栏时抬高 `station-nav-height`，避免挡住「我的」。
 
 ## 数据表
 
