@@ -2434,6 +2434,21 @@ onMounted(load);
   background: var(--bg-muted, #f7f8fa);
   border-radius: 12px;
 }
+@media (max-width: 767.98px) {
+  .automation-editor {
+    max-width: none;
+    width: 100%;
+    min-height: 100%;
+    border-radius: 0;
+    padding: 12px 16px calc(24px + env(safe-area-inset-bottom, 0));
+  }
+  .editor-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-muted, #f7f8fa);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+}
 .editor-head {
   display: flex;
   justify-content: space-between;

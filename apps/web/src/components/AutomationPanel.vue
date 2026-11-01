@@ -12,11 +12,14 @@ import type {
 import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 
+import { useViewport } from '../composables/useViewport';
+
 const props = withDefaults(
-  defineProps<{ baseId: string; editable?: boolean }>(),
-  { editable: true },
+  defineProps<{ baseId: string; editable?: boolean; embedded?: boolean }>(),
+  { editable: true, embedded: false },
 );
 const emit = defineEmits<{ close: [] }>();
+const { isPhone } = useViewport();
 
 const automations = ref<AutomationDto[]>([]);
 const sheets = ref<SheetDto[]>([]);
@@ -376,13 +379,23 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="automation-panel" data-testid="automation-panel" @click="menuOpenId = ''">
+  <div
+    class="automation-panel"
+    :class="{ 'is-editing': editorOpen }"
+    data-testid="automation-panel"
+    @click="menuOpenId = ''"
+  >
     <header v-if="!editorOpen" class="panel-header">
       <div class="panel-title-block">
         <h3>{{ runsViewAutomation ? '运行详情' : '自动化' }}</h3>
         <p v-if="runsViewAutomation" class="quota-line">{{ runsViewAutomation.name }}</p>
       </div>
-      <button class="icon-btn close-btn" aria-label="关闭" @click="emit('close')">
+      <button
+        v-if="!embedded"
+        class="icon-btn close-btn"
+        aria-label="关闭"
+        @click="emit('close')"
+      >
         ×
       </button>
     </header>
@@ -440,6 +453,55 @@ onBeforeUnmount(() => {
         <p v-if="runsLoading" class="muted runs-empty">加载运行记录…</p>
         <p v-else-if="filteredRuns.length === 0" class="muted runs-empty">还没有运行记录</p>
 
+        <div v-if="isPhone" class="runs-cards" data-testid="automation-runs-cards">
+          <article
+            v-for="run in filteredRuns"
+            :key="run.id"
+            class="run-card"
+            data-testid="automation-run-row"
+            :data-status="run.status"
+          >
+            <div class="run-card-head">
+              <span class="run-status" :class="run.status">
+                {{ statusLabel(run.status) }}
+              </span>
+              <span class="muted">{{ formatDuration(run.durationMs) }}</span>
+            </div>
+            <div class="run-card-time">{{ formatTime(run.startedAt) }}</div>
+            <div class="run-card-actions">
+              <button class="link-btn" type="button" @click="toggleRun(run)">
+                {{ expandedRunId === run.id ? '收起' : '详情' }}
+              </button>
+              <button
+                v-if="run.status === 'failed'"
+                class="link-btn"
+                type="button"
+                data-testid="automation-run-retry"
+                :disabled="runningId === runsViewAutomation.id"
+                @click="runNow(runsViewAutomation)"
+              >
+                重试
+              </button>
+            </div>
+            <div v-if="expandedRunId === run.id" class="run-card-detail">
+              <div v-if="run.error" class="run-error-line">{{ run.error }}</div>
+              <div
+                v-for="step in run.steps"
+                :key="`${run.id}-${step.stepIndex}`"
+                class="run-step"
+              >
+                <span class="run-step-index">{{ step.stepIndex + 1 }}</span>
+                <span>{{ stepLabel(step.type) }}</span>
+                <span class="run-status" :class="step.status">
+                  {{ statusLabel(step.status) }}
+                </span>
+                <span class="muted">{{ formatDuration(step.durationMs) }}</span>
+                <span v-if="step.error" class="run-error">{{ step.error }}</span>
+              </div>
+              <p v-if="run.steps.length === 0" class="muted">没有步骤明细。</p>
+            </div>
+          </article>
+        </div>
         <table v-else class="runs-table">
           <thead>
             <tr>
@@ -652,7 +714,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 420px;
+  min-height: 0;
   padding: 4px 4px 12px;
+}
+.automation-panel.is-editing {
+  min-height: calc(100vh - 120px);
 }
 .panel-header {
   display: flex;
@@ -1027,5 +1093,58 @@ onBeforeUnmount(() => {
   margin: 12px 4px;
   color: #d92d20;
   font-size: 13px;
+}
+.runs-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.run-card {
+  border: 1px solid #e5e6eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fff;
+}
+.run-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.run-card-time {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8f959e;
+}
+.run-card-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+}
+.run-card-detail {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #eef0f3;
+}
+@media (max-width: 767.98px) {
+  .automation-panel.is-editing {
+    position: fixed;
+    inset: 0;
+    z-index: 350;
+    min-height: 100%;
+    background: var(--bg, #fff);
+    padding: env(safe-area-inset-top, 0) 0 env(safe-area-inset-bottom, 0);
+    overflow: auto;
+  }
+  .automation-card {
+    padding: 12px;
+  }
+  .panel-header {
+    padding: 8px 12px;
+    position: sticky;
+    top: 0;
+    background: var(--bg, #fff);
+    z-index: 1;
+  }
 }
 </style>

@@ -494,6 +494,7 @@ onUnmounted(() => {
           删除
         </button>
         <button
+          v-if="!embedded"
           class="icon-btn"
           type="button"
           data-testid="analysis-close"
@@ -1161,5 +1162,40 @@ onUnmounted(() => {
 .composer-actions .btn-ghost:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+@media (max-width: 767.98px) {
+  .analysis-body {
+    flex-direction: column;
+  }
+  .analysis-list {
+    width: 100%;
+    max-height: 120px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-light, #eef0f3);
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+  }
+  .analysis-main {
+    flex: 1;
+    min-height: 40%;
+    border-right: 0;
+  }
+  .report-canvas {
+    margin: 8px;
+    padding: 16px;
+    width: calc(100% - 16px);
+    height: calc(100% - 16px);
+  }
+  .analysis-chat {
+    width: 100%;
+    max-height: 45%;
+    border-top: 1px solid var(--border-light, #eef0f3);
+  }
+  .analysis-top-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 </style>

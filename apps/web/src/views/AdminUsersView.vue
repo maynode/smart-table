@@ -6,11 +6,13 @@ import { messageOf } from '../api/error-message';
 import type { AdminUserDto } from '../api/types';
 import AdminMessageDialog from '../components/AdminMessageDialog.vue';
 import PageLoading from '../components/PageLoading.vue';
+import { useViewport } from '../composables/useViewport';
 import { auth } from '../stores/auth';
 import { confirmDialog } from '../ui/dialog';
 import { toast } from '../ui/toast';
 
 const router = useRouter();
+const { isPhone } = useViewport();
 type IdentityFilter = '' | 'admin' | 'user' | 'blacklisted' | 'locked';
 
 const items = ref<AdminUserDto[]>([]);
@@ -286,6 +288,80 @@ onMounted(async () => {
 
       <PageLoading v-if="loading" label="加载用户…" />
       <p v-else-if="!items.length" class="admin-empty">暂无用户</p>
+      <div
+        v-else-if="isPhone"
+        class="admin-users-cards"
+        data-testid="admin-users-cards"
+      >
+        <article
+          v-for="row in items"
+          :key="row.id"
+          class="admin-user-card"
+          :data-blacklisted="Boolean(row.blacklistedAt)"
+        >
+          <div class="admin-users-name">
+            <strong>{{ row.account }}</strong>
+            <span v-if="row.blacklistedAt" class="admin-users-tag">禁止登录</span>
+            <span v-if="isLoginLocked(row)" class="admin-users-tag">登录锁定</span>
+            <span v-if="row.installAdmin" class="admin-users-tag admin"
+              >系统管理员</span
+            >
+          </div>
+          <p class="admin-user-card-meta">
+            注册 {{ formatTime(row.createdAt) }} · 工作区
+            {{ row.workspaceCount }} · 表 {{ row.baseCount }}
+          </p>
+          <div class="admin-users-actions">
+            <button
+              type="button"
+              class="btn touch-target"
+              :disabled="busyId === row.id"
+              @click="impersonate(row)"
+            >
+              模拟登录
+            </button>
+            <button
+              type="button"
+              class="btn touch-target"
+              :disabled="busyId === row.id"
+              @click="openMessage(row)"
+            >
+              发消息
+            </button>
+            <button
+              v-if="isLoginLocked(row)"
+              type="button"
+              class="btn touch-target"
+              :disabled="busyId === row.id"
+              data-testid="admin-users-unlock"
+              @click="unlockLogin(row)"
+            >
+              解锁登录
+            </button>
+            <button
+              type="button"
+              class="btn touch-target"
+              :disabled="
+                busyId === row.id ||
+                (Boolean(row.blacklistedAt) && !row.installAdmin)
+              "
+              data-testid="admin-users-install-admin"
+              @click="toggleInstallAdmin(row)"
+            >
+              {{ row.installAdmin ? '取消系统管理员' : '设为系统管理员' }}
+            </button>
+            <button
+              type="button"
+              class="btn touch-target"
+              :class="row.blacklistedAt ? 'btn-ghost' : 'btn-danger'"
+              :disabled="busyId === row.id || row.installAdmin"
+              @click="toggleBlacklist(row)"
+            >
+              {{ row.blacklistedAt ? '允许登录' : '禁止登录' }}
+            </button>
+          </div>
+        </article>
+      </div>
       <div v-else class="admin-users-table-wrap">
         <table class="admin-users-table" data-testid="admin-users-table">
           <thead>

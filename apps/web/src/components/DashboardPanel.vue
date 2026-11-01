@@ -4,6 +4,7 @@ import type { LiveEvent } from 'shared';
 import DashboardChart from './DashboardChart.vue';
 import DashboardAiDock from './DashboardAiDock.vue';
 import PageLoading from './PageLoading.vue';
+import { useViewport } from '../composables/useViewport';
 import { endpoints } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { liveBus } from '../sync/live-bus';
@@ -50,6 +51,8 @@ type WidgetType =
   | 'text';
 
 const aiOpen = ref(false);
+const { isPhone } = useViewport();
+const phoneBuilderOpen = ref(false);
 
 watch(
   () => props.editable,
@@ -529,6 +532,7 @@ async function addWidget(): Promise<void> {
     });
     await loadDashboard(active.value.id);
     toast('图表已添加');
+    phoneBuilderOpen.value = false;
   } catch (error) {
     toast(messageOf(error));
   } finally {
@@ -648,9 +652,34 @@ function onAiApplied(): void {
         <PageLoading label="加载仪表盘…" />
       </div>
       <div v-else-if="active" class="dashboard-main">
-        <section v-if="editable" class="widget-builder chart-config">
+        <div v-if="editable && isPhone" class="phone-dash-actions">
+          <button
+            type="button"
+            class="btn btn-primary touch-target"
+            data-testid="dashboard-phone-builder"
+            @click="phoneBuilderOpen = true"
+          >
+            添加 / 配置图表
+          </button>
+        </div>
+        <section
+          v-if="editable && (!isPhone || phoneBuilderOpen)"
+          class="widget-builder chart-config"
+          :class="{ 'as-phone-sheet': isPhone }"
+        >
+          <header v-if="isPhone" class="phone-sheet-bar">
+            <strong>添加图表</strong>
+            <button
+              type="button"
+              class="icon-btn"
+              data-testid="dashboard-phone-builder-close"
+              @click="phoneBuilderOpen = false"
+            >
+              ×
+            </button>
+          </header>
           <div class="chart-config-main">
-          <h4>添加图表</h4>
+          <h4 v-if="!isPhone">添加图表</h4>
           <div class="config-tabs">
             <button
               type="button"
@@ -1470,12 +1499,45 @@ function onAiApplied(): void {
   align-items: end;
   position: relative;
 }
-@media (max-width: 1100px) {
+.phone-dash-actions {
+  display: none;
+  padding: 8px 0 12px;
+}
+.phone-sheet-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #e5e6eb);
+}
+@media (max-width: 1099.98px) {
   .chart-config {
     grid-template-columns: 1fr;
   }
   .type-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767.98px) {
+  .phone-dash-actions {
+    display: block;
+  }
+  .widget-builder.as-phone-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 360;
+    margin: 0;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0));
+    padding-top: calc(12px + env(safe-area-inset-top, 0));
+    background: var(--bg, #fff);
+    overflow: auto;
+  }
+  .chart-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .chart-card {
+    grid-column: 1 / -1 !important;
   }
 }
 .inline-check > span:last-child {

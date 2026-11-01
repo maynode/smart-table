@@ -3225,7 +3225,7 @@ onUnmounted(() => {
   margin-top: 18px;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 767.98px) {
   .body {
     grid-template-columns: 1fr;
   }

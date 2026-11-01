@@ -4,7 +4,11 @@ import type { AiComponentOptions } from 'shared';
 import CanvasGrid from './CanvasGrid.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FieldOptionsEditor from './FieldOptionsEditor.vue';
+import RecordListView from './RecordListView.vue';
+import RecordDetailSheet from './RecordDetailSheet.vue';
+import CompactRecordTable from './CompactRecordTable.vue';
 import { useFloatDrag } from '../composables/useFloatDrag';
+import { useViewport } from '../composables/useViewport';
 import { endpoints } from '../api/endpoints';
 import { toast } from '../ui/toast';
 import type { FieldDto, MemberDto, RecordDto, SheetDto } from '../api/types';
@@ -140,6 +144,27 @@ const emit = defineEmits<{
 }>();
 
 const gridRef = ref<InstanceType<typeof CanvasGrid> | null>(null);
+const { isPhone, isTablet } = useViewport();
+/** Phone: list (default) | compact DOM table. Tablet/desktop: canvas. */
+const phoneLayout = ref<'list' | 'compact'>('list');
+const detailRecordId = ref<string | null>(null);
+const detailRecord = computed(
+  () =>
+    props.records.find((r) => r.id === detailRecordId.value) ??
+    null,
+);
+const showPhoneList = computed(
+  () => isPhone.value && phoneLayout.value === 'list',
+);
+const showPhoneCompact = computed(
+  () => isPhone.value && phoneLayout.value === 'compact',
+);
+function openRecordDetail(id: string): void {
+  detailRecordId.value = id;
+}
+function closeRecordDetail(): void {
+  detailRecordId.value = null;
+}
 function openAiComponentHost(payload: {
   record: RecordDto;
   field: FieldDto;
@@ -1709,6 +1734,27 @@ defineExpose({
       </span>
     </div>
 
+    <div v-if="isPhone" class="phone-layout-toggle" data-testid="phone-layout-toggle">
+      <button
+        type="button"
+        class="btn"
+        :class="{ 'btn-primary': phoneLayout === 'list' }"
+        data-testid="phone-layout-list"
+        @click="phoneLayout = 'list'"
+      >
+        列表
+      </button>
+      <button
+        type="button"
+        class="btn"
+        :class="{ 'btn-primary': phoneLayout === 'compact' }"
+        data-testid="phone-layout-compact"
+        @click="phoneLayout = 'compact'"
+      >
+        表格
+      </button>
+    </div>
+
     <div class="grid-stage">
       <div
         v-if="loading && displayRecords.length > 0"
@@ -1718,7 +1764,24 @@ defineExpose({
         <span class="page-loading-spinner" aria-hidden="true" />
         加载中…
       </div>
+      <RecordListView
+        v-if="showPhoneList"
+        :fields="fields"
+        :records="displayRecords"
+        :editable="editable"
+        :loading="loading"
+        @open-record="openRecordDetail"
+        @add-row="emit('addRow')"
+      />
+      <CompactRecordTable
+        v-else-if="showPhoneCompact"
+        :fields="fields"
+        :records="displayRecords"
+        @open-record="openRecordDetail"
+        @open-cell="openRecordDetail($event.recordId)"
+      />
       <CanvasGrid
+        v-else
         ref="gridRef"
         :fields="fields"
         :records="displayRecords"
@@ -1728,7 +1791,7 @@ defineExpose({
         :record-cache-epoch="recordCacheEpoch ?? 0"
         :editable="editable"
         :show-add-column="editable"
-        :row-height="rowHeight ?? 36"
+        :row-height="(rowHeight ?? 36) + (isTablet ? 8 : 0)"
         :freeze-column-count="freezeColumnCount"
         :row-colors="rowColors"
         :row-depths="rowDepths"
@@ -1756,6 +1819,16 @@ defineExpose({
         @open-ai-component="openAiComponentHost"
       />
     </div>
+
+    <RecordDetailSheet
+      :open="Boolean(detailRecordId)"
+      :record="detailRecord"
+      :fields="fields"
+      :editable="editable"
+      :members="members"
+      @close="closeRecordDetail"
+      @commit="emit('commit', $event)"
+    />
 
     <!-- 底栏已画在 Canvas 内；保留测试钩子 -->
     <span class="sr-only" data-testid="record-count">
@@ -1889,6 +1962,23 @@ defineExpose({
   height: 100%;
   min-height: 0;
   background: #fff;
+}
+@media (max-width: 767.98px) {
+  .grid-toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .view-panel {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 340;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
 }
 .grid-toolbar {
   display: flex;
@@ -2415,6 +2505,13 @@ defineExpose({
 }
 .swatch.active {
   outline: 2px solid #2d8cf0;
+}
+.phone-layout-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
 }
 .grid-stage {
   position: relative;

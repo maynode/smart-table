@@ -34,6 +34,7 @@ import type {
   MemberDto,
   SheetDto,
 } from '../api/types';
+import { useViewport } from '../composables/useViewport';
 import DisplayRuleEditor from './DisplayRuleEditor.vue';
 import FieldTypePicker from './FieldTypePicker.vue';
 import FormFieldControl from './FormFieldControl.vue';
@@ -88,8 +89,17 @@ const audience = ref<'anyone' | 'workspace'>('anyone');
 const expiresAt = ref('');
 const items = ref<FormFieldConfigDto[]>([]);
 const selectedFieldId = ref('');
+const { isPhone } = useViewport();
+const phoneSettingsOpen = ref(false);
+const phoneFillOpen = ref(false);
 const conditionOwnerId = ref('');
 const addFieldId = ref('');
+
+function selectFormField(fieldId: string): void {
+  selectedFieldId.value = fieldId;
+  if (isPhone.value) phoneSettingsOpen.value = true;
+}
+
 /** 企微进入收集表单默认「编辑表单」；可从结果页返回时指定 */
 const previewTab = ref<'design' | 'preview'>(
   props.editable === false ? 'preview' : (props.initialTab ?? 'design'),
@@ -1156,7 +1166,7 @@ onBeforeUnmount(() => {
                 class="field-row"
                 :class="fieldRowClass(item.fieldId)"
                 :data-testid="`form-field-${item.fieldId}`"
-                @click="selectedFieldId = item.fieldId"
+                @click="selectFormField(item.fieldId)"
               >
                 <div class="field-row-main">
                   <span class="field-icon">{{ fieldTypeIcon(fieldById.get(item.fieldId)?.type ?? 'text') }}</span>
@@ -1222,11 +1232,38 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
+          <div v-if="isPhone" class="phone-form-actions">
+            <button
+              type="button"
+              class="btn touch-target"
+              data-testid="form-phone-field-settings"
+              :disabled="!selectedConfig"
+              @click="phoneSettingsOpen = true"
+            >
+              字段条件
+            </button>
+            <button
+              type="button"
+              class="btn touch-target"
+              data-testid="form-phone-fill-settings"
+              @click="phoneFillOpen = true"
+            >
+              填写与分享
+            </button>
+          </div>
+
           <section
-            v-if="selectedConfig"
+            v-if="selectedConfig && (!isPhone || phoneSettingsOpen)"
             class="builder-section field-settings"
+            :class="{ 'as-phone-sheet': isPhone }"
             data-testid="form-field-settings"
           >
+            <header v-if="isPhone" class="phone-sheet-bar">
+              <strong>显示条件</strong>
+              <button type="button" class="icon-btn" @click="phoneSettingsOpen = false">
+                ×
+              </button>
+            </header>
             <header class="field-settings-head">
               <strong class="section-title">显示条件</strong>
               <p class="setting-hint">
@@ -1241,7 +1278,18 @@ onBeforeUnmount(() => {
             />
           </section>
 
-          <section class="builder-section fill-settings" data-testid="form-fill-settings">
+          <section
+            v-if="!isPhone || phoneFillOpen"
+            class="builder-section fill-settings"
+            :class="{ 'as-phone-sheet': isPhone }"
+            data-testid="form-fill-settings"
+          >
+            <header v-if="isPhone" class="phone-sheet-bar">
+              <strong>填写与分享</strong>
+              <button type="button" class="icon-btn" @click="phoneFillOpen = false">
+                ×
+              </button>
+            </header>
             <div class="field-heading">
               <span class="section-title">填写设置</span>
             </div>
@@ -1357,7 +1405,7 @@ onBeforeUnmount(() => {
               :key="item.config.fieldId"
               class="canvas-field"
               :class="fieldRowClass(item.config.fieldId)"
-              @click="selectedFieldId = item.config.fieldId"
+              @click="selectFormField(item.config.fieldId)"
             >
               <div class="canvas-field-label">
                 <em v-if="item.config.required" class="required-star">*</em>
@@ -2854,7 +2902,21 @@ onBeforeUnmount(() => {
 .muted {
   color: #667085;
 }
-@media (max-width: 960px) {
+.phone-form-actions {
+  display: none;
+  gap: 8px;
+  padding: 8px 0 12px;
+  flex-wrap: wrap;
+}
+.phone-sheet-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #e5e6eb);
+}
+@media (max-width: 767.98px) {
   .builder-layout {
     grid-template-columns: 1fr;
   }
@@ -2863,6 +2925,22 @@ onBeforeUnmount(() => {
   }
   .preview-pane {
     grid-template-columns: 1fr;
+  }
+  .phone-form-actions {
+    display: flex;
+  }
+  .field-settings.as-phone-sheet,
+  .fill-settings.as-phone-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 360;
+    margin: 0;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0));
+    padding-top: calc(12px + env(safe-area-inset-top, 0));
+    background: var(--bg, #fff);
+    overflow: auto;
+    border-radius: 0;
+    box-shadow: none;
   }
 }
 </style>

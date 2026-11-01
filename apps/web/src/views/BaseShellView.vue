@@ -11,6 +11,14 @@ import TemplatePanel from '../components/TemplatePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
 import PageLoading from '../components/PageLoading.vue';
+import { useViewport } from '../composables/useViewport';
+import {
+  faceFromMainView,
+  parseFaceQuery,
+  sidebarSectionVisible,
+  type BaseFace,
+  type MainView,
+} from './base-face';
 import { ApiError } from '../api/client';
 import { endpoints } from '../api/endpoints';
 import { confirmDialog, promptDialog } from '../ui/dialog';
@@ -141,14 +149,29 @@ const activeDashboardId = ref('');
  * dashboard：仪表盘主区
  * analysis：分析报告主区（右侧嵌入，非弹窗）
  */
-const mainView = ref<
-  'grid' | 'form' | 'form-results' | 'dashboard' | 'analysis'
->('grid');
+const mainView = ref<MainView>('grid');
+const { isPhone } = useViewport();
+const sidebarDrawerOpen = ref(false);
+
+const currentFace = computed(() => faceFromMainView(mainView.value));
+
+const faceTabs = computed(() => {
+  const tabs: { face: BaseFace; label: string; show: boolean }[] = [
+    { face: 'data', label: '数据', show: true },
+    { face: 'form', label: '表单', show: true },
+    { face: 'automation', label: '自动化', show: canEditByRole.value },
+    { face: 'dashboard', label: '仪表盘', show: true },
+    { face: 'analysis', label: '分析', show: true },
+  ];
+  return tabs.filter((t) => t.show);
+});
+
 /** 顶栏「只读」：随当前主区对象权限变化，避免仪表盘可写时仍显示表只读 */
 const showReadonlyBanner = computed(() => {
   if (mainView.value === 'dashboard') return !canEditDashboard.value;
   if (mainView.value === 'analysis') return !canEditByRole.value;
   if (mainView.value === 'form') return !canEditForm.value;
+  if (mainView.value === 'automation') return !canEditByRole.value;
   return !canEditSheet.value;
 });
 /** 从收集结果返回表单时，恢复编辑/填写 Tab */
@@ -221,6 +244,77 @@ const commentMentions = ref<string[]>([]);
 const members = ref<MemberDto[]>([]);
 
 const automationsOpen = ref(false);
+
+function syncFaceQuery(): void {
+  const face = currentFace.value;
+  const query: Record<string, string> = {
+    ...Object.fromEntries(
+      Object.entries(route.query).map(([k, v]) => [k, String(v ?? '')]),
+    ),
+    face,
+  };
+  if (face === 'form') {
+    query.formMode =
+      mainView.value === 'form-results' ? 'results' : 'design';
+  } else {
+    delete query.formMode;
+  }
+  if (face === 'data' || face === 'form') {
+    if (activeSheet.value?.id) query.oid = activeSheet.value.id;
+  } else if (face === 'dashboard' && activeDashboardId.value) {
+    query.oid = activeDashboardId.value;
+  } else if (face === 'analysis' && activeAnalysisReportId.value) {
+    query.oid = activeAnalysisReportId.value;
+  } else {
+    delete query.oid;
+  }
+  void router.replace({ query });
+}
+
+function selectFace(face: BaseFace): void {
+  // Phone: face switch keeps main content; open object list only via「列表」or
+  // when the face has no selectable object yet.
+  if (face === currentFace.value) {
+    if (isPhone.value) sidebarDrawerOpen.value = true;
+    return;
+  }
+  if (isPhone.value) sidebarDrawerOpen.value = false;
+
+  if (face === 'automation') {
+    mainView.value = 'automation';
+    automationsOpen.value = false;
+    syncFaceQuery();
+    return;
+  }
+  if (face === 'data') {
+    const sheet =
+      dataSheets.value[0] ?? sheets.value.find((s) => !isFormSheet(s));
+    if (sheet) void selectSheet(sheet.id);
+    else {
+      mainView.value = 'grid';
+      if (isPhone.value) sidebarDrawerOpen.value = true;
+    }
+  } else if (face === 'form') {
+    const sheet = formSheets.value[0];
+    if (sheet) void selectSheet(sheet.id);
+    else {
+      void openOrCreateFormSheet();
+      if (isPhone.value) sidebarDrawerOpen.value = true;
+    }
+  } else if (face === 'dashboard') {
+    const dash = dashboards.value[0];
+    if (dash) openDashboard(dash.id);
+    else if (isPhone.value) sidebarDrawerOpen.value = true;
+  } else if (face === 'analysis') {
+    const report = analysisReports.value[0];
+    if (report) openAnalysisReport(report.id);
+    else {
+      mainView.value = 'analysis';
+      if (isPhone.value) sidebarDrawerOpen.value = true;
+    }
+  }
+  syncFaceQuery();
+}
 const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
 const templatesOpen = ref(false);
@@ -2661,7 +2755,7 @@ onBeforeUnmount(() => {
           v-if="canEditByRole"
           class="topbar-btn"
           data-testid="automation-open"
-          @click="automationsOpen = true"
+          @click="selectFace('automation')"
         >
           自动化
         </button>
@@ -2727,10 +2821,54 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div class="base-body">
-      <aside class="sidebar">
+    <div
+      class="face-tabs"
+      data-testid="base-face-tabs"
+      role="tablist"
+      aria-label="对象类型"
+    >
+      <button
+        v-if="isPhone"
+        type="button"
+        class="face-tab face-tab-menu touch-target"
+        data-testid="base-sidebar-toggle"
+        aria-label="对象列表"
+        @click="sidebarDrawerOpen = !sidebarDrawerOpen"
+      >
+        列表
+      </button>
+      <button
+        v-for="tab in faceTabs"
+        :key="tab.face"
+        type="button"
+        role="tab"
+        class="face-tab"
+        :class="{ active: currentFace === tab.face }"
+        :data-testid="`face-tab-${tab.face}`"
+        :aria-selected="currentFace === tab.face"
+        @click="selectFace(tab.face)"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <div class="base-body" :class="{ 'sidebar-open': sidebarDrawerOpen }">
+      <button
+        v-if="isPhone && sidebarDrawerOpen"
+        type="button"
+        class="sidebar-mask"
+        aria-label="关闭列表"
+        @click="sidebarDrawerOpen = false"
+      />
+      <aside
+        class="sidebar"
+        :class="{ 'is-drawer': isPhone, open: sidebarDrawerOpen || !isPhone }"
+      >
         <div class="sidebar-scroll">
-          <div class="sidebar-section">
+          <div
+            v-if="sidebarSectionVisible(currentFace, 'sheets')"
+            class="sidebar-section"
+          >
             <div class="sidebar-title">
               <button
                 type="button"
@@ -2793,7 +2931,10 @@ onBeforeUnmount(() => {
             </template>
           </div>
 
-          <div class="sidebar-section">
+          <div
+            v-if="sidebarSectionVisible(currentFace, 'forms')"
+            class="sidebar-section"
+          >
             <div class="sidebar-title">
               <button
                 type="button"
@@ -2856,7 +2997,10 @@ onBeforeUnmount(() => {
             </template>
           </div>
 
-          <div class="sidebar-section">
+          <div
+            v-if="sidebarSectionVisible(currentFace, 'dashboards')"
+            class="sidebar-section"
+          >
             <div class="sidebar-title">
               <button
                 type="button"
@@ -2934,7 +3078,10 @@ onBeforeUnmount(() => {
             </template>
           </div>
 
-          <div class="sidebar-section">
+          <div
+            v-if="sidebarSectionVisible(currentFace, 'analysis')"
+            class="sidebar-section"
+          >
             <div class="sidebar-title">
               <button
                 type="button"
@@ -3030,6 +3177,18 @@ onBeforeUnmount(() => {
       <main class="base-main">
         <div v-if="bootError" class="empty-state">{{ bootError }}</div>
         <PageLoading v-else-if="booting" label="加载表格…" />
+        <div
+          v-else-if="mainView === 'automation'"
+          class="automation-face"
+          data-testid="automation-face"
+        >
+          <AutomationPanel
+            :base-id="baseId"
+            :editable="canEditByRole"
+            embedded
+            @close="selectFace('data')"
+          />
+        </div>
         <DashboardPanel
           v-else-if="mainView === 'dashboard' && activeDashboardId"
           :key="activeDashboardId"
@@ -3406,6 +3565,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .hidden-file {
   display: none;
+}
+.sidebar-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border: 0;
+  background: rgba(15, 20, 25, 0.35);
 }
 .automation-modal {
   width: min(880px, 94vw);

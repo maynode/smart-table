@@ -276,7 +276,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 40px 16px 64px;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 16px
+    calc(64px + env(safe-area-inset-bottom, 0px));
   background:
     radial-gradient(ellipse 80% 50% at 50% -10%, #e8f3ff 0%, transparent 55%),
     #f2f4f7;

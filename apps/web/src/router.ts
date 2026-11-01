@@ -21,6 +21,11 @@ export const router = createRouter({
       component: () => import('./views/NotificationsView.vue'),
     },
     {
+      path: '/me',
+      name: 'me',
+      component: () => import('./views/MeView.vue'),
+    },
+    {
       path: '/admin/feedback',
       name: 'admin-feedback',
       component: () => import('./views/AdminFeedbackView.vue'),

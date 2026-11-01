@@ -5,6 +5,8 @@ import { endpoints } from '../api/endpoints';
 import { ApiError, NetworkError } from '../api/client';
 import DashboardChart from '../components/DashboardChart.vue';
 import PageLoading from '../components/PageLoading.vue';
+import { useViewport } from '../composables/useViewport';
+import { formatCellSummary } from '../composables/recordSummary';
 import { liveBus } from '../sync/live-bus';
 import { liveSocket } from '../sync/live-socket';
 import { renderSimpleMarkdown } from '../ui/simple-markdown';
@@ -17,6 +19,7 @@ import type {
 type SectionKey = 'sheets' | 'forms' | 'dashboards' | 'reports';
 
 const route = useRoute();
+const { isPhone } = useViewport();
 const token = String(route.params.token);
 const data = ref<PublicViewData | null>(null);
 const password = ref('');
@@ -317,7 +320,26 @@ onBeforeUnmount(() => {
             {{ sheet.name }}
           </button>
         </div>
-        <div class="table-wrap">
+        <div v-if="isPhone" class="public-card-list" data-testid="public-view-cards">
+          <article
+            v-for="record in activeSheet.records"
+            :key="record.id"
+            class="public-card"
+          >
+            <div
+              v-for="field in activeSheet.fields.slice(0, 4)"
+              :key="field.id"
+              class="public-card-row"
+            >
+              <span class="public-card-label">{{ field.name }}</span>
+              <span>{{
+                formatCellSummary(record.cells[field.id], field.type)
+              }}</span>
+            </div>
+          </article>
+          <p v-if="!activeSheet.records.length" class="empty">暂无数据。</p>
+        </div>
+        <div v-else class="table-wrap">
           <table data-testid="public-view-table">
             <thead>
               <tr>
@@ -655,5 +677,30 @@ tbody tr:last-child td {
   color: #8a9099;
   text-align: center;
   font-size: 13px;
+}
+.public-card-list {
+  max-width: 560px;
+  margin: 0 auto 48px;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.public-card {
+  border: 1px solid var(--border, #e5e6eb);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.public-card-row {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.public-card-label {
+  color: #8a9099;
+  min-width: 72px;
+  flex-shrink: 0;
 }
 </style>

@@ -637,10 +637,15 @@ onBeforeUnmount(() => {
   padding-top: 4px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767.98px) {
+  .notify-page {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
   .notify-item {
     flex-direction: column;
     gap: 8px;
+    min-height: var(--touch-min, 44px);
   }
 
   .notify-meta {
@@ -649,6 +654,11 @@ onBeforeUnmount(() => {
     align-items: center;
     width: 100%;
     justify-content: space-between;
+  }
+
+  .notify-detail-panel {
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    border-radius: 12px 12px 0 0;
   }
 }
 </style>
