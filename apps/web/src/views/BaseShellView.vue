@@ -3285,6 +3285,25 @@ onBeforeUnmount(() => {
           :sheets="sheets"
           :editable="canEditDashboard"
         />
+        <div
+          v-else-if="mainView === 'dashboard'"
+          class="empty-state"
+          data-testid="dashboard-face-empty"
+        >
+          <p class="empty-state-title">还没有仪表盘</p>
+          <p class="empty-state-hint">
+            {{ isPhone ? '点左上角 ☰ 或下方按钮创建仪表盘。' : '点击左侧「+」创建第一个仪表盘。' }}
+          </p>
+          <button
+            v-if="canEditByRole"
+            class="btn btn-primary"
+            type="button"
+            data-testid="dashboard-face-create"
+            @click="createDashboard"
+          >
+            新建仪表盘
+          </button>
+        </div>
         <AnalysisReportPanel
           v-else-if="mainView === 'analysis' && activeAnalysisReportId"
           :key="activeAnalysisReportId"
@@ -3296,6 +3315,71 @@ onBeforeUnmount(() => {
           @close="closeAnalysisReport"
           @created="onAnalysisReportCreated"
         />
+        <div
+          v-else-if="mainView === 'analysis'"
+          class="empty-state"
+          data-testid="analysis-face-empty"
+        >
+          <p class="empty-state-title">还没有分析报告</p>
+          <p class="empty-state-hint">
+            {{ isPhone ? '点左上角 ☰ 或下方按钮创建分析报告。' : '点击左侧「+」创建第一份分析报告。' }}
+          </p>
+          <button
+            v-if="canEditByRole"
+            class="btn btn-primary"
+            type="button"
+            data-testid="analysis-face-create"
+            @click="createAnalysisReport"
+          >
+            新建分析报告
+          </button>
+        </div>
+        <div
+          v-else-if="mainView === 'analysis'"
+          class="empty-state"
+          data-testid="analysis-empty"
+        >
+          <p class="empty-state-title">还没有分析报告</p>
+          <p class="empty-state-hint">
+            {{
+              isPhone
+                ? '点左上角 ☰ 打开列表，或直接新建报告。'
+                : '在左侧「分析报告」点 + 创建第一份报告。'
+            }}
+          </p>
+          <button
+            v-if="canEditByRole"
+            class="btn btn-primary"
+            type="button"
+            data-testid="analysis-empty-create"
+            @click="createAnalysisReport"
+          >
+            新建分析报告
+          </button>
+        </div>
+        <div
+          v-else-if="mainView === 'dashboard'"
+          class="empty-state"
+          data-testid="dashboard-empty"
+        >
+          <p class="empty-state-title">还没有仪表盘</p>
+          <p class="empty-state-hint">
+            {{
+              isPhone
+                ? '点左上角 ☰ 打开列表，或直接新建仪表盘。'
+                : '在左侧「仪表盘」点 + 创建第一块仪表盘。'
+            }}
+          </p>
+          <button
+            v-if="canEditByRole"
+            class="btn btn-primary"
+            type="button"
+            data-testid="dashboard-empty-create"
+            @click="createDashboard"
+          >
+            新建仪表盘
+          </button>
+        </div>
         <template
           v-else-if="
             activeSheet &&
