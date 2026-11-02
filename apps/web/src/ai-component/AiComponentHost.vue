@@ -339,7 +339,8 @@ onBeforeUnmount(() => {
 .ai-component-host-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 420;
+  /* Above FAB (320) and MobileSheet (400); below lightbox */
+  z-index: 520;
   background: rgba(15, 23, 42, 0.35);
   display: flex;
   align-items: center;

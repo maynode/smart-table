@@ -2270,7 +2270,7 @@ onBeforeUnmount(() => {
 .share-mask {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 450;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2280,13 +2280,14 @@ onBeforeUnmount(() => {
 }
 .share-dialog {
   width: min(440px, 92vw);
+  max-height: min(90vh, 720px);
   padding: 0;
   border-radius: 16px;
   background: #fff;
   box-shadow:
     0 24px 48px rgba(15, 23, 42, 0.18),
     0 0 0 1px rgba(15, 23, 42, 0.04);
-  overflow: hidden;
+  overflow: auto;
 }
 .share-dialog-header {
   display: flex;
@@ -2469,6 +2470,16 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
+}
+@media (max-width: 767.98px) {
+  .field-row-tools {
+    gap: 6px;
+  }
+  .field-row-tools .icon-btn {
+    width: var(--touch-min, 44px);
+    height: var(--touch-min, 44px);
+    font-size: 16px;
+  }
 }
 .field-row-tools .icon-btn:hover:not(:disabled) {
   background: #f2f3f5;
@@ -2941,6 +2952,24 @@ onBeforeUnmount(() => {
     overflow: auto;
     border-radius: 0;
     box-shadow: none;
+  }
+  .share-mask {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+  }
+  .share-dialog {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .share-dialog-footer {
+    margin-top: auto;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0));
   }
 }
 </style>

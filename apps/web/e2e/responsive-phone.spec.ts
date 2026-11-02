@@ -66,9 +66,20 @@ test.describe('responsive phone shell + surfaces', () => {
 
     await page.goto('/');
     await expect(page.getByTestId('station-bottom-nav')).toBeVisible();
-    await page.getByTestId('station-nav-notifications').click();
+    // Hub must be interactive (no leftover modal) before station-nav clicks.
+    await expect(page.locator('.modal-mask')).toHaveCount(0);
+    await expect(page.getByTestId('create-base').first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await Promise.all([
+      page.waitForURL(/\/notifications(?:\?|$)/, { timeout: 15_000 }),
+      page.getByTestId('station-nav-notifications').click(),
+    ]);
     await expect(page.getByTestId('notifications-page')).toBeVisible();
-    await page.getByTestId('station-nav-me').click();
+    await Promise.all([
+      page.waitForURL(/\/me(?:\?|$)/, { timeout: 15_000 }),
+      page.getByTestId('station-nav-me').click(),
+    ]);
     await expect(page.getByTestId('me-page')).toBeVisible();
 
     await page.goto(

@@ -30,6 +30,8 @@ export default defineConfig({
       env: {
         ...process.env,
         VITE_PWA_DEV: '1',
+        // Avoid preview banner intercepting drawer/modal clicks in cold starts
+        VITE_PREVIEW_BANNER: '0',
       },
     },
   ],

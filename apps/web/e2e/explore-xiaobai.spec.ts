@@ -8,6 +8,7 @@
 import { expect, test, request as apiRequest, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { selectFace, type E2eFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 const password = 'Ab12_cd34';
@@ -101,25 +102,48 @@ async function attachErrorHooks(page: Page, role: string) {
 }
 
 async function dismissOverlays(page: Page, role: string) {
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     const dialog = page.locator('[data-testid="app-dialog"]');
-    if ((await dialog.count()) === 0 || !(await dialog.isVisible().catch(() => false))) {
+    const perm = page.locator('[data-testid="permissions-panel"]');
+    const mask = page.locator('.modal-mask');
+    const hasDialog =
+      (await dialog.count()) > 0 &&
+      (await dialog.isVisible().catch(() => false));
+    const hasPerm =
+      (await perm.count()) > 0 && (await perm.isVisible().catch(() => false));
+    const hasMask =
+      (await mask.count()) > 0 && (await mask.first().isVisible().catch(() => false));
+    if (!hasDialog && !hasPerm && !hasMask) {
+      // Still press Escape once to clear more-menu / comments drawer.
+      if (i === 0) await page.keyboard.press('Escape').catch(() => undefined);
       break;
     }
-    if (i === 0) {
+    if (i === 0 && hasDialog) {
       note(role, 'stuck-dialog', '发现未关闭的 app-dialog 遮罩', 'warn', page.url());
       await shot(page, role, `dialog-${Date.now().toString().slice(-4)}`, '卡住的对话框');
     }
     await page.keyboard.press('Escape').catch(() => undefined);
     await page
       .locator(
-        '[data-testid="app-dialog-cancel"], [data-testid="app-dialog-confirm"], [data-testid="app-dialog"] button:has-text("取消"), [data-testid="app-dialog"] button:has-text("关闭"), [data-testid="app-dialog"] [aria-label="关闭"]',
+        '[data-testid="app-dialog-cancel"], [data-testid="app-dialog-confirm"], [data-testid="permissions-close"], [data-testid="app-dialog"] button:has-text("取消"), [data-testid="app-dialog"] button:has-text("关闭"), [data-testid="app-dialog"] [aria-label="关闭"]',
       )
       .first()
       .click({ timeout: 1_500 })
       .catch(() => undefined);
     await page.waitForTimeout(200);
   }
+}
+
+async function openFaceThen(
+  page: Page,
+  face: E2eFace,
+  selectors: string[],
+  label: string,
+  role: string,
+): Promise<boolean> {
+  await selectFace(page, face);
+  await page.waitForTimeout(400);
+  return clickFirst(page, selectors, label, role);
 }
 
 async function clickFirst(page: Page, selectors: string[], label: string, role: string) {
@@ -321,32 +345,67 @@ test('explore page-by-page with owner/editor/viewer', async ({ browser }) => {
     await page.waitForTimeout(800);
     await shot(page, role, 'base-grid', 'Base 网格主视图');
 
-    // 侧栏：新建表 / 收集表 / 仪表盘 / 自动化 / 分析报告 / 更多
-    const ownerProbes: Array<{ step: string; sels: string[]; label: string }> = [
-      { step: 'forms-open', sels: ['[data-testid="forms-open"]', 'button:has-text("收集表")'], label: '收集表' },
+    // Face-first IA：先切面，再点侧栏 + / 顶栏入口
+    const ownerProbes: Array<{
+      step: string;
+      face?: E2eFace;
+      sels: string[];
+      label: string;
+    }> = [
+      {
+        step: 'forms-open',
+        face: 'form',
+        sels: ['[data-testid="forms-open"]', 'button:has-text("收集表单")'],
+        label: '收集表',
+      },
       {
         step: 'automation-open',
-        sels: ['[data-testid="automation-open"]', 'button:has-text("自动化")'],
+        face: 'automation',
+        sels: [
+          '[data-testid="face-tab-automation"]',
+          '[data-testid="automation-open"]',
+          'button:has-text("自动化")',
+        ],
         label: '自动化',
       },
       {
         step: 'dashboard-open',
-        sels: ['[data-testid="dashboard-open"]', 'button:has-text("仪表盘")'],
+        face: 'dashboard',
+        sels: [
+          '[data-testid="dashboard-row"]',
+          '[data-testid="dashboard-open"]',
+          'button:has-text("仪表盘")',
+        ],
         label: '仪表盘',
       },
       {
         step: 'report-open',
-        sels: ['[data-testid="report-open"]', 'button:has-text("分析报告")'],
+        face: 'analysis',
+        sels: [
+          '[data-testid="report-open"]',
+          '[data-testid="analysis-report-row"]',
+          'button:has-text("分析报告")',
+        ],
         label: '分析报告',
       },
-      { step: 'create-menu', sels: ['[data-testid="create-menu"]', 'button:has-text("新建")'], label: '侧栏新建' },
-      { step: 'more-open', sels: ['[data-testid="more-open"]', 'button:has-text("更多")'], label: '更多' },
+      {
+        step: 'create-menu',
+        sels: ['[data-testid="create-menu"]', 'button:has-text("新建")'],
+        label: '侧栏新建',
+      },
+      {
+        step: 'more-open',
+        sels: ['[data-testid="more-open"]', 'button:has-text("更多")'],
+        label: '更多',
+      },
     ];
 
     for (const probe of ownerProbes) {
       await page.goto(`${baseUrl}?sheet=${sheet.id}`);
       await page.waitForTimeout(900);
-      const ok = await clickFirst(page, probe.sels, probe.label, role);
+      const ok = probe.face
+        ? await openFaceThen(page, probe.face, probe.sels, probe.label, role)
+        : await clickFirst(page, probe.sels, probe.label, role);
       if (!ok) continue;
       await page.waitForTimeout(700);
       await shot(page, role, probe.step, `打开「${probe.label}」`);
@@ -354,32 +413,60 @@ test('explore page-by-page with owner/editor/viewer', async ({ browser }) => {
       if (probe.step === 'more-open') {
         for (const sub of [
           { sels: ['[data-testid="permissions-open"]'], label: '权限', step: 'permissions' },
-          { sels: ['[data-testid="public-view-open"]', '[data-testid="more-public-view"]'], label: '公开视图', step: 'public-view' },
+          {
+            sels: [
+              '[data-testid="public-view-open"]',
+              '[data-testid="more-public-view"]',
+            ],
+            label: '公开视图',
+            step: 'public-view',
+          },
           { sels: ['[data-testid="comments-toggle"]'], label: '评论', step: 'comments' },
           { sels: ['[data-testid="excel-export"]'], label: '导出', step: 'excel-export' },
         ]) {
+          await dismissOverlays(page, role);
+          const moreVisible = await page
+            .locator('[data-testid="more-menu"]')
+            .isVisible()
+            .catch(() => false);
+          if (!moreVisible) {
+            await clickFirst(page, ['[data-testid="more-open"]'], '更多', role);
+            await page.waitForTimeout(300);
+          }
           const hit = await clickFirst(page, sub.sels, sub.label, role);
           if (!hit) continue;
           await page.waitForTimeout(600);
           await shot(page, role, sub.step, `更多 → ${sub.label}`);
+          await dismissOverlays(page, role);
           await page.keyboard.press('Escape');
           await page.waitForTimeout(200);
-          // 重新打开更多
-          await clickFirst(page, ['[data-testid="more-open"]'], '更多', role);
-          await page.waitForTimeout(300);
         }
       }
 
       if (probe.step === 'forms-open') {
         // 收集表是独立 sheet；侧栏点开后常停在选择态，直接落到表单 sheet 再验 tabs
-        await page.goto(`${baseUrl}?sheet=${formSheet.id}`);
+        await page.goto(`${baseUrl}?sheet=${formSheet.id}&face=form`);
         await page.waitForTimeout(800);
         await dismissOverlays(page, role);
-        if (await clickFirst(page, ['[data-testid="form-object-form"]'], '表单编辑', role)) {
+        if (
+          await clickFirst(
+            page,
+            ['[data-testid="form-object-form"]'],
+            '表单编辑',
+            role,
+          )
+        ) {
           await page.waitForTimeout(500);
           await shot(page, role, 'form-builder', '收集表编辑');
         }
-        if (await clickFirst(page, ['[data-testid="form-object-results"]'], '填写结果', role)) {
+        if (
+          await clickFirst(
+            page,
+            ['[data-testid="form-object-results"]'],
+            '填写结果',
+            role,
+          )
+        ) {
           await page.waitForTimeout(500);
           await shot(page, role, 'form-results', '收集表结果');
         }
@@ -390,7 +477,13 @@ test('explore page-by-page with owner/editor/viewer', async ({ browser }) => {
         const row = page.locator('[data-testid="dashboard-row"]').first();
         if ((await row.count()) > 0) {
           await row.click({ force: true, timeout: 5_000 }).catch(async () => {
-            note(role, 'dashboard-row-click', '仪表盘行点击被遮罩拦截', 'warn', page.url());
+            note(
+              role,
+              'dashboard-row-click',
+              '仪表盘行点击被遮罩拦截',
+              'warn',
+              page.url(),
+            );
           });
           await page.waitForTimeout(800);
           await shot(page, role, 'dashboard-canvas', '仪表盘画布');
@@ -447,6 +540,30 @@ test('explore page-by-page with owner/editor/viewer', async ({ browser }) => {
         await page.keyboard.press('Enter');
         await page.waitForTimeout(700);
         await shot(page, role, 'cell-edit', '双击编辑单元格');
+        // Escape mid-edit: cancel must leave grid usable (no stuck overlay).
+        if (hit) {
+          await page.mouse.dblclick(hit.x, hit.y);
+          await page.waitForTimeout(400);
+          const mid = page.locator('[data-testid="cell-editor"]');
+          if ((await mid.count()) > 0) {
+            await mid.fill(`esc取消${stamp}`);
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(400);
+            const stillEditing = await page
+              .locator('[data-testid="cell-editor"]')
+              .count();
+            if (stillEditing > 0) {
+              note(
+                role,
+                'cell-edit-esc',
+                'Escape 后 cell-editor 仍在',
+                'warn',
+                page.url(),
+              );
+            }
+            await shot(page, role, 'cell-edit-esc', '编辑中按 Escape 取消');
+          }
+        }
       } else {
         note(role, 'cell-edit', '双击后无 cell-editor', 'warn', page.url());
         await shot(page, role, 'cell-edit-miss', '双击后无编辑框');
@@ -485,13 +602,27 @@ test('explore page-by-page with owner/editor/viewer', async ({ browser }) => {
 
     // editor 应能编辑、通常也能开自动化/表单（按产品角色）
     for (const probe of [
-      { step: 'forms', sels: ['[data-testid="forms-open"]'] },
-      { step: 'automation', sels: ['[data-testid="automation-open"]'] },
+      {
+        step: 'forms',
+        face: 'form' as E2eFace,
+        sels: ['[data-testid="forms-open"]', '[data-testid="face-tab-form"]'],
+      },
+      {
+        step: 'automation',
+        face: 'automation' as E2eFace,
+        sels: [
+          '[data-testid="face-tab-automation"]',
+          '[data-testid="automation-open"]',
+        ],
+      },
       { step: 'more', sels: ['[data-testid="more-open"]'] },
     ]) {
       await page.goto(`${baseUrl}?sheet=${sheet.id}`);
       await page.waitForTimeout(600);
-      if (await clickFirst(page, probe.sels, probe.step, role)) {
+      const opened = probe.face
+        ? await openFaceThen(page, probe.face, probe.sels, probe.step, role)
+        : await clickFirst(page, probe.sels, probe.step, role);
+      if (opened) {
         await page.waitForTimeout(600);
         await shot(page, role, probe.step, `editor 打开 ${probe.step}`);
       }

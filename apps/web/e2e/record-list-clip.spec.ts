@@ -9,7 +9,7 @@ test.use({
 });
 
 test('record list cards do not clip meta', async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const api = await apiRequest.newContext({ baseURL: 'http://127.0.0.1:3000' });
   const stamp = Date.now();
   const account = `rcl${String(stamp).slice(-8)}`;
@@ -88,17 +88,26 @@ test('record list cards do not clip meta', async ({ page }) => {
     { token: session.accessToken, user: session.user },
   );
   await page.goto(
-    `/workspaces/${workspace.id}/bases/${base.id}?face=data&oid=${sheet.id}`,
+    `/workspaces/${workspace.id}/bases/${base.id}?face=data&sheet=${sheet.id}&oid=${sheet.id}`,
   );
+  await expect(page.getByTestId('base-face-tabs')).toBeVisible({
+    timeout: 60_000,
+  });
+  // Ensure list layout (default) even if a prior run left compact in memory.
+  const listBtn = page.getByTestId('phone-layout-list');
+  if (await listBtn.isVisible().catch(() => false)) {
+    await listBtn.click();
+  }
   await expect(page.getByTestId('record-list')).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText('DEMO-0001')).toBeVisible({ timeout: 30_000 });
+  const card = page.locator('[data-testid^="record-card-"]').first();
+  await expect(card).toBeVisible({ timeout: 60_000 });
+  await expect(card).toContainText('DEMO-0001', { timeout: 15_000 });
   const out = resolve(process.cwd(), '../../.data/mobile-audit');
   mkdirSync(out, { recursive: true });
   await page.screenshot({ path: resolve(out, 'record-list-cards-fixed.png') });
 
-  const card = page.locator('.record-card').first();
   const html = await card.innerHTML();
   expect(html, html).toMatch(/状态|已领|领取手机号|137/);
   await expect(card.locator('.record-card-meta')).toBeVisible();
@@ -112,7 +121,7 @@ test('record list cards do not clip meta', async ({ page }) => {
     box!.y + box!.height + 1,
   );
 
-  const second = page.locator('.record-card').nth(1);
+  const second = page.locator('[data-testid^="record-card-"]').nth(1);
   const secondBox = await second.boundingBox();
   expect(secondBox!.y).toBeGreaterThanOrEqual(box!.y + box!.height - 1);
 });

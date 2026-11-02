@@ -1,4 +1,5 @@
 import { expect, test, request as apiRequest } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 
@@ -60,6 +61,7 @@ test('analysis report panel: chat, generate, delete', async ({ page }) => {
   await page.goto(
     `/workspaces/${workspace.id}/bases/${base.id}?sheet=${sheet.id}`,
   );
+  await selectFace(page, 'analysis');
   await expect(page.getByTestId('report-open')).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId('report-open').click();
@@ -96,10 +98,13 @@ test('analysis report panel: chat, generate, delete', async ({ page }) => {
       { timeout: 15_000 },
     )
     .toBe(0);
-  // 删掉最后一份报告时面板会自行 close；若仍打开则点关闭。
-  const panel = page.getByTestId('analysis-report-panel');
-  if (await panel.isVisible().catch(() => false)) {
-    await page.getByTestId('analysis-close').click();
-  }
-  await expect(panel).toBeHidden({ timeout: 10_000 });
+  // Face 嵌入态无 analysis-close；删光后 close 会卸掉面板并回到数据面。
+  await expect(page.getByTestId('analysis-report-panel')).toBeHidden({
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId('face-tab-data')).toHaveAttribute(
+    'aria-selected',
+    'true',
+    { timeout: 10_000 },
+  );
 });

@@ -1,4 +1,5 @@
 import { expect, test, request as apiRequest } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 
@@ -103,6 +104,9 @@ test.describe('Canvas grid + enterprise shell', () => {
     );
     await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
     await expect(page.locator('.canvas-grid__layer')).toHaveCount(3);
+    // Base 可能自带默认「表格」；显式点开码库，避免改错表。
+    await page.getByRole('button', { name: '码库' }).click();
+    await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
     // Add a field via WeCom-style type picker.
     await page.locator('[data-testid="add-field"]').click();
@@ -192,7 +196,9 @@ test.describe('Canvas grid + enterprise shell', () => {
     }
     await expect(editor).toBeVisible({ timeout: 10_000 });
     await editor.fill('SN-002');
+    await expect(editor).toHaveValue('SN-002');
     await editor.press('Enter');
+    await expect(editor).toBeHidden({ timeout: 5_000 });
 
     await expect
       .poll(async () => {
@@ -229,6 +235,7 @@ test.describe('Canvas grid + enterprise shell', () => {
     await expect(page.locator('[data-testid="permissions-panel"]')).toBeHidden();
 
     // Dashboard canvas creates an object and exposes chart + schedule builders.
+    await selectFace(page, 'dashboard');
     await page.locator('[data-testid="dashboard-open"]').click();
     await page.getByTestId('app-dialog-confirm').click();
     await expect(page.locator('[data-testid="dashboard-panel"]')).toBeVisible();

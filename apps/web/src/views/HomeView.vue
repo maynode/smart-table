@@ -336,7 +336,38 @@ function onDocumentClick(): void {
 }
 
 function onDocumentKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') closeMenus();
+  if (event.key !== 'Escape') return;
+  // Dialogs first — Escape previously only cleared overflow menus, leaving
+  // modal-mask up and blocking station bottom-nav clicks (mobile audit).
+  if (baseFormOpen.value) {
+    baseFormOpen.value = false;
+    return;
+  }
+  if (templateOpen.value) {
+    templateOpen.value = false;
+    return;
+  }
+  if (permissionsOpen.value) {
+    permissionsOpen.value = false;
+    return;
+  }
+  if (moveOpen.value) {
+    moveOpen.value = false;
+    return;
+  }
+  if (avatarPickerOpen.value) {
+    closeAvatarPicker();
+    return;
+  }
+  if (usernameOpen.value) {
+    closeUsernameEditor();
+    return;
+  }
+  if (changePasswordOpen.value) {
+    closeChangePassword();
+    return;
+  }
+  closeMenus();
 }
 
 async function loadWorkspaces(): Promise<void> {

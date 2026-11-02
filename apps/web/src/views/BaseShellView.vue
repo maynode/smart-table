@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import GridPanel from '../components/GridPanel.vue';
 import AutomationPanel from '../components/AutomationPanel.vue';
@@ -166,6 +173,34 @@ const faceTabs = computed(() => {
   return tabs.filter((t) => t.show);
 });
 
+const faceTabsEl = ref<HTMLElement | null>(null);
+const faceTabsScrollable = ref(false);
+let faceTabsResizeObserver: ResizeObserver | null = null;
+
+function updateFaceTabsScrollable(): void {
+  const el = faceTabsEl.value;
+  if (!el) {
+    faceTabsScrollable.value = false;
+    return;
+  }
+  faceTabsScrollable.value = el.scrollWidth > el.clientWidth + 1;
+}
+
+function bindFaceTabsScrollObserver(): void {
+  faceTabsResizeObserver?.disconnect();
+  faceTabsResizeObserver = null;
+  const el = faceTabsEl.value;
+  if (!el || typeof ResizeObserver === 'undefined') {
+    updateFaceTabsScrollable();
+    return;
+  }
+  faceTabsResizeObserver = new ResizeObserver(() => {
+    updateFaceTabsScrollable();
+  });
+  faceTabsResizeObserver.observe(el);
+  updateFaceTabsScrollable();
+}
+
 /** 顶栏「只读」：随当前主区对象权限变化，避免仪表盘可写时仍显示表只读 */
 const showReadonlyBanner = computed(() => {
   if (mainView.value === 'dashboard') return !canEditDashboard.value;
@@ -306,7 +341,10 @@ function selectFace(face: BaseFace): void {
   } else if (face === 'dashboard') {
     const dash = dashboards.value[0];
     if (dash) openDashboard(dash.id);
-    else if (isPhone.value) sidebarDrawerOpen.value = true;
+    else {
+      mainView.value = 'dashboard';
+      if (isPhone.value) sidebarDrawerOpen.value = true;
+    }
   } else if (face === 'analysis') {
     const report = analysisReports.value[0];
     if (report) openAnalysisReport(report.id);
@@ -2531,6 +2569,59 @@ async function onObjectTemplateCreated(
 }
 
 function onGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    // Mid-edit first: don't tear down drawers/overlays while cancelling
+    // an in-progress editor (mention picker / cell editor).
+    if (mentionQuery.value !== null) {
+      mentionQuery.value = null;
+      return;
+    }
+    const escTarget = event.target as HTMLElement | null;
+    if (
+      escTarget?.closest?.(
+        '[data-testid="cell-editor"], [data-testid^="cell-editor-"]',
+      )
+    ) {
+      return;
+    }
+
+    // Overlay stack — without this, permissions/public-view stay up after
+    // Escape (HomeView already closes hub modals; Base did not).
+    if (permissionsOpen.value) {
+      permissionsOpen.value = false;
+      return;
+    }
+    if (publicViewOpen.value) {
+      publicViewOpen.value = false;
+      return;
+    }
+    if (templatesOpen.value) {
+      templatesOpen.value = false;
+      return;
+    }
+    if (formBuilderOpen.value) {
+      formBuilderOpen.value = false;
+      return;
+    }
+    if (commentsOpen.value) {
+      commentsOpen.value = false;
+      return;
+    }
+    if (moreOpen.value) {
+      moreOpen.value = false;
+      return;
+    }
+    if (sheetMenuId.value) {
+      sheetMenuId.value = null;
+      return;
+    }
+    if (isPhone.value && sidebarDrawerOpen.value) {
+      sidebarDrawerOpen.value = false;
+      return;
+    }
+    return;
+  }
+
   const mod = event.metaKey || event.ctrlKey;
   if (!mod) return;
   const target = event.target as HTMLElement | null;
@@ -2744,6 +2835,56 @@ watch(
   { immediate: true },
 );
 
+/** SPA 深链：仅 query 变化时也要切面（bootstrap 只跑一次） */
+watch(
+  () =>
+    [
+      route.query.face,
+      route.query.oid,
+      route.query.formMode,
+      route.query.dashboard,
+      route.query.sheet,
+      route.query.view,
+    ] as const,
+  async () => {
+    if (booting.value || !base.value) return;
+    const parsed = parseFaceQuery({
+      face:
+        typeof route.query.face === 'string' ? route.query.face : undefined,
+      oid: typeof route.query.oid === 'string' ? route.query.oid : undefined,
+      formMode:
+        typeof route.query.formMode === 'string'
+          ? route.query.formMode
+          : undefined,
+    });
+    // syncFaceQuery 回写同态时跳过，避免死循环
+    if (parsed.face && parsed.face === currentFace.value) {
+      const oidNow =
+        parsed.face === 'dashboard'
+          ? activeDashboardId.value
+          : parsed.face === 'analysis'
+            ? activeAnalysisReportId.value
+            : activeSheet.value?.id;
+      const modeNow =
+        mainView.value === 'form-results' ? 'results' : 'design';
+      if (
+        (!parsed.oid || parsed.oid === oidNow) &&
+        (parsed.face !== 'form' ||
+          !parsed.formMode ||
+          parsed.formMode === modeNow)
+      ) {
+        return;
+      }
+    }
+    await applyRouteDeepLink(sheets.value, dashboards.value);
+  },
+);
+
+watch(faceTabs, async () => {
+  await nextTick();
+  updateFaceTabsScrollable();
+});
+
 onMounted(() => {
   void bootstrap();
   void messageCenter.bootstrap();
@@ -2756,9 +2897,12 @@ onMounted(() => {
     },
   });
   window.addEventListener('keydown', onGlobalKeydown);
+  void nextTick(() => bindFaceTabsScrollObserver());
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
+  faceTabsResizeObserver?.disconnect();
+  faceTabsResizeObserver = null;
   unsubAccept?.();
   while (liveUnsubs.length) liveUnsubs.pop()?.();
   liveSocket.disconnect();
@@ -2917,7 +3061,9 @@ onBeforeUnmount(() => {
     </header>
 
     <div
+      ref="faceTabsEl"
       class="face-tabs"
+      :class="{ 'is-scrollable': faceTabsScrollable }"
       data-testid="base-face-tabs"
       role="tablist"
       aria-label="对象类型"
@@ -3023,7 +3169,6 @@ onBeforeUnmount(() => {
                   </div>
                 </Transition>
               </div>
-              <p v-if="!dataSheets.length" class="sidebar-hint">暂无工作表</p>
             </template>
           </div>
 
@@ -3089,7 +3234,6 @@ onBeforeUnmount(() => {
                   </div>
                 </Transition>
               </div>
-              <p v-if="!formSheets.length" class="sidebar-hint">暂无收集表单</p>
             </template>
           </div>
 
@@ -3170,7 +3314,6 @@ onBeforeUnmount(() => {
                   </div>
                 </Transition>
               </div>
-              <p v-if="!dashboards.length" class="sidebar-hint">暂无仪表盘</p>
             </template>
           </div>
 
@@ -3247,9 +3390,6 @@ onBeforeUnmount(() => {
                   </div>
                 </Transition>
               </div>
-              <p v-if="!analysisReports.length" class="sidebar-hint">
-                暂无分析报告
-              </p>
             </template>
           </div>
         </div>
@@ -3342,52 +3482,6 @@ onBeforeUnmount(() => {
             @click="createAnalysisReport"
           >
             新建分析报告
-          </button>
-        </div>
-        <div
-          v-else-if="mainView === 'analysis'"
-          class="empty-state"
-          data-testid="analysis-empty"
-        >
-          <p class="empty-state-title">还没有分析报告</p>
-          <p class="empty-state-hint">
-            {{
-              isPhone
-                ? '点左上角 ☰ 打开列表，或直接新建报告。'
-                : '在左侧「分析报告」点 + 创建第一份报告。'
-            }}
-          </p>
-          <button
-            v-if="canEditByRole"
-            class="btn btn-primary"
-            type="button"
-            data-testid="analysis-empty-create"
-            @click="createAnalysisReport"
-          >
-            新建分析报告
-          </button>
-        </div>
-        <div
-          v-else-if="mainView === 'dashboard'"
-          class="empty-state"
-          data-testid="dashboard-empty"
-        >
-          <p class="empty-state-title">还没有仪表盘</p>
-          <p class="empty-state-hint">
-            {{
-              isPhone
-                ? '点左上角 ☰ 打开列表，或直接新建仪表盘。'
-                : '在左侧「仪表盘」点 + 创建第一块仪表盘。'
-            }}
-          </p>
-          <button
-            v-if="canEditByRole"
-            class="btn btn-primary"
-            type="button"
-            data-testid="dashboard-empty-create"
-            @click="createDashboard"
-          >
-            新建仪表盘
           </button>
         </div>
         <template
@@ -3600,7 +3694,13 @@ onBeforeUnmount(() => {
         </template>
         <div v-else class="empty-state">
           <p class="empty-state-title">还没有工作表</p>
-          <p class="empty-state-hint">点击左侧「+」或「新建」创建第一张表，开始录入数据。</p>
+          <p class="empty-state-hint">
+            {{
+              isPhone
+                ? '点左上角 ☰ 或下方按钮新建工作表，开始录入数据。'
+                : '点击左侧「+」或「新建」创建第一张表，开始录入数据。'
+            }}
+          </p>
           <button
             v-if="canEditByRole"
             class="btn btn-primary"

@@ -1,4 +1,5 @@
 import { expect, test, request as apiRequest } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 
@@ -75,6 +76,7 @@ test('dashboard AI dock: add bar chart via local agent', async ({ page }) => {
   await expect(page.getByTestId('canvas-grid')).toBeVisible({
     timeout: 30_000,
   });
+  await selectFace(page, 'dashboard');
   await page
     .getByTestId('dashboard-row')
     .filter({ hasText: dashboard.name })

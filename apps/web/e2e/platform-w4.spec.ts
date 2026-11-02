@@ -1,4 +1,5 @@
 import { expect, test, request as apiRequest } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 
@@ -131,6 +132,7 @@ test('W4 members, share/more menu and dashboard widgets are real UI', async ({
   await expect(page.locator('[data-testid="canvas-grid"]')).toBeVisible();
 
   // Dashboard: add two different chart types, resize, and run a scheduled push.
+  await selectFace(page, 'dashboard');
   await page.getByTestId('dashboard-open').click();
   await expect(page.getByTestId('app-dialog')).toBeVisible();
   await page.getByTestId('app-dialog-input').fill('W4 看板');

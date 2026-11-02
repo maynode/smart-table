@@ -43,6 +43,30 @@ async function closeOverlay(page: Page) {
   ) {
     return;
   }
+  // Hub create/edit dialogs (× / 取消) — Escape alone used to miss these.
+  if (
+    await softClick(
+      page,
+      page
+        .getByTestId('base-form-dialog')
+        .locator('.icon-btn, .btn-ghost')
+        .first(),
+    )
+  ) {
+    await page.waitForTimeout(200);
+    return;
+  }
+  if (await page.locator('.modal-mask').count()) {
+    await page.keyboard.press('Escape');
+    await page
+      .locator('.modal-mask')
+      .first()
+      .click({ position: { x: 4, y: 4 }, timeout: 1500 })
+      .catch(() => undefined);
+    await expect(page.locator('.modal-mask')).toHaveCount(0, {
+      timeout: 5_000,
+    }).catch(() => undefined);
+  }
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
 }
@@ -204,18 +228,20 @@ test.describe('mobile visual audit', () => {
     if (
       await softClick(
         page,
-        page.getByTestId('hub-create-base').or(
+        page.getByTestId('create-base').or(
           page.getByRole('button', { name: /新建表格|创建表格/ }),
         ),
       )
     ) {
       await page.waitForTimeout(400);
       await shot(page, '02b-create-base');
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
+      await closeOverlay(page);
     }
 
-    // Notifications
+    // Notifications (must not be blocked by leftover hub modal-mask)
+    await expect(page.locator('.modal-mask')).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await page.getByTestId('station-nav-notifications').click();
     await expect(page.getByTestId('notifications-page')).toBeVisible();
     await shot(page, '03-notifications');

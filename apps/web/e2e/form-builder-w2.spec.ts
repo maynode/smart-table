@@ -244,8 +244,13 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await page.goto(shareUrl);
   await expect(page.getByRole('heading', { name: '到访登记表' })).toBeVisible();
   await expect(page.locator('[data-field-name="备注"]')).toHaveCount(0);
-  // 文本字段公开填写页用 textarea
-  await page.locator('[data-field-name="姓名"] textarea').fill('张三');
+  // 单行 text → input；longText → textarea
+  await page
+    .locator(
+      '[data-field-name="姓名"] [data-testid="form-text"], [data-field-name="姓名"] textarea, [data-field-name="姓名"] input',
+    )
+    .first()
+    .fill('张三');
   const statusSelect = page.getByTestId('form-select');
   await expect(statusSelect.locator('option[value="won"]')).toHaveCount(1);
   await statusSelect.selectOption('won');
@@ -253,7 +258,12 @@ test('W2 visual form builder: fields, cover, conditions, share, success preview'
   await expect(page.locator('[data-field-name="备注"]')).toBeVisible({
     timeout: 15_000,
   });
-  await page.locator('[data-field-name="备注"] textarea').fill('已到访');
+  await page
+    .locator(
+      '[data-field-name="备注"] [data-testid="form-text"], [data-field-name="备注"] [data-testid="form-long-text"], [data-field-name="备注"] textarea, [data-field-name="备注"] input',
+    )
+    .first()
+    .fill('已到访');
   const submitResponse = page.waitForResponse(
     (res) =>
       res.url().includes(`/public/forms/${token}/submit`) &&

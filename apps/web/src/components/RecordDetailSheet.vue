@@ -116,6 +116,64 @@ function openAiComponent(field: FieldDto): void {
             {{ c.name }}
           </option>
         </select>
+        <select
+          v-else-if="field.type === 'multiSelect'"
+          multiple
+          class="detail-input detail-multi"
+          :disabled="!editable"
+          data-testid="record-detail-multi-select"
+          :value="Array.isArray(draft[field.id]) ? (draft[field.id] as string[]) : []"
+          @change="
+            (ev) => {
+              const el = ev.target as HTMLSelectElement;
+              draft[field.id] = Array.from(el.selectedOptions).map((o) => o.value);
+              commitField(field);
+            }
+          "
+        >
+          <option
+            v-for="c in choices(field)"
+            :key="c.id"
+            :value="c.id"
+          >
+            {{ c.name }}
+          </option>
+        </select>
+        <select
+          v-else-if="field.type === 'person'"
+          v-model="draft[field.id]"
+          class="detail-input"
+          :disabled="!editable"
+          data-testid="record-detail-person"
+          @change="commitField(field)"
+        >
+          <option :value="undefined">未指定</option>
+          <option
+            v-for="m in members ?? []"
+            :key="m.userId"
+            :value="m.userId"
+          >
+            {{ m.account }}
+          </option>
+        </select>
+        <label
+          v-else-if="field.type === 'checkbox'"
+          class="detail-check touch-target"
+        >
+          <input
+            type="checkbox"
+            :checked="Boolean(draft[field.id])"
+            :disabled="!editable"
+            data-testid="record-detail-checkbox"
+            @change="
+              (ev) => {
+                draft[field.id] = (ev.target as HTMLInputElement).checked;
+                commitField(field);
+              }
+            "
+          />
+          {{ draft[field.id] ? '已勾选' : '未勾选' }}
+        </label>
         <textarea
           v-else-if="
             field.type === 'text' ||
@@ -194,10 +252,19 @@ function openAiComponent(field: FieldDto): void {
 
 <style scoped>
 .detail-body {
-  padding: 12px 16px 24px;
+  padding: 12px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.detail-multi {
+  min-height: 88px;
+}
+.detail-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
 }
 
 .detail-field {

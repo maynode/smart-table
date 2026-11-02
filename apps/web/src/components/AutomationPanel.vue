@@ -604,15 +604,7 @@ onBeforeUnmount(() => {
         </div>
         <h4>还没有自动化流程</h4>
         <p>例如：表单提交后自动改状态、发消息提醒相关人。</p>
-        <button
-          v-if="editable"
-          class="btn btn-primary"
-          data-testid="automation-create-empty"
-          @click="openCreate"
-        >
-          新建流程
-        </button>
-        <p v-else class="muted">当前为只读，无法新建流程。</p>
+        <p v-if="!editable" class="muted">当前为只读，无法新建流程。</p>
       </div>
 
       <article

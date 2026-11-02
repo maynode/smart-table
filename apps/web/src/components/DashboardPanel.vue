@@ -1152,7 +1152,13 @@ function onAiApplied(): void {
           </article>
           <div v-if="!data?.widgets?.length" class="canvas-empty">
             <p class="list-empty-title">画布还是空的</p>
-            <p class="list-empty-hint">在上方选择图表类型并添加；添加后可拖动排序，用 ↔/↕ 调整大小。</p>
+            <p class="list-empty-hint">
+              {{
+                isPhone
+                  ? '点上方「添加」选择图表类型；添加后可在配置里调整。'
+                  : '在上方选择图表类型并添加；添加后可拖动排序，用 ↔/↕ 调整大小。'
+              }}
+            </p>
           </div>
         </section>
 

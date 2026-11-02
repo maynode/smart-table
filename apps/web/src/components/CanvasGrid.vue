@@ -958,10 +958,17 @@ function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): vo
     if (navigate) {
       const dCol = navigate === 'tab' ? 1 : navigate === 'shift-tab' ? -1 : 0;
       const dRow = navigate === 'enter' ? 1 : 0;
+      const before = selectedCell.value;
       moveSelection(dRow, dCol);
       void nextTick(() => {
         const sel = selectedCell.value;
-        if (sel) beginEdit(sel.row, sel.col);
+        if (
+          sel &&
+          before &&
+          (sel.row !== before.row || sel.col !== before.col)
+        ) {
+          beginEdit(sel.row, sel.col);
+        }
       });
     }
     return;
@@ -1033,9 +1040,18 @@ function commitEdit(save: boolean, navigate?: 'tab' | 'enter' | 'shift-tab'): vo
     const dCol = navigate === 'tab' ? 1 : navigate === 'shift-tab' ? -1 : 0;
     const dRow = navigate === 'enter' ? 1 : 0;
     void nextTick(() => {
+      const before = selectedCell.value;
       moveSelection(dRow, dCol);
       const sel = selectedCell.value;
-      if (sel) beginEdit(sel.row, sel.col);
+      // 已在末行/末列时 moveSelection 会夹回原格；勿重新 beginEdit，
+      // 否则可能用尚未乐观更新的旧值再 blur 提交，盖掉刚写入的值。
+      if (
+        sel &&
+        before &&
+        (sel.row !== before.row || sel.col !== before.col)
+      ) {
+        beginEdit(sel.row, sel.col);
+      }
     });
   }
 }

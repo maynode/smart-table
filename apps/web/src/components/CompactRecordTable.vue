@@ -6,6 +6,8 @@ import { formatCellSummary } from '../composables/recordSummary';
 const props = defineProps<{
   fields: FieldDto[];
   records: RecordDto[];
+  /** Visible column ids from current view; optional */
+  viewFieldIds?: string[] | null;
   maxCols?: number;
 }>();
 
@@ -14,16 +16,25 @@ const emit = defineEmits<{
   openCell: [payload: { recordId: string; fieldId: string }];
 }>();
 
-const cols = computed(() =>
-  props.fields
-    .filter(
-      (f) =>
-        !['createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy'].includes(
-          f.type,
-        ),
-    )
-    .slice(0, props.maxCols ?? 8),
-);
+const SYSTEMISH = new Set([
+  'createdTime',
+  'lastModifiedTime',
+  'createdBy',
+  'lastModifiedBy',
+  'autoNumber',
+]);
+
+const cols = computed(() => {
+  const ordered =
+    props.viewFieldIds && props.viewFieldIds.length
+      ? props.viewFieldIds
+          .map((id) => props.fields.find((f) => f.id === id))
+          .filter((f): f is FieldDto => Boolean(f))
+      : props.fields.filter((f) => !f.hidden);
+  return ordered
+    .filter((f) => !f.hidden && !SYSTEMISH.has(f.type))
+    .slice(0, props.maxCols ?? 8);
+});
 </script>
 
 <template>
@@ -61,6 +72,10 @@ const cols = computed(() =>
 
 <style scoped>
 .compact-wrap {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
   height: 100%;
   overflow: auto;
   -webkit-overflow-scrolling: touch;

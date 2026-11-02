@@ -1809,6 +1809,7 @@ defineExpose({
         v-if="showPhoneList"
         :fields="fields"
         :records="displayRecords"
+        :view-field-ids="visibleFields.map((f) => f.id)"
         :editable="editable"
         :loading="loading"
         @open-record="openRecordDetail"
@@ -1818,6 +1819,7 @@ defineExpose({
         v-else-if="showPhoneCompact"
         :fields="fields"
         :records="displayRecords"
+        :view-field-ids="visibleFields.map((f) => f.id)"
         @open-record="openRecordDetail"
         @open-cell="
           (payload) => {
@@ -2047,6 +2049,11 @@ defineExpose({
     max-height: none;
     min-height: 44px;
   }
+  .grid-toolbar > .btn {
+    min-height: var(--touch-min, 44px);
+    height: auto;
+    padding: 8px 12px;
+  }
   .view-panel {
     position: fixed !important;
     inset: 0 !important;
@@ -2105,6 +2112,13 @@ defineExpose({
     background 0.15s ease,
     color 0.15s ease,
     box-shadow 0.15s ease;
+}
+@media (max-width: 767.98px) {
+  .icon-tool {
+    width: var(--touch-min, 44px);
+    height: var(--touch-min, 44px);
+    font-size: 16px;
+  }
 }
 .icon-tool:hover:not(:disabled) {
   background: #f2f3f5;
@@ -2595,7 +2609,9 @@ defineExpose({
   position: relative;
   flex: 1;
   min-height: 0;
+  width: 100%;
   display: flex;
+  flex-direction: column;
   contain: layout;
   overflow: hidden;
 }

@@ -367,22 +367,33 @@ async function removeActive(): Promise<void> {
   if (!active.value) return;
   const ok = await confirmDialog(`删除分析报告「${active.value.name}」？`);
   if (!ok) return;
+  const id = active.value.id;
   try {
-    const id = active.value.id;
     await endpoints.deleteAnalysisReport(id);
-    stopPoll();
-    active.value = null;
-    await loadList();
-    if (list.value[0]) {
-      await openReport(list.value[0].id);
-      if (props.embedded) emit('created', list.value[0].id);
-    } else {
-      emit('close');
-    }
-    toast('已删除');
   } catch (error) {
     toast(messageOf(error));
+    return;
   }
+  stopPoll();
+  active.value = null;
+  try {
+    await loadList();
+  } catch {
+    list.value = list.value.filter((item) => item.id !== id);
+  }
+  if (list.value[0]) {
+    try {
+      await openReport(list.value[0].id);
+      if (props.embedded) emit('created', list.value[0].id);
+    } catch (error) {
+      toast(messageOf(error));
+      emit('close');
+    }
+  } else {
+    // Embedded face has no close button — parent must unmount via this event.
+    emit('close');
+  }
+  toast('已删除');
 }
 
 watch(

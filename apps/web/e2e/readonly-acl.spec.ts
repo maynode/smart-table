@@ -1,4 +1,5 @@
 import { expect, test, request as apiRequest } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 const API = 'http://127.0.0.1:3000';
 
@@ -99,6 +100,7 @@ test.describe('frontend write gates vs workspace role / object ACL', () => {
     await expect(page.getByTestId('more-delete-sheet')).toHaveCount(0);
     await expect(page.getByTestId('permissions-open')).toBeVisible();
 
+    await selectFace(page, 'dashboard');
     await page
       .getByTestId('dashboard-row')
       .filter({ hasText: dashboard.name })
@@ -207,6 +209,7 @@ test.describe('frontend write gates vs workspace role / object ACL', () => {
     // 工作区仍是 editor：侧栏新建入口保留
     await expect(page.getByTestId('create-menu')).toBeVisible();
 
+    await selectFace(page, 'dashboard');
     await page
       .getByTestId('dashboard-row')
       .filter({ hasText: dashboard.name })

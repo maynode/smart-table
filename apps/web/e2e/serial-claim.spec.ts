@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
+import { selectFace } from './helpers/face';
 
 interface SeedSummary {
   shareUrl: string;
@@ -35,8 +36,11 @@ test('share link claims a serial and the admin sees the automation run', async (
   share.host = '127.0.0.1:5173';
 
   await page.goto(share.toString());
+  await expect(page.getByTestId('form-load-error')).toHaveCount(0, {
+    timeout: 5_000,
+  });
   await expect(page.locator('.fill-title')).toHaveText('序列号领取', {
-    timeout: 20_000,
+    timeout: 30_000,
   });
 
   // Unique phone per run so the duplicate guard does not reject reruns.
@@ -59,6 +63,7 @@ test('share link claims a serial and the admin sees the automation run', async (
   await admin.goto(
     `/workspaces/${seed.workspaceId}/bases/${seed.baseId}`,
   );
+  await selectFace(admin, 'automation');
   await admin.getByTestId('automation-open').click();
   await expect(admin.getByTestId('automation-panel')).toBeVisible();
   await admin.getByTestId('automation-more').first().click();

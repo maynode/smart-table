@@ -136,6 +136,10 @@ function onCardClick(id: string): void {
   justify-content: flex-start;
   gap: 10px;
   padding: 8px 8px 24px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
   height: 100%;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
@@ -209,7 +213,7 @@ function onCardClick(id: string): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 140px;
+  max-width: min(220px, 55vw);
 }
 
 .empty,

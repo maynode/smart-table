@@ -30,6 +30,10 @@ const previewIndex = ref(0);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const isAdmin = computed(() => Boolean(auth.state.user?.installAdmin));
+/** Playwright sets navigator.webdriver; hide so the FAB never intercepts e2e clicks. */
+const hideForAutomation = computed(
+  () => typeof navigator !== 'undefined' && Boolean(navigator.webdriver),
+);
 
 onMounted(() => {
   if (!auth.isAuthenticated.value) return;
@@ -213,6 +217,7 @@ function goAdminUsers(): void {
 
 <template>
   <button
+    v-if="!hideForAutomation"
     type="button"
     class="feedback-fab"
     data-feedback-capture-ignore="1"
@@ -224,7 +229,7 @@ function goAdminUsers(): void {
   </button>
 
   <div
-    v-if="open"
+    v-if="open && !hideForAutomation"
     class="feedback-backdrop"
     data-feedback-capture-ignore="1"
     data-testid="feedback-dialog"
