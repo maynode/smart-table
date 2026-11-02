@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { AiComponentOptions } from 'shared';
+import {
+  isComputedFieldType,
+  isSystemFieldType,
+  type AiComponentOptions,
+  type FieldType,
+} from 'shared';
 import { computed, ref, watch } from 'vue';
 import type { FieldDto, MemberDto, RecordDto } from '../api/types';
 import MobileSheet from './MobileSheet.vue';
@@ -47,14 +52,62 @@ const title = computed(() => {
   );
 });
 
+/** Legacy aliases once used in phone UI — still treat as non-editable. */
+const LEGACY_READONLY = new Set([
+  'createdTime',
+  'lastModifiedTime',
+  'lastModifiedBy',
+]);
+
 const editableFields = computed(() =>
-  props.fields.filter(
-    (f) =>
-      !['formula', 'lookup', 'createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy', 'autoNumber'].includes(
-        f.type,
-      ),
-  ),
+  props.fields.filter((f) => {
+    const t = f.type as FieldType;
+    if (LEGACY_READONLY.has(f.type)) return false;
+    if (isSystemFieldType(t) || isComputedFieldType(t)) return false;
+    return true;
+  }),
 );
+
+function progressValue(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+function attachmentUrl(raw: unknown): string | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object' && raw !== null) {
+    const o = raw as { url?: string; name?: string };
+    return typeof o.url === 'string' ? o.url : null;
+  }
+  return null;
+}
+
+function toDateInput(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'number') {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  }
+  const s = String(raw);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+
+function toDateTimeLocal(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  const d =
+    typeof raw === 'number' ? new Date(raw) : new Date(String(raw));
+  if (Number.isNaN(d.getTime())) {
+    const s = String(raw);
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s.slice(0, 16);
+    return '';
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function choices(field: FieldDto): { id: string; name: string }[] {
   const opts = field.options as { choices?: { id: string; name: string }[] } | null;
@@ -196,11 +249,86 @@ function openAiComponent(field: FieldDto): void {
           @change="commitField(field)"
         />
         <input
-          v-else-if="field.type === 'date' || field.type === 'datetime'"
-          v-model="draft[field.id] as string"
-          type="date"
+          v-else-if="field.type === 'date'"
           class="detail-input"
+          type="date"
           :disabled="!editable"
+          data-testid="record-detail-date"
+          :value="toDateInput(draft[field.id])"
+          @change="
+            (ev) => {
+              draft[field.id] = (ev.target as HTMLInputElement).value || null;
+              commitField(field);
+            }
+          "
+        />
+        <input
+          v-else-if="field.type === 'datetime'"
+          class="detail-input"
+          type="datetime-local"
+          :disabled="!editable"
+          data-testid="record-detail-datetime"
+          :value="toDateTimeLocal(draft[field.id])"
+          @change="
+            (ev) => {
+              const v = (ev.target as HTMLInputElement).value;
+              draft[field.id] = v ? new Date(v).toISOString() : null;
+              commitField(field);
+            }
+          "
+        />
+        <div
+          v-else-if="field.type === 'progress'"
+          class="detail-progress"
+          data-testid="record-detail-progress"
+        >
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            class="detail-progress-range"
+            :disabled="!editable"
+            :value="progressValue(draft[field.id])"
+            @input="
+              (ev) => {
+                draft[field.id] = Number((ev.target as HTMLInputElement).value);
+              }
+            "
+            @change="commitField(field)"
+          />
+          <input
+            type="number"
+            min="0"
+            max="100"
+            class="detail-input detail-progress-num"
+            :disabled="!editable"
+            :value="progressValue(draft[field.id])"
+            @change="
+              (ev) => {
+                draft[field.id] = progressValue(
+                  (ev.target as HTMLInputElement).value,
+                );
+                commitField(field);
+              }
+            "
+          />
+          <span class="detail-progress-unit">%</span>
+        </div>
+        <input
+          v-else-if="field.type === 'barcode' || field.type === 'location'"
+          v-model="draft[field.id] as string"
+          class="detail-input"
+          type="text"
+          :disabled="!editable"
+          :placeholder="
+            field.type === 'barcode' ? '扫描或输入条码' : '输入地址'
+          "
+          :data-testid="
+            field.type === 'barcode'
+              ? 'record-detail-barcode'
+              : 'record-detail-location'
+          "
           @change="commitField(field)"
         />
         <input
@@ -212,6 +340,31 @@ function openAiComponent(field: FieldDto): void {
           data-testid="record-detail-phone"
           @change="commitField(field)"
         />
+        <div
+          v-else-if="field.type === 'image' || field.type === 'file'"
+          class="detail-attachment"
+          data-testid="record-detail-attachment"
+        >
+          <template v-if="attachmentUrl(draft[field.id] ?? record.cells?.[field.id])">
+            <a
+              class="detail-attachment-link"
+              :href="attachmentUrl(draft[field.id] ?? record.cells?.[field.id])!"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {{
+                field.type === 'image'
+                  ? '查看图片'
+                  : formatCellSummary(
+                      draft[field.id] ?? record.cells?.[field.id],
+                      field.type,
+                      field.options,
+                    )
+              }}
+            </a>
+          </template>
+          <span v-else class="detail-readonly">未上传</span>
+        </div>
         <div
           v-else-if="field.type === 'aiComponent'"
           class="detail-ai"
@@ -311,5 +464,47 @@ function openAiComponent(field: FieldDto): void {
   color: var(--text);
   font-size: 14px;
   line-height: 1.4;
+}
+
+.detail-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-progress-range {
+  flex: 1;
+  min-width: 0;
+  height: var(--touch-min);
+}
+
+.detail-progress-num {
+  width: 72px;
+  flex: none;
+  text-align: center;
+}
+
+.detail-progress-unit {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.detail-attachment {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-min);
+}
+
+.detail-attachment-link {
+  color: var(--brand-strong);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 10px 0;
+}
+
+.detail-attachment-link:hover {
+  text-decoration: underline;
 }
 </style>

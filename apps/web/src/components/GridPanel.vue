@@ -2054,6 +2054,25 @@ defineExpose({
     height: auto;
     padding: 8px 12px;
   }
+  .toolbar-right {
+    gap: 4px;
+  }
+  .selection-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .selection-bar .btn {
+    min-height: var(--touch-min, 44px);
+    height: auto;
+    padding: 8px 12px;
+  }
+  .phone-layout-toggle .btn {
+    flex: 1;
+    min-height: var(--touch-min, 44px);
+    height: auto;
+    padding: 8px 12px;
+  }
   .view-panel {
     position: fixed !important;
     inset: 0 !important;

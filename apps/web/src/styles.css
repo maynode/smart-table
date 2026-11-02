@@ -208,6 +208,7 @@ body:has(.drawer-mask) .feedback-fab,
 body:has(.comments-drawer) .feedback-fab,
 body:has(.analysis-panel) .feedback-fab,
 body:has(.widget-builder) .feedback-fab,
+body:has(.mobile-sheet-root) .feedback-fab,
 body:has([data-testid='feedback-dialog']) .feedback-fab {
   display: none;
 }
@@ -251,7 +252,9 @@ body:has([data-testid='feedback-dialog']) .feedback-fab {
 
 /* Station bottom nav is outside main padding; lift FAB so it doesn't cover「我的」 */
 .app-shell.has-station-nav ~ .feedback-fab {
-  bottom: calc(var(--station-nav-height) + var(--safe-bottom) + 16px);
+  /* 56 FAB + 24 gap above 56 nav — keeps「我的」clear on narrow phones */
+  bottom: calc(var(--station-nav-height) + var(--safe-bottom) + 24px);
+  right: max(12px, env(safe-area-inset-right, 0px));
 }
 
 .feedback-fab:hover {
@@ -1550,19 +1553,19 @@ html.auth-screen #app {
   scrollbar-width: thin;
 }
 
-/* Scroll fade only when tabs actually overflow (desktop rarely needs it). */
+/* Soft edge hint when tabs overflow — keep ends hittable (no full fade-out). */
 .face-tabs.is-scrollable {
   mask-image: linear-gradient(
     to right,
-    transparent 0,
-    #000 12px,
-    #000 calc(100% - 12px),
-    transparent 100%
+    #000 0,
+    #000 calc(100% - 28px),
+    rgba(0, 0, 0, 0.35) 100%
   );
 }
 
 .face-tab {
   flex: none;
+  min-width: var(--touch-min);
   min-height: var(--touch-min);
   padding: 8px 14px;
   border: 0;
@@ -1572,6 +1575,7 @@ html.auth-screen #app {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .face-tab.active {
@@ -1579,6 +1583,17 @@ html.auth-screen #app {
   font-weight: 600;
   border-bottom-color: var(--brand-strong);
   background: var(--bg);
+}
+
+@media (max-width: 767.98px) {
+  .face-tabs {
+    padding: 0 4px;
+    gap: 0;
+  }
+  .face-tab {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
 }
 
 .face-tab-menu {

@@ -8,12 +8,23 @@ import {
 
 describe('pickSummaryFields', () => {
   const fields = [
-    { id: 'a', name: '创建时间', type: 'createdTime' },
+    { id: 'a', name: '创建时间', type: 'createdAt' },
     { id: 'b', name: '姓名', type: 'text' },
     { id: 'c', name: '状态', type: 'singleSelect' },
     { id: 'd', name: '标题', type: 'title' },
     { id: 'e', name: '备注', type: 'text' },
   ];
+
+  it('skips canonical and legacy system types', () => {
+    const mixed = [
+      { id: 't', name: '旧创建', type: 'createdTime' },
+      { id: 'u', name: '编辑人', type: 'lastEditedBy' },
+      { id: 'v', name: '姓名', type: 'text' },
+    ];
+    const r = pickSummaryFields(mixed, null, 2);
+    expect(r.titleFieldId).toBe('v');
+    expect(r.summaryFieldIds).toEqual([]);
+  });
 
   it('prefers title type and next summaries', () => {
     const r = pickSummaryFields(fields, null, 2);

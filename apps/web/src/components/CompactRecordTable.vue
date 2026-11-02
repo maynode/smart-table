@@ -17,11 +17,17 @@ const emit = defineEmits<{
 }>();
 
 const SYSTEMISH = new Set([
+  'createdAt',
+  'lastEditedAt',
+  'createdBy',
+  'lastEditedBy',
+  'autoNumber',
+  'formula',
+  'lookup',
+  'ai',
   'createdTime',
   'lastModifiedTime',
-  'createdBy',
   'lastModifiedBy',
-  'autoNumber',
 ]);
 
 const cols = computed(() => {

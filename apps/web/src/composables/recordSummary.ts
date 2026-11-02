@@ -11,12 +11,21 @@ export type SummaryFieldLike = {
   options?: unknown;
 };
 
+/** System / computed columns to skip in phone card summaries. */
 const SYSTEMISH = new Set([
+  // Canonical (shared FieldType)
+  'createdAt',
+  'lastEditedAt',
+  'createdBy',
+  'lastEditedBy',
+  'autoNumber',
+  'formula',
+  'lookup',
+  'ai',
+  // Legacy aliases once used in phone UI
   'createdTime',
   'lastModifiedTime',
-  'createdBy',
   'lastModifiedBy',
-  'autoNumber',
 ]);
 
 /**
