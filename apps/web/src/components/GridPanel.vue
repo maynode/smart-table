@@ -1879,6 +1879,7 @@ defineExpose({
       :fields="fields"
       :editable="editable"
       :members="members"
+      :upload-attachment="editable ? uploadAttachment : undefined"
       @close="closeRecordDetail"
       @commit="emit('commit', $event)"
       @open-ai-component="openAiComponentHost"

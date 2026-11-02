@@ -5,8 +5,11 @@ import {
   type AiComponentOptions,
   type FieldType,
 } from 'shared';
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
+import { endpoints } from '../api/endpoints';
+import { messageOf } from '../api/error-message';
 import type { FieldDto, MemberDto, RecordDto } from '../api/types';
+import { toast } from '../ui/toast';
 import MobileSheet from './MobileSheet.vue';
 import { formatCellSummary } from '../composables/recordSummary';
 
@@ -16,6 +19,12 @@ const props = defineProps<{
   fields: FieldDto[];
   editable?: boolean;
   members?: MemberDto[];
+  uploadAttachment?: (file: File) => Promise<{
+    url: string;
+    name: string;
+    mimetype?: string;
+    size?: number;
+  }>;
 }>();
 
 const emit = defineEmits<{
@@ -32,6 +41,11 @@ const emit = defineEmits<{
 }>();
 
 const draft = ref<Record<string, unknown>>({});
+const uploadingFieldId = ref<string | null>(null);
+const relationChoices = reactive<
+  Record<string, Array<{ id: string; label: string }>>
+>({});
+const relationLoading = reactive<Record<string, boolean>>({});
 
 watch(
   () => props.record?.id,
@@ -82,6 +96,116 @@ function attachmentUrl(raw: unknown): string | null {
     return typeof o.url === 'string' ? o.url : null;
   }
   return null;
+}
+
+function attachmentName(raw: unknown): string {
+  if (raw && typeof raw === 'object' && raw !== null) {
+    const o = raw as { name?: string };
+    if (typeof o.name === 'string' && o.name.trim()) return o.name.trim();
+  }
+  return '附件';
+}
+
+function relationValue(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  if (Array.isArray(raw)) return String(raw[0] ?? '');
+  return String(raw);
+}
+
+async function ensureRelationChoices(field: FieldDto): Promise<void> {
+  if (relationChoices[field.id]?.length || relationLoading[field.id]) return;
+  const targetSheetId = (
+    field.options as { relation?: { targetSheetId?: string } } | null
+  )?.relation?.targetSheetId;
+  if (!targetSheetId) {
+    relationChoices[field.id] = [];
+    return;
+  }
+  relationLoading[field.id] = true;
+  try {
+    const sheet = await endpoints.getSheet(targetSheetId);
+    const page = await endpoints.listRecords(targetSheetId, null, 100);
+    const titleField =
+      sheet.fields?.find((item) => item.type === 'title') ??
+      sheet.fields?.find((item) => item.type === 'text') ??
+      sheet.fields?.[0] ??
+      null;
+    relationChoices[field.id] = page.records.map((rec) => {
+      const raw = titleField ? rec.cells[titleField.id] : null;
+      const label =
+        raw === null || raw === undefined || raw === ''
+          ? rec.id.slice(0, 8)
+          : String(raw);
+      return { id: rec.id, label };
+    });
+  } catch {
+    relationChoices[field.id] = [];
+  } finally {
+    relationLoading[field.id] = false;
+  }
+}
+
+watch(
+  () =>
+    [
+      props.open,
+      props.record?.id,
+      props.fields.map((f) => f.id).join(','),
+    ] as const,
+  () => {
+    if (!props.open || !props.record) return;
+    for (const field of editableFields.value) {
+      if (field.type === 'relation') void ensureRelationChoices(field);
+    }
+  },
+  { immediate: true },
+);
+
+async function onAttachmentPicked(
+  field: FieldDto,
+  event: Event,
+): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || !props.editable || !props.record || !props.uploadAttachment) {
+    return;
+  }
+  uploadingFieldId.value = field.id;
+  try {
+    const uploaded = await props.uploadAttachment(file);
+    const previous = props.record.cells?.[field.id];
+    draft.value[field.id] = uploaded;
+    emit('commit', {
+      record: props.record,
+      field,
+      value: uploaded,
+      previous,
+    });
+  } catch (error) {
+    toast(messageOf(error) || '上传失败');
+  } finally {
+    uploadingFieldId.value = null;
+  }
+}
+
+function clearAttachment(field: FieldDto): void {
+  if (!props.editable || !props.record) return;
+  const previous = props.record.cells?.[field.id];
+  draft.value[field.id] = null;
+  emit('commit', {
+    record: props.record,
+    field,
+    value: null,
+    previous,
+  });
+}
+
+function onRelationChange(field: FieldDto, event: Event): void {
+  const select = event.target as HTMLSelectElement;
+  const v = select.value;
+  draft.value[field.id] = v ? v : null;
+  commitField(field);
 }
 
 function toDateInput(raw: unknown): string {
@@ -355,16 +479,62 @@ function openAiComponent(field: FieldDto): void {
               {{
                 field.type === 'image'
                   ? '查看图片'
-                  : formatCellSummary(
-                      draft[field.id] ?? record.cells?.[field.id],
-                      field.type,
-                      field.options,
-                    )
+                  : attachmentName(draft[field.id] ?? record.cells?.[field.id])
               }}
             </a>
+            <button
+              v-if="editable"
+              type="button"
+              class="btn btn-ghost touch-target"
+              data-testid="record-detail-attachment-clear"
+              @click="clearAttachment(field)"
+            >
+              清除
+            </button>
           </template>
           <span v-else class="detail-readonly">未上传</span>
+          <label
+            v-if="editable && uploadAttachment"
+            class="btn btn-secondary touch-target detail-upload-btn"
+            :class="{ 'is-busy': uploadingFieldId === field.id }"
+          >
+            {{
+              uploadingFieldId === field.id
+                ? '上传中…'
+                : attachmentUrl(draft[field.id] ?? record.cells?.[field.id])
+                  ? '重新上传'
+                  : '上传'
+            }}
+            <input
+              class="sr-only"
+              type="file"
+              :accept="field.type === 'image' ? 'image/*' : undefined"
+              :disabled="uploadingFieldId === field.id"
+              data-testid="record-detail-attachment-input"
+              @change="onAttachmentPicked(field, $event)"
+            />
+          </label>
         </div>
+        <select
+          v-else-if="field.type === 'relation'"
+          class="detail-input"
+          :disabled="!editable || relationLoading[field.id]"
+          data-testid="record-detail-relation"
+          :value="relationValue(draft[field.id] ?? record.cells?.[field.id])"
+          @focus="ensureRelationChoices(field)"
+          @change="onRelationChange(field, $event)"
+        >
+          <option value="">
+            {{ relationLoading[field.id] ? '加载中…' : '选择关联记录' }}
+          </option>
+          <option
+            v-for="choice in relationChoices[field.id] ?? []"
+            :key="choice.id"
+            :value="choice.id"
+          >
+            {{ choice.label }}
+          </option>
+        </select>
         <div
           v-else-if="field.type === 'aiComponent'"
           class="detail-ai"
@@ -389,7 +559,24 @@ function openAiComponent(field: FieldDto): void {
             {{ aiComponentReady(field) ? '打开组件' : '尚未发布' }}
           </button>
         </div>
-        <div v-else class="detail-readonly">
+        <div
+          v-else-if="field.type === 'groupChat'"
+          class="detail-readonly"
+          data-testid="record-detail-group-chat"
+        >
+          群聊字段已停用，仅保留历史展示
+          <template
+            v-if="formatCellSummary(draft[field.id] ?? record.cells?.[field.id], field.type) !== '—'"
+          >
+            ：{{
+              formatCellSummary(
+                draft[field.id] ?? record.cells?.[field.id],
+                field.type,
+              )
+            }}
+          </template>
+        </div>
+        <div v-else class="detail-readonly" data-testid="record-detail-readonly">
           {{
             formatCellSummary(
               draft[field.id] ?? record.cells?.[field.id],
@@ -492,7 +679,9 @@ function openAiComponent(field: FieldDto): void {
 
 .detail-attachment {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
   min-height: var(--touch-min);
 }
 
@@ -502,9 +691,36 @@ function openAiComponent(field: FieldDto): void {
   font-weight: 600;
   text-decoration: none;
   padding: 10px 0;
+  word-break: break-all;
 }
 
 .detail-attachment-link:hover {
   text-decoration: underline;
+}
+
+.detail-upload-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 0;
+}
+
+.detail-upload-btn.is-busy {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>
