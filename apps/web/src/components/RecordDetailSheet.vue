@@ -476,11 +476,19 @@ function openAiComponent(field: FieldDto): void {
               target="_blank"
               rel="noopener noreferrer"
             >
-              {{
-                field.type === 'image'
-                  ? '查看图片'
-                  : attachmentName(draft[field.id] ?? record.cells?.[field.id])
-              }}
+              <img
+                v-if="field.type === 'image'"
+                class="detail-attachment-thumb"
+                :src="attachmentUrl(draft[field.id] ?? record.cells?.[field.id])!"
+                alt=""
+              />
+              <span>
+                {{
+                  field.type === 'image'
+                    ? '查看图片'
+                    : attachmentName(draft[field.id] ?? record.cells?.[field.id])
+                }}
+              </span>
             </a>
             <button
               v-if="editable"
@@ -686,16 +694,29 @@ function openAiComponent(field: FieldDto): void {
 }
 
 .detail-attachment-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   color: var(--brand-strong);
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
-  padding: 10px 0;
+  padding: 6px 0;
   word-break: break-all;
 }
 
 .detail-attachment-link:hover {
   text-decoration: underline;
+}
+
+.detail-attachment-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e6eb);
+  background: #f5f6f7;
+  flex: none;
 }
 
 .detail-upload-btn {
