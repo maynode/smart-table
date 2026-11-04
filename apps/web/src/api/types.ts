@@ -724,3 +724,45 @@ export interface AnalysisReportListItemDto {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface AgentSessionDto {
+  id: string;
+  title: string;
+  workspaceId: string | null;
+  baseId: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentChatMessageDto {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+}
+
+export interface AgentChatResultDto {
+  sessionId: string;
+  idempotent: boolean;
+  messages: AgentChatMessageDto[];
+  assistantText: string;
+  toolTrace: Array<{
+    toolCallId: string;
+    name: string;
+    args: unknown;
+    result: unknown;
+  }>;
+}
+
+export interface AgentApiTokenDto {
+  id: string;
+  name: string;
+  prefix: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface AgentApiTokenCreatedDto extends AgentApiTokenDto {
+  token: string;
+}

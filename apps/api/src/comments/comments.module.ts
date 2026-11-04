@@ -7,5 +7,7 @@ import { CommentsService } from './comments.service';
   imports: [SheetsModule],
   controllers: [CommentsController],
   providers: [CommentsService],
+  exports: [CommentsService],
 })
 export class CommentsModule {}
+

@@ -40,6 +40,8 @@ model User {
   comments    Comment[]
   notifications Notification[]
   feedbacks   Feedback[]
+  agentSessions AgentSession[]
+  agentApiTokens AgentApiToken[]
 
   @@map("users")
 }
@@ -779,4 +781,60 @@ model Feedback {
   @@index([status, createdAt])
   @@index([userId, createdAt])
   @@map("feedbacks")
+}
+
+/** 全局 AI Agent 会话 */
+model AgentSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  workspaceId String?  @map("workspace_id") @db.Uuid
+  baseId      String?  @map("base_id") @db.Uuid
+  title       String   @default("新对话")
+  /// idle | running — running 仅短暂占用；崩溃后可被新消息覆盖重置
+  status      String   @default("idle")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages AgentMessage[]
+
+  @@index([userId, updatedAt])
+  @@map("agent_sessions")
+}
+
+model AgentMessage {
+  id              String   @id @default(uuid()) @db.Uuid
+  sessionId       String   @map("session_id") @db.Uuid
+  role            String
+  content         String   @default("") @db.Text
+  toolName        String?  @map("tool_name")
+  toolCallId      String?  @map("tool_call_id")
+  toolArgsJson    Json?    @map("tool_args_json")
+  toolResultJson  Json?    @map("tool_result_json")
+  /// 客户端幂等键（user 消息）
+  clientMessageId String?  @map("client_message_id")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, clientMessageId])
+  @@index([sessionId, createdAt])
+  @@map("agent_messages")
+}
+
+/** MCP / 外部 Agent 个人访问令牌（只存 hash） */
+model AgentApiToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  name       String
+  tokenHash  String    @unique @map("token_hash")
+  prefix     String
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("agent_api_tokens")
 }

@@ -9,5 +9,7 @@ import { PublicViewsService } from './public-views.service';
   imports: [WorkspacesModule, SharingModule, DashboardsModule],
   controllers: [PublicViewsController],
   providers: [PublicViewsService],
+  exports: [PublicViewsService],
 })
 export class PublicViewsModule {}
+

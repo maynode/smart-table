@@ -40,6 +40,10 @@ import type {
   AnalysisReportDto,
   AnalysisReportListItemDto,
   AnalysisMessageAttachmentDto,
+  AgentSessionDto,
+  AgentChatResultDto,
+  AgentApiTokenDto,
+  AgentApiTokenCreatedDto,
 } from './types';
 import type { ViewQuery } from 'shared';
 
@@ -1125,4 +1129,55 @@ export const endpoints = {
     api<AnalysisReportDto>(`/analysis-reports/${id}/generate`, {
       method: 'POST',
     }),
+
+  createAgentSession: (body?: {
+    title?: string;
+    workspaceId?: string;
+    baseId?: string;
+  }) =>
+    api<AgentSessionDto>('/agent/sessions', {
+      method: 'POST',
+      body: body ?? {},
+    }),
+
+  listAgentSessions: () => api<AgentSessionDto[]>('/agent/sessions'),
+
+  getAgentSession: (id: string) =>
+    api<
+      AgentSessionDto & {
+        messages: Array<{
+          id: string;
+          role: string;
+          content: string;
+          createdAt: string;
+        }>;
+      }
+    >(`/agent/sessions/${id}`),
+
+  postAgentMessage: (
+    sessionId: string,
+    content: string,
+    clientMessageId?: string,
+  ) =>
+    api<AgentChatResultDto>(`/agent/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      body: { content, clientMessageId },
+    }),
+
+  clearAgentSession: (sessionId: string) =>
+    api<{ cleared: boolean }>(`/agent/sessions/${sessionId}/clear`, {
+      method: 'POST',
+    }),
+
+  listAgentTokens: () =>
+    api<{ tokens: AgentApiTokenDto[] }>('/agent/tokens'),
+
+  createAgentToken: (name?: string) =>
+    api<AgentApiTokenCreatedDto>('/agent/tokens', {
+      method: 'POST',
+      body: { name },
+    }),
+
+  revokeAgentToken: (id: string) =>
+    api<{ revoked: boolean }>(`/agent/tokens/${id}`, { method: 'DELETE' }),
 };

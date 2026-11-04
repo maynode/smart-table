@@ -17,6 +17,7 @@ import AnalysisReportPanel from '../components/AnalysisReportPanel.vue';
 import TemplatePanel from '../components/TemplatePanel.vue';
 import PublicViewPanel from '../components/PublicViewPanel.vue';
 import NotificationBell from '../components/NotificationBell.vue';
+import GlobalAiPanel from '../components/GlobalAiPanel.vue';
 import PageLoading from '../components/PageLoading.vue';
 import { useViewport } from '../composables/useViewport';
 import {
@@ -357,6 +358,7 @@ function selectFace(face: BaseFace): void {
 }
 const formBuilderOpen = ref(false);
 const permissionsOpen = ref(false);
+const globalAiOpen = ref(false);
 const templatesOpen = ref(false);
 const publicViewOpen = ref(false);
 
@@ -2991,6 +2993,13 @@ onBeforeUnmount(() => {
         </div>
         <NotificationBell />
         <button
+          class="topbar-btn"
+          data-testid="global-ai-open"
+          @click="globalAiOpen = true"
+        >
+          AI
+        </button>
+        <button
           v-if="canEditByRole"
           class="topbar-btn"
           data-testid="automation-open"
@@ -3814,6 +3823,12 @@ onBeforeUnmount(() => {
         @close="permissionsOpen = false"
       />
     </div>
+    <GlobalAiPanel
+      v-if="globalAiOpen"
+      :workspace-id="workspaceId"
+      :base-id="baseId"
+      @close="globalAiOpen = false"
+    />
     <div
       v-if="publicViewOpen && activeSheet"
       class="modal-mask"

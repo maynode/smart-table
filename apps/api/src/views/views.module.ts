@@ -9,5 +9,7 @@ import { ViewsService } from './views.service';
   imports: [WorkspacesModule, PermissionsModule, SharingModule],
   controllers: [ViewsController],
   providers: [ViewsService],
+  exports: [ViewsService],
 })
 export class ViewsModule {}
+

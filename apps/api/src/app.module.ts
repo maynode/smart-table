@@ -27,6 +27,7 @@ import { ViewsModule } from './views/views.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { CollabModule } from './collab/collab.module';
 import { LiveModule } from './live/live.module';
+import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
@@ -60,7 +61,9 @@ import { LiveModule } from './live/live.module';
     ActivityModule,
     QuotasModule,
     TemplatesModule,
+    AgentModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule {}
+
